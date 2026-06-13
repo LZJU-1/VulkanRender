@@ -4,6 +4,7 @@ set(VR_SOURCES
     core/RendererApp.cpp
     platform/CommandLine.cpp
     platform/PreviewWindow.cpp
+    platform/VulkanPreviewWindow.cpp
     render/SoftwareV1Renderer.cpp
     rhi/RenderDevice.cpp
     rhi/VulkanDevice.cpp
@@ -14,6 +15,7 @@ add_executable(vulkan_render ${VR_SOURCES})
 target_include_directories(vulkan_render PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_include_directories(vulkan_render PRIVATE "${PROJECT_SOURCE_DIR}/third_party/cgltf")
 target_include_directories(vulkan_render PRIVATE "${PROJECT_SOURCE_DIR}/third_party/stb")
+target_include_directories(vulkan_render PRIVATE "${PROJECT_SOURCE_DIR}/third_party/vulkan_headers/include")
 target_compile_features(vulkan_render PRIVATE cxx_std_20)
 
 if(MSVC)

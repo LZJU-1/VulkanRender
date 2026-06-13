@@ -1887,4 +1887,42 @@ V1RenderStats renderSoftwareV1(const V1RenderSettings& settings) {
     return rendered.stats;
 }
 
+GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
+    const std::string extension = settings.scenePath.extension().string();
+    std::vector<Triangle3> ownedTriangles;
+    const std::vector<Triangle3>* triangles = &ownedTriangles;
+    Camera camera;
+
+    if (extension == ".s72") {
+        if (settings.enableV2Shading) {
+            const CachedS72Scene& scene = cachedStaticS72Scene(settings.scenePath);
+            triangles = &scene.triangles;
+            camera = scene.camera;
+        } else {
+            S72Scene scene = loadS72Scene(settings.scenePath, settings.frameIndex);
+            ownedTriangles = std::move(scene.triangles);
+            camera = scene.camera;
+        }
+    } else if (extension == ".gltf" || extension == ".glb") {
+        GltfScene scene = loadGltfScene(settings.scenePath);
+        ownedTriangles = std::move(scene.triangles);
+        camera = scene.camera;
+    } else {
+        throw std::runtime_error("GPU preview currently supports .s72, .gltf, and .glb scenes");
+    }
+
+    camera = cameraFromSettings(settings.camera, camera);
+
+    GpuPreviewGeometry geometry;
+    geometry.vertices.reserve(triangles->size() * 3u);
+    for (const Triangle3& tri : *triangles) {
+        const Vec3 color = settings.enableV2Shading ? clamp01(tri.baseColor) : colorToVec(tri.color);
+        geometry.vertices.push_back({tri.a.x, tri.a.y, tri.a.z, color.x, color.y, color.z});
+        geometry.vertices.push_back({tri.b.x, tri.b.y, tri.b.z, color.x, color.y, color.z});
+        geometry.vertices.push_back({tri.c.x, tri.c.y, tri.c.z, color.x, color.y, color.z});
+    }
+    geometry.camera = toCameraSettings(camera);
+    return geometry;
+}
+
 } // namespace vr

@@ -62,6 +62,8 @@ build\nmake-debug\src\vulkan_render.exe --profile v1 --preview --scene assets\th
 build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
 ```
 
+These mesh preview commands use the native Vulkan GPU window. The CPU preview remains only as a fallback for the old `assets\scenes\v1.scene` cube smoke scene.
+
 Render a glTF or GLB model:
 
 ```powershell

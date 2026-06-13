@@ -3,6 +3,7 @@
 #include "core/FeatureProfile.hpp"
 #include "core/RenderGraph.hpp"
 #include "platform/PreviewWindow.hpp"
+#include "platform/VulkanPreviewWindow.hpp"
 #include "render/SoftwareV1Renderer.hpp"
 #include "rhi/RenderDevice.hpp"
 
@@ -98,7 +99,11 @@ int RendererApp::run() {
             ? (settings.enableV2Shading ? "assets/third_party/s72_examples/materials.s72" : "assets/scenes/v1.scene")
             : config_.scenePath;
         settings.outputPath = config_.outputPath;
-        return runV1PreviewWindow(settings);
+        if (settings.scenePath.extension() == ".scene") {
+            std::cout << "GPU preview needs mesh geometry; falling back to the legacy CPU preview for .scene files.\n";
+            return runV1PreviewWindow(settings);
+        }
+        return runVulkanPreviewWindow(settings);
     }
 
     return 0;

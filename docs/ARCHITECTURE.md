@@ -24,7 +24,8 @@ flowchart TD
 - `platform`: command line parsing and process-facing configuration.
 - `core`: profile registry, render graph construction, and application orchestration.
 - `rhi`: backend abstraction. The current Vulkan backend performs runtime capability probing; later passes should allocate real resources only through this layer.
-- `render`: CPU validation renderer used by v1 and v2 to make each milestone visually testable before the matching Vulkan resources and shaders are complete.
+- `render`: scene import and fallback CPU validation utilities. The realtime preview path should upload mesh data to GPU buffers instead of rasterizing pixels on the CPU.
+- `platform/VulkanPreviewWindow`: native Win32 + Vulkan swapchain preview path with GPU vertex buffers, uniform camera data, depth testing, and roaming camera controls.
 - `rt`: realtime ray tracing concepts are represented as profile and graph stages first, then become concrete BLAS/TLAS and pipeline code behind the RHI.
 
 ## Version Profiles
@@ -41,7 +42,9 @@ flowchart TD
 
 The v2 profile now has a concrete software path for the official Scene'72 `materials.s72` asset. It parses material families, normal and UV attributes, PNG albedo/roughness textures, and the Scene'72 environment texture. The render graph still describes the intended Vulkan shape (`environment.ibl-precompute`, `forward.pbr-material`, `skybox.draw`, `post.tone-map`), while the CPU path provides stable output for testing loader semantics and material interpretation.
 
-Current v2 gaps are deliberately documented: the environment lookup is approximate, normal/displacement mapping are not yet shader-evaluated, and glTF PBR texture support is not part of this milestone.
+The realtime preview now uses a Vulkan GPU path: geometry is imported once, uploaded to a vertex buffer, and drawn through a swapchain graphics pipeline. The CPU renderer remains useful for BMP regression output and debugging, but it is no longer the intended realtime path.
+
+Current v2 gaps are deliberately documented: texture descriptor sampling, true cubemap IBL, normal/displacement mapping, and full glTF PBR texture support are still being migrated onto GPU shaders.
 
 ## Realtime Ray Tracing Plan
 

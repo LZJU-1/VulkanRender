@@ -118,3 +118,19 @@ Validation command:
 ```powershell
 scripts\build_msvc.bat
 ```
+
+## 2026-06-13 - Vulkan GPU Preview Window
+
+- Added a native Vulkan Win32 preview path for mesh scenes.
+- Vendored Vulkan headers from the local NTC dependency tree and dynamically loads `vulkan-1.dll`, so the preview does not require a globally configured `VULKAN_SDK` import library.
+- Added HLSL shaders compiled to SPIR-V with the local NTC `dxc.exe`.
+- Uploads imported Scene'72/glTF geometry to a Vulkan vertex buffer and draws it through a swapchain graphics pipeline with depth testing and a uniform-buffer camera.
+- Reused the roaming camera controls from the CPU preview.
+- Left the CPU software preview only as a fallback for the legacy `.scene` cube smoke scene.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
+```

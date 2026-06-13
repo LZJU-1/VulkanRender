@@ -28,6 +28,7 @@ ctest --preset nmake-debug
 .\build\msvc-debug\src\Debug\vulkan_render.exe --profile v1 --frames 2
 .\build\msvc-debug\src\Debug\vulkan_render.exe --profile v5-rt --enable-rt --list-devices
 build\nmake-debug\src\vulkan_render.exe --profile v2 --render --scene assets\third_party\s72_examples\materials.s72 --output out\v2-materials.bmp --width 1280 --height 720
+build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
 ```
 
 Profiles:
@@ -40,7 +41,7 @@ Profiles:
 
 Asset formats:
 
-- Scene'72 `.s72 + .b72` examples are supported in the v1 and v2 software preview paths.
+- Scene'72 `.s72 + .b72` examples are supported by the loader and now use the Vulkan GPU preview path by default.
 - Static `.gltf` and `.glb` meshes are supported in the v1 preview path.
 - Skinned animation, alpha blending, full glTF PBR texture import, and the real Vulkan PBR shader path are planned for later profiles.
 
