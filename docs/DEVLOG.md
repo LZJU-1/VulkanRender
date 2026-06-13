@@ -150,6 +150,22 @@ scripts\build_msvc.bat
 C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
 ```
 
+## 2026-06-14 - V2 GPU Sky And Material Parameters
+
+- Added roughness, metalness, and material kind to the Vulkan preview vertex layout.
+- Updated the v2 mesh shader to branch between simple, environment, mirror, lambertian, and PBR-style preview shading.
+- Added roughness-controlled specular response and metalness-controlled diffuse/specular mixing for the official `materials.s72` material spheres.
+- Added a dedicated Vulkan sky pipeline that renders a procedural environment before the mesh pass.
+- Added tone mapping in the sky and mesh fragment shaders.
+- Current limits: this is still a preview PBR path; true Vulkan texture/sampler descriptors, normal maps, displacement mapping, and prefiltered cubemap IBL remain follow-up work.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
+```
+
 ## 2026-06-13 - V1 Vulkan Preview Animation Upload
 
 - Fixed v1 Scene'72 animation previews after the preview path moved to Vulkan.

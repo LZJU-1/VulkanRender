@@ -46,6 +46,22 @@ enum class MaterialKind {
     Pbr
 };
 
+float gpuMaterialKind(MaterialKind kind) {
+    switch (kind) {
+    case MaterialKind::Environment:
+        return 1.0f;
+    case MaterialKind::Mirror:
+        return 2.0f;
+    case MaterialKind::Lambertian:
+        return 3.0f;
+    case MaterialKind::Pbr:
+        return 4.0f;
+    case MaterialKind::Simple:
+    default:
+        return 0.0f;
+    }
+}
+
 struct Color {
     std::uint8_t r = 0;
     std::uint8_t g = 0;
@@ -1921,9 +1937,12 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
         if (length(normal) <= 0.00001f) {
             normal = normalize(cross(tri.b - tri.a, tri.c - tri.a));
         }
-        geometry.vertices.push_back({tri.a.x, tri.a.y, tri.a.z, normal.x, normal.y, normal.z, color.x, color.y, color.z});
-        geometry.vertices.push_back({tri.b.x, tri.b.y, tri.b.z, normal.x, normal.y, normal.z, color.x, color.y, color.z});
-        geometry.vertices.push_back({tri.c.x, tri.c.y, tri.c.z, normal.x, normal.y, normal.z, color.x, color.y, color.z});
+        const float roughness = settings.enableV2Shading ? std::clamp(tri.roughness, 0.03f, 1.0f) : 0.7f;
+        const float metalness = settings.enableV2Shading ? std::clamp(tri.metalness, 0.0f, 1.0f) : 0.0f;
+        const float kind = settings.enableV2Shading ? gpuMaterialKind(tri.materialKind) : 0.0f;
+        geometry.vertices.push_back({tri.a.x, tri.a.y, tri.a.z, normal.x, normal.y, normal.z, color.x, color.y, color.z, roughness, metalness, kind});
+        geometry.vertices.push_back({tri.b.x, tri.b.y, tri.b.z, normal.x, normal.y, normal.z, color.x, color.y, color.z, roughness, metalness, kind});
+        geometry.vertices.push_back({tri.c.x, tri.c.y, tri.c.z, normal.x, normal.y, normal.z, color.x, color.y, color.z, roughness, metalness, kind});
     }
     geometry.camera = toCameraSettings(camera);
     return geometry;

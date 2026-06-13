@@ -57,6 +57,9 @@ struct GpuPreviewVertex {
     float r = 1.0f;
     float g = 1.0f;
     float b = 1.0f;
+    float roughness = 0.7f;
+    float metalness = 0.0f;
+    float kind = 0.0f;
 };
 
 struct GpuPreviewGeometry {

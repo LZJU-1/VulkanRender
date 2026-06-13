@@ -2,6 +2,9 @@ struct VertexIn {
     [[vk::location(0)]] float3 position : POSITION;
     [[vk::location(1)]] float3 normal : NORMAL;
     [[vk::location(2)]] float3 color : COLOR0;
+    [[vk::location(3)]] float roughness : TEXCOORD0;
+    [[vk::location(4)]] float metalness : TEXCOORD1;
+    [[vk::location(5)]] float materialKind : TEXCOORD2;
 };
 
 struct VertexOut {
@@ -9,6 +12,9 @@ struct VertexOut {
     [[vk::location(0)]] float3 color : COLOR0;
     [[vk::location(1)]] float3 normal : NORMAL;
     [[vk::location(2)]] float3 worldPos : TEXCOORD0;
+    [[vk::location(3)]] float roughness : TEXCOORD1;
+    [[vk::location(4)]] float metalness : TEXCOORD2;
+    [[vk::location(5)]] float materialKind : TEXCOORD3;
 };
 
 cbuffer Camera : register(b0) {
@@ -37,5 +43,8 @@ VertexOut main(VertexIn input) {
     output.color = input.color;
     output.normal = normalize(input.normal);
     output.worldPos = input.position;
+    output.roughness = input.roughness;
+    output.metalness = input.metalness;
+    output.materialKind = input.materialKind;
     return output;
 }

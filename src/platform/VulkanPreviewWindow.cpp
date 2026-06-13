@@ -363,6 +363,7 @@ public:
         if (device_ != VK_NULL_HANDLE && renderFinished_ != VK_NULL_HANDLE) vkDestroySemaphore(device_, renderFinished_, nullptr);
         if (device_ != VK_NULL_HANDLE && inFlight_ != VK_NULL_HANDLE) vkDestroyFence(device_, inFlight_, nullptr);
         if (device_ != VK_NULL_HANDLE && commandPool_ != VK_NULL_HANDLE) vkDestroyCommandPool(device_, commandPool_, nullptr);
+        if (device_ != VK_NULL_HANDLE && skyPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, skyPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && pipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, pipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && pipelineLayout_ != VK_NULL_HANDLE) vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr);
         if (device_ != VK_NULL_HANDLE && descriptorPool_ != VK_NULL_HANDLE) vkDestroyDescriptorPool(device_, descriptorPool_, nullptr);
@@ -854,7 +855,7 @@ private:
         cameraBinding.binding = 0;
         cameraBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         cameraBinding.descriptorCount = 1;
-        cameraBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        cameraBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
         VkDescriptorSetLayoutCreateInfo layout{};
         layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -922,10 +923,13 @@ private:
         binding.binding = 0;
         binding.stride = sizeof(GpuPreviewVertex);
         binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-        std::array<VkVertexInputAttributeDescription, 3> attributes{};
+        std::array<VkVertexInputAttributeDescription, 6> attributes{};
         attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuPreviewVertex, px)};
         attributes[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuPreviewVertex, nx)};
         attributes[2] = {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuPreviewVertex, r)};
+        attributes[3] = {3, 0, VK_FORMAT_R32_SFLOAT, offsetof(GpuPreviewVertex, roughness)};
+        attributes[4] = {4, 0, VK_FORMAT_R32_SFLOAT, offsetof(GpuPreviewVertex, metalness)};
+        attributes[5] = {5, 0, VK_FORMAT_R32_SFLOAT, offsetof(GpuPreviewVertex, kind)};
 
         VkPipelineVertexInputStateCreateInfo vertexInput{};
         vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -998,6 +1002,51 @@ private:
 
         vkDestroyShaderModule(device_, fragmentShader, nullptr);
         vkDestroyShaderModule(device_, vertexShader, nullptr);
+
+        const VkShaderModule skyVertexShader = createShader("shaders/vulkan_gpu/skybox.vert.spv");
+        const VkShaderModule skyFragmentShader = createShader("shaders/vulkan_gpu/skybox.frag.spv");
+        VkPipelineShaderStageCreateInfo skyStages[2]{};
+        skyStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        skyStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+        skyStages[0].module = skyVertexShader;
+        skyStages[0].pName = "main";
+        skyStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        skyStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        skyStages[1].module = skyFragmentShader;
+        skyStages[1].pName = "main";
+
+        VkPipelineVertexInputStateCreateInfo skyVertexInput{};
+        skyVertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        VkPipelineRasterizationStateCreateInfo skyRaster{};
+        skyRaster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        skyRaster.polygonMode = VK_POLYGON_MODE_FILL;
+        skyRaster.cullMode = VK_CULL_MODE_NONE;
+        skyRaster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        skyRaster.lineWidth = 1.0f;
+        VkPipelineDepthStencilStateCreateInfo skyDepth{};
+        skyDepth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+        skyDepth.depthTestEnable = VK_FALSE;
+        skyDepth.depthWriteEnable = VK_FALSE;
+
+        VkGraphicsPipelineCreateInfo skyCreateInfo{};
+        skyCreateInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        skyCreateInfo.stageCount = 2;
+        skyCreateInfo.pStages = skyStages;
+        skyCreateInfo.pVertexInputState = &skyVertexInput;
+        skyCreateInfo.pInputAssemblyState = &inputAssembly;
+        skyCreateInfo.pViewportState = &viewportState;
+        skyCreateInfo.pRasterizationState = &skyRaster;
+        skyCreateInfo.pMultisampleState = &multisample;
+        skyCreateInfo.pDepthStencilState = &skyDepth;
+        skyCreateInfo.pColorBlendState = &blend;
+        skyCreateInfo.pDynamicState = &dynamic;
+        skyCreateInfo.layout = pipelineLayout_;
+        skyCreateInfo.renderPass = renderPass_;
+        skyCreateInfo.subpass = 0;
+        require(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &skyCreateInfo, nullptr, &skyPipeline_), "vkCreateGraphicsPipelines(sky)");
+
+        vkDestroyShaderModule(device_, skyFragmentShader, nullptr);
+        vkDestroyShaderModule(device_, skyVertexShader, nullptr);
     }
 
     void createCommands() {
@@ -1088,6 +1137,10 @@ private:
         scissor.extent = swapchainExtent_;
         vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
         vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, skyPipeline_);
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &descriptorSet_, 0, nullptr);
+        vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &descriptorSet_, 0, nullptr);
         VkDeviceSize offset = 0;
@@ -1131,6 +1184,7 @@ private:
     VkDescriptorSet descriptorSet_ = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
+    VkPipeline skyPipeline_ = VK_NULL_HANDLE;
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     VkCommandBuffer commandBuffer_ = VK_NULL_HANDLE;
     VkSemaphore imageAvailable_ = VK_NULL_HANDLE;
