@@ -61,3 +61,17 @@ build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene assets\thi
 build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene assets\third_party\s72_examples\sg-Articulation.s72 --output out\official-articulation-frame025.bmp --width 1280 --height 720 --frames 25
 build\nmake-debug\src\vulkan_render.exe --profile v1 --preview --scene assets\third_party\s72_examples\sg-Articulation.s72 --width 1280 --height 720
 ```
+
+## 2026-06-13 - Static glTF/GLB Import
+
+- Added `cgltf` 1.15 as a vendored MIT-licensed dependency.
+- Added static `.gltf` and `.glb` import for v1 preview/render.
+- Supported node transforms, mesh primitives, indexed and non-indexed triangle lists, `POSITION`, `COLOR_0`, and material base color fallback.
+- Skinned meshes, animation channels, textures, and PBR shading remain future work.
+
+Example commands:
+
+```powershell
+build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene path\to\model.glb --output out\model.bmp --width 1280 --height 720
+build\nmake-debug\src\vulkan_render.exe --profile v1 --preview --scene path\to\model.gltf --width 1280 --height 720
+```

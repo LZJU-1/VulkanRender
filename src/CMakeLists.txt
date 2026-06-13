@@ -12,10 +12,12 @@ set(VR_SOURCES
 
 add_executable(vulkan_render ${VR_SOURCES})
 target_include_directories(vulkan_render PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_include_directories(vulkan_render PRIVATE "${PROJECT_SOURCE_DIR}/third_party/cgltf")
 target_compile_features(vulkan_render PRIVATE cxx_std_20)
 
 if(MSVC)
     target_compile_options(vulkan_render PRIVATE /W4 /permissive-)
+    target_compile_definitions(vulkan_render PRIVATE _CRT_SECURE_NO_WARNINGS)
 else()
     target_compile_options(vulkan_render PRIVATE -Wall -Wextra -Wpedantic)
 endif()

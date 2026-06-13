@@ -31,6 +31,12 @@ build\nmake-debug\src\vulkan_render.exe --profile v1 --preview --scene assets\th
 build\nmake-debug\src\vulkan_render.exe --profile v1 --preview --scene assets\third_party\s72_examples\sg-Articulation.s72 --width 1280 --height 720
 ```
 
+Generic glTF/GLB static mesh smoke test:
+
+```powershell
+build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene path\to\model.glb --output out\model.bmp --width 1280 --height 720
+```
+
 ## v2 PBR And IBL
 
 Target behavior: add skybox rendering, tone mapping, normal mapping, displacement mapping, PBR material parameters, and environment map precomputation.

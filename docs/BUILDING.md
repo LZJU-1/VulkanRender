@@ -54,3 +54,10 @@ Open an official Scene'72 example in the realtime preview window:
 ```powershell
 build\nmake-debug\src\vulkan_render.exe --profile v1 --preview --scene assets\third_party\s72_examples\rotation.s72 --width 720 --height 720
 ```
+
+Render a glTF or GLB model:
+
+```powershell
+build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene path\to\model.glb --output out\model.bmp --width 1280 --height 720
+build\nmake-debug\src\vulkan_render.exe --profile v1 --preview --scene path\to\model.gltf --width 1280 --height 720
+```

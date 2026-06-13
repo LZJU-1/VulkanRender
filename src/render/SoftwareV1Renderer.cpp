@@ -1,5 +1,8 @@
 #include "render/SoftwareV1Renderer.hpp"
 
+#define CGLTF_IMPLEMENTATION
+#include <cgltf.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -840,6 +843,137 @@ S72Scene loadS72Scene(const std::filesystem::path& path, std::uint32_t frameInde
     return scene;
 }
 
+Vec3 transformGltfPoint(const float* m, Vec3 p) {
+    return {
+        m[0] * p.x + m[4] * p.y + m[8] * p.z + m[12],
+        m[1] * p.x + m[5] * p.y + m[9] * p.z + m[13],
+        m[2] * p.x + m[6] * p.y + m[10] * p.z + m[14],
+    };
+}
+
+Color colorFromFactor(const cgltf_primitive& primitive) {
+    if (primitive.material && primitive.material->has_pbr_metallic_roughness) {
+        const float* base = primitive.material->pbr_metallic_roughness.base_color_factor;
+        return {
+            static_cast<std::uint8_t>(std::clamp(base[0], 0.0f, 1.0f) * 255.0f + 0.5f),
+            static_cast<std::uint8_t>(std::clamp(base[1], 0.0f, 1.0f) * 255.0f + 0.5f),
+            static_cast<std::uint8_t>(std::clamp(base[2], 0.0f, 1.0f) * 255.0f + 0.5f),
+        };
+    }
+    return {190, 196, 205};
+}
+
+const cgltf_accessor* findAttribute(const cgltf_primitive& primitive, cgltf_attribute_type type, cgltf_int index = 0) {
+    for (cgltf_size i = 0; i < primitive.attributes_count; ++i) {
+        const cgltf_attribute& attr = primitive.attributes[i];
+        if (attr.type == type && attr.index == index) {
+            return attr.data;
+        }
+    }
+    return nullptr;
+}
+
+Vec3 readAccessorVec3(const cgltf_accessor* accessor, cgltf_size index, Vec3 fallback = {}) {
+    if (!accessor) {
+        return fallback;
+    }
+    float value[4] = {fallback.x, fallback.y, fallback.z, 1.0f};
+    if (!cgltf_accessor_read_float(accessor, index, value, 4)) {
+        return fallback;
+    }
+    return {value[0], value[1], value[2]};
+}
+
+Color readAccessorColor(const cgltf_accessor* accessor, cgltf_size index, Color fallback) {
+    if (!accessor) {
+        return fallback;
+    }
+    float value[4] = {
+        static_cast<float>(fallback.r) / 255.0f,
+        static_cast<float>(fallback.g) / 255.0f,
+        static_cast<float>(fallback.b) / 255.0f,
+        1.0f,
+    };
+    if (!cgltf_accessor_read_float(accessor, index, value, 4)) {
+        return fallback;
+    }
+    return {
+        static_cast<std::uint8_t>(std::clamp(value[0], 0.0f, 1.0f) * 255.0f + 0.5f),
+        static_cast<std::uint8_t>(std::clamp(value[1], 0.0f, 1.0f) * 255.0f + 0.5f),
+        static_cast<std::uint8_t>(std::clamp(value[2], 0.0f, 1.0f) * 255.0f + 0.5f),
+    };
+}
+
+struct GltfScene {
+    std::vector<Triangle3> triangles;
+    Camera camera;
+};
+
+void appendGltfPrimitive(const cgltf_node& node, const cgltf_primitive& primitive, std::vector<Triangle3>& triangles) {
+    if (primitive.type != cgltf_primitive_type_triangles) {
+        return;
+    }
+    const cgltf_accessor* positions = findAttribute(primitive, cgltf_attribute_type_position);
+    if (!positions) {
+        return;
+    }
+    const cgltf_accessor* colors = findAttribute(primitive, cgltf_attribute_type_color);
+    const Color materialColor = colorFromFactor(primitive);
+    float world[16]{};
+    cgltf_node_transform_world(&node, world);
+
+    const auto readIndex = [&primitive](cgltf_size i) {
+        return primitive.indices ? cgltf_accessor_read_index(primitive.indices, i) : i;
+    };
+    const cgltf_size indexCount = primitive.indices ? primitive.indices->count : positions->count;
+    for (cgltf_size i = 0; i + 2 < indexCount; i += 3) {
+        const cgltf_size ia = readIndex(i + 0);
+        const cgltf_size ib = readIndex(i + 1);
+        const cgltf_size ic = readIndex(i + 2);
+        const Vec3 a = transformGltfPoint(world, readAccessorVec3(positions, ia));
+        const Vec3 b = transformGltfPoint(world, readAccessorVec3(positions, ib));
+        const Vec3 c = transformGltfPoint(world, readAccessorVec3(positions, ic));
+        const Color ca = readAccessorColor(colors, ia, materialColor);
+        const Color cb = readAccessorColor(colors, ib, materialColor);
+        const Color cc = readAccessorColor(colors, ic, materialColor);
+        triangles.push_back({a, b, c, mixColor(ca, cb, cc, 1.0f)});
+    }
+}
+
+GltfScene loadGltfScene(const std::filesystem::path& path) {
+    cgltf_options options{};
+    cgltf_data* data = nullptr;
+    const std::string pathString = path.string();
+    cgltf_result result = cgltf_parse_file(&options, pathString.c_str(), &data);
+    if (result != cgltf_result_success || !data) {
+        throw std::runtime_error("Could not parse glTF/GLB: " + path.string());
+    }
+
+    struct DataGuard {
+        cgltf_data* data = nullptr;
+        ~DataGuard() { if (data) cgltf_free(data); }
+    } guard{data};
+
+    result = cgltf_load_buffers(&options, data, pathString.c_str());
+    if (result != cgltf_result_success) {
+        throw std::runtime_error("Could not load glTF buffers: " + path.string());
+    }
+
+    GltfScene scene;
+    for (cgltf_size nodeIndex = 0; nodeIndex < data->nodes_count; ++nodeIndex) {
+        const cgltf_node& node = data->nodes[nodeIndex];
+        if (!node.mesh) {
+            continue;
+        }
+        for (cgltf_size primitiveIndex = 0; primitiveIndex < node.mesh->primitives_count; ++primitiveIndex) {
+            appendGltfPrimitive(node, node.mesh->primitives[primitiveIndex], scene.triangles);
+        }
+    }
+
+    scene.camera = autoCameraFor(scene.triangles);
+    return scene;
+}
+
 std::vector<CubeInstance> defaultScene() {
     return {
         {"center", {-0.45f, 0.55f, 0.0f}, 1.0f, {0.86f, 0.32f, 0.24f}, 1.0f},
@@ -1156,19 +1290,31 @@ struct RenderedImage {
 };
 
 RenderedImage renderImage(const V1RenderSettings& settings) {
-    if (settings.scenePath.extension() == ".s72") {
-        S72Scene scene = loadS72Scene(settings.scenePath, settings.frameIndex);
+    const std::string extension = settings.scenePath.extension().string();
+    if (extension == ".s72" || extension == ".gltf" || extension == ".glb") {
+        std::vector<Triangle3> triangles;
+        Camera camera;
+        if (extension == ".s72") {
+            S72Scene scene = loadS72Scene(settings.scenePath, settings.frameIndex);
+            triangles = std::move(scene.triangles);
+            camera = scene.camera;
+        } else {
+            GltfScene scene = loadGltfScene(settings.scenePath);
+            triangles = std::move(scene.triangles);
+            camera = scene.camera;
+        }
+
         Image image(settings.width, settings.height);
         image.clear();
 
         V1RenderStats stats;
-        stats.objectCount = static_cast<std::uint32_t>(scene.triangles.size());
+        stats.objectCount = static_cast<std::uint32_t>(triangles.size());
         stats.outputPath = settings.outputPath;
 
-        const CameraBasis basis = makeBasis(scene.camera);
-        for (const Triangle3& tri : scene.triangles) {
+        const CameraBasis basis = makeBasis(camera);
+        for (const Triangle3& tri : triangles) {
             ++stats.visibleObjects;
-            drawTriangle3(image, tri, scene.camera, basis, settings, stats);
+            drawTriangle3(image, tri, camera, basis, settings, stats);
         }
 
         return {std::move(image), stats};

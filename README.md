@@ -37,4 +37,10 @@ Profiles:
 - `v4`: deferred shading, G-buffer, SSAO, many-light composition
 - `v5-rt`: realtime ray tracing profile with BLAS/TLAS, ray generation, miss, closest-hit, and accumulation passes
 
+Asset formats:
+
+- Scene'72 `.s72 + .b72` examples are supported in the v1 preview path.
+- Static `.gltf` and `.glb` meshes are supported in the v1 preview path.
+- Skinned animation, texture sampling, alpha blending, and full PBR material import are planned for later profiles.
+
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/RENDER_ME.md](docs/RENDER_ME.md).
