@@ -46,6 +46,15 @@ AppConfig CommandLine::parse(int argc, char** argv) {
             config.profile = std::string(requireValue(i, argc, argv, arg));
         } else if (arg == "--scene") {
             config.scenePath = std::string(requireValue(i, argc, argv, arg));
+        } else if (arg == "--output") {
+            config.outputPath = std::string(requireValue(i, argc, argv, arg));
+            config.renderImage = true;
+        } else if (arg == "--width") {
+            config.width = parseU32(requireValue(i, argc, argv, arg), arg);
+        } else if (arg == "--height") {
+            config.height = parseU32(requireValue(i, argc, argv, arg), arg);
+        } else if (arg == "--render") {
+            config.renderImage = true;
         } else if (arg == "--frames") {
             config.frames = parseU32(requireValue(i, argc, argv, arg), arg);
         } else if (arg == "--list-devices") {
@@ -69,6 +78,12 @@ AppConfig CommandLine::parse(int argc, char** argv) {
     if (config.frames == 0) {
         throw std::runtime_error("--frames must be greater than zero");
     }
+    if (config.width == 0 || config.height == 0) {
+        throw std::runtime_error("--width and --height must be greater than zero");
+    }
+    if (config.renderImage && config.outputPath.empty()) {
+        config.outputPath = "out/v1.bmp";
+    }
 
     if (!findProfile(config.profile)) {
         throw std::runtime_error("Unknown profile '" + config.profile + "'. Valid profiles: " + profileKeys());
@@ -81,7 +96,11 @@ void CommandLine::printHelp(std::ostream& out) {
     out
         << "vulkan_render options:\n"
         << "  --profile <" << profileKeys() << ">  Select a staged renderer profile\n"
-        << "  --scene <path>             Scene file placeholder for upcoming loader work\n"
+        << "  --scene <path>             Scene file for profiles that support loading\n"
+        << "  --render                   Render a headless image for the selected profile\n"
+        << "  --output <path>            Output BMP path; implies --render\n"
+        << "  --width <n>                Output width for headless renders\n"
+        << "  --height <n>               Output height for headless renders\n"
         << "  --frames <n>               Number of graph frames to execute\n"
         << "  --list-devices             Print backend and GPU capability information\n"
         << "  --validate                 Request Vulkan validation when implemented\n"

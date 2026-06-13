@@ -3,6 +3,7 @@ set(VR_SOURCES
     core/RenderGraph.cpp
     core/RendererApp.cpp
     platform/CommandLine.cpp
+    render/SoftwareV1Renderer.cpp
     rhi/RenderDevice.cpp
     rhi/VulkanDevice.cpp
     main.cpp
@@ -52,4 +53,3 @@ if(VR_BUILD_SHADERS)
     add_custom_target(vulkan_render_shaders DEPENDS ${VR_SHADER_OUTPUTS})
     add_dependencies(vulkan_render vulkan_render_shaders)
 endif()
-

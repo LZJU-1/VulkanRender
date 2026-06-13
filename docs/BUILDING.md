@@ -30,3 +30,8 @@ Run the realtime ray tracing profile:
 
 If the GPU or driver does not expose the required extensions, the app reports the missing support and keeps the graph in fallback mode unless `--require-rt` is passed.
 
+Render the current v1 image:
+
+```powershell
+build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene assets\scenes\v1.scene --output out\v1.bmp --width 1280 --height 720 --frames 16
+```

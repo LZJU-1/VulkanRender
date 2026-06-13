@@ -3,14 +3,17 @@
 #include <cstdint>
 #include <iosfwd>
 #include <string>
-#include <vector>
 
 namespace vr {
 
 struct AppConfig {
     std::string profile = "v1";
     std::string scenePath;
+    std::string outputPath;
     std::uint32_t frames = 1;
+    std::uint32_t width = 1280;
+    std::uint32_t height = 720;
+    bool renderImage = false;
     bool listDevices = false;
     bool enableValidation = false;
     bool enableRayTracing = false;
@@ -25,4 +28,3 @@ public:
 };
 
 } // namespace vr
-

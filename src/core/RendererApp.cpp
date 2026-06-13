@@ -2,6 +2,7 @@
 
 #include "core/FeatureProfile.hpp"
 #include "core/RenderGraph.hpp"
+#include "render/SoftwareV1Renderer.hpp"
 #include "rhi/RenderDevice.hpp"
 
 #include <iostream>
@@ -55,6 +56,28 @@ int RendererApp::run() {
             }
         }
         std::cout << '\n';
+    }
+
+    if (config_.renderImage) {
+        if (profile->id != ProfileId::V1SceneForward) {
+            std::cout << "Render output is currently implemented for v1 only; selected profile was not rendered.\n";
+            return 0;
+        }
+
+        V1RenderSettings settings;
+        settings.width = config_.width;
+        settings.height = config_.height;
+        settings.frameIndex = config_.frames - 1u;
+        settings.scenePath = config_.scenePath.empty() ? "assets/scenes/v1.scene" : config_.scenePath;
+        settings.outputPath = config_.outputPath;
+
+        const V1RenderStats stats = renderSoftwareV1(settings);
+        std::cout
+            << "Rendered v1 image: " << stats.outputPath.string()
+            << " objects=" << stats.objectCount
+            << " visible=" << stats.visibleObjects
+            << " triangles=" << stats.trianglesSubmitted
+            << '\n';
     }
 
     return 0;

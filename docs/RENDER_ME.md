@@ -8,6 +8,14 @@ Target behavior: load a scene, advance animation time, cull objects against the 
 
 Current implementation: profile and pass graph are wired; scene loading is represented as a deterministic pass boundary.
 
+Smoke render:
+
+```powershell
+build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene assets\scenes\v1.scene --output out\v1.bmp --width 1280 --height 720 --frames 16
+```
+
+This produces a headless BMP with simple material cubes, animation at the selected frame, and a deliberately off-frustum cube that is counted as culled.
+
 ## v2 PBR And IBL
 
 Target behavior: add skybox rendering, tone mapping, normal mapping, displacement mapping, PBR material parameters, and environment map precomputation.
@@ -31,4 +39,3 @@ Current implementation: deferred graph shape is ready and tested.
 Target behavior: opt into hardware ray tracing for primary visibility, reflections, shadows, or hybrid accumulation.
 
 Current implementation: the app detects Vulkan RT capability and exposes the RT graph stages. Concrete Vulkan BLAS/TLAS allocation and shader binding table upload are the next implementation step.
-
