@@ -150,6 +150,24 @@ scripts\build_msvc.bat
 C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
 ```
 
+## 2026-06-14 - V2 MSAA And Texture Filtering
+
+- Added GPU MSAA to the Vulkan preview path.
+  - The renderer selects 4x MSAA when the device supports it for both color and depth attachments, falling back to 2x or 1x.
+  - Rendering now targets a multisampled color attachment and resolves into the swapchain image before presentation.
+  - Depth attachments and both mesh/sky graphics pipelines use the selected sample count.
+- Added real texture mipmap generation during GPU texture upload.
+  - Textures are uploaded with a full mip chain when linear blitting is supported.
+  - The sampler now exposes the generated mip range instead of clamping to LOD 0.
+- Enabled anisotropic texture filtering when supported by the selected Vulkan device.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
+```
+
 ## 2026-06-14 - V2 Smooth Vertex Normals
 
 - Fixed visible faceted triangle shading in the Vulkan v2 preview.
