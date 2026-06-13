@@ -77,6 +77,7 @@ struct Camera {
 Vec3 operator+(Vec3 a, Vec3 b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
 Vec3 operator-(Vec3 a, Vec3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
 Vec3 operator*(Vec3 a, float s) { return {a.x * s, a.y * s, a.z * s}; }
+Vec3 operator/(Vec3 a, float s) { return {a.x / s, a.y / s, a.z / s}; }
 
 float dot(Vec3 a, Vec3 b) {
     return a.x * b.x + a.y * b.y + a.z * b.z;
@@ -100,6 +101,42 @@ Vec3 normalize(Vec3 v) {
         return {};
     }
     return v * (1.0f / len);
+}
+
+Quat normalize(Quat q) {
+    const float len = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+    if (len <= 0.00001f) {
+        return {};
+    }
+    return {q.x / len, q.y / len, q.z / len, q.w / len};
+}
+
+Quat operator*(Quat q, float s) {
+    return {q.x * s, q.y * s, q.z * s, q.w * s};
+}
+
+Quat operator+(Quat a, Quat b) {
+    return {a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w};
+}
+
+float dot(Quat a, Quat b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+}
+
+Quat slerp(Quat a, Quat b, float t) {
+    a = normalize(a);
+    b = normalize(b);
+    float cosTheta = dot(a, b);
+    if (cosTheta < 0.0f) {
+        b = b * -1.0f;
+        cosTheta = -cosTheta;
+    }
+    if (cosTheta > 0.9995f) {
+        return normalize(a * (1.0f - t) + b * t);
+    }
+    const float theta = std::acos(std::clamp(cosTheta, -1.0f, 1.0f));
+    const float sinTheta = std::sin(theta);
+    return normalize(a * (std::sin((1.0f - t) * theta) / sinTheta) + b * (std::sin(t * theta) / sinTheta));
 }
 
 Vec3 minVec(Vec3 a, Vec3 b) {
@@ -406,10 +443,19 @@ struct S72Camera {
     float farPlane = 100.0f;
 };
 
+struct S72Driver {
+    int node = -1;
+    std::string channel;
+    std::string interpolation = "LINEAR";
+    std::vector<float> times;
+    std::vector<float> values;
+};
+
 struct S72Scene {
     std::vector<S72Mesh> meshes;
     std::vector<S72Node> nodes;
     std::vector<S72Camera> cameras;
+    std::vector<S72Driver> drivers;
     std::vector<int> roots;
     std::vector<Triangle3> triangles;
     Camera camera;
@@ -487,6 +533,20 @@ std::vector<int> toRefs(const Json* value) {
     return out;
 }
 
+std::vector<float> toFloats(const Json* value) {
+    std::vector<float> out;
+    if (!value || value->type != Json::Type::Array) {
+        return out;
+    }
+    out.reserve(value->array.size());
+    for (const Json& item : value->array) {
+        if (item.type == Json::Type::Number) {
+            out.push_back(static_cast<float>(item.number));
+        }
+    }
+    return out;
+}
+
 S72Attribute parseAttribute(const Json* value) {
     S72Attribute attr;
     if (!value || value->type != Json::Type::Object) {
@@ -546,6 +606,104 @@ S72Camera parseCamera(const Json& object) {
         }
     }
     return camera;
+}
+
+S72Driver parseDriver(const Json& object) {
+    S72Driver driver;
+    driver.node = toRef(object.find("node"));
+    if (const Json* channel = object.find("channel")) {
+        driver.channel = channel->stringOr("");
+    }
+    if (const Json* interpolation = object.find("interpolation")) {
+        driver.interpolation = interpolation->stringOr("LINEAR");
+    }
+    driver.times = toFloats(object.find("times"));
+    driver.values = toFloats(object.find("values"));
+    return driver;
+}
+
+float animationDuration(const std::vector<S72Driver>& drivers) {
+    float duration = 0.0f;
+    for (const S72Driver& driver : drivers) {
+        if (!driver.times.empty()) {
+            duration = std::max(duration, driver.times.back());
+        }
+    }
+    return duration;
+}
+
+float animationTimeForFrame(std::uint32_t frameIndex, const std::vector<S72Driver>& drivers) {
+    const float duration = animationDuration(drivers);
+    if (duration <= 0.0f) {
+        return 0.0f;
+    }
+    const float seconds = static_cast<float>(frameIndex) / 24.0f;
+    return std::fmod(seconds, duration);
+}
+
+std::size_t keyframeIndex(const std::vector<float>& times, float time) {
+    if (times.size() < 2 || time <= times.front()) {
+        return 0;
+    }
+    for (std::size_t i = 0; i + 1 < times.size(); ++i) {
+        if (time < times[i + 1]) {
+            return i;
+        }
+    }
+    return times.size() - 1;
+}
+
+Vec3 sampleVec3(const S72Driver& driver, float time) {
+    if (driver.times.empty() || driver.values.size() < 3) {
+        return {};
+    }
+    const std::size_t i = keyframeIndex(driver.times, time);
+    const std::size_t aIndex = std::min(i, driver.times.size() - 1) * 3;
+    const Vec3 a{driver.values[aIndex + 0], driver.values[aIndex + 1], driver.values[aIndex + 2]};
+    if (i + 1 >= driver.times.size() || driver.interpolation == "STEP") {
+        return a;
+    }
+    const std::size_t bIndex = (i + 1) * 3;
+    const Vec3 b{driver.values[bIndex + 0], driver.values[bIndex + 1], driver.values[bIndex + 2]};
+    const float interval = std::max(0.00001f, driver.times[i + 1] - driver.times[i]);
+    const float t = std::clamp((time - driver.times[i]) / interval, 0.0f, 1.0f);
+    return a * (1.0f - t) + b * t;
+}
+
+Quat sampleQuat(const S72Driver& driver, float time) {
+    if (driver.times.empty() || driver.values.size() < 4) {
+        return {};
+    }
+    const std::size_t i = keyframeIndex(driver.times, time);
+    const std::size_t aIndex = std::min(i, driver.times.size() - 1) * 4;
+    const Quat a{driver.values[aIndex + 0], driver.values[aIndex + 1], driver.values[aIndex + 2], driver.values[aIndex + 3]};
+    if (i + 1 >= driver.times.size() || driver.interpolation == "STEP") {
+        return normalize(a);
+    }
+    const std::size_t bIndex = (i + 1) * 4;
+    const Quat b{driver.values[bIndex + 0], driver.values[bIndex + 1], driver.values[bIndex + 2], driver.values[bIndex + 3]};
+    const float interval = std::max(0.00001f, driver.times[i + 1] - driver.times[i]);
+    const float t = std::clamp((time - driver.times[i]) / interval, 0.0f, 1.0f);
+    if (driver.interpolation == "SLERP") {
+        return slerp(a, b, t);
+    }
+    return normalize(a * (1.0f - t) + b * t);
+}
+
+void applyDrivers(std::vector<S72Node>& nodes, const std::vector<S72Driver>& drivers, float time) {
+    for (const S72Driver& driver : drivers) {
+        if (driver.node < 0 || static_cast<std::size_t>(driver.node) >= nodes.size()) {
+            continue;
+        }
+        S72Node& node = nodes[static_cast<std::size_t>(driver.node)];
+        if (driver.channel == "translation") {
+            node.translation = sampleVec3(driver, time);
+        } else if (driver.channel == "scale") {
+            node.scale = sampleVec3(driver, time);
+        } else if (driver.channel == "rotation") {
+            node.rotation = sampleQuat(driver, time);
+        }
+    }
 }
 
 void appendMeshTriangles(
@@ -640,7 +798,7 @@ Camera autoCameraFor(const std::vector<Triangle3>& triangles) {
     return camera;
 }
 
-S72Scene loadS72Scene(const std::filesystem::path& path) {
+S72Scene loadS72Scene(const std::filesystem::path& path, std::uint32_t frameIndex) {
     Json root = JsonParser(readTextFile(path)).parse();
     if (root.type != Json::Type::Array || root.array.size() < 2 || root.array.front().stringOr("") != "s72-v1") {
         throw std::runtime_error("Not a Scene'72 v1 file: " + path.string());
@@ -664,10 +822,14 @@ S72Scene loadS72Scene(const std::filesystem::path& path) {
             scene.nodes[i] = parseNode(object);
         } else if (type == "CAMERA") {
             scene.cameras[i] = parseCamera(object);
+        } else if (type == "DRIVER") {
+            scene.drivers.push_back(parseDriver(object));
         } else if (type == "SCENE") {
             scene.roots = toRefs(object.find("roots"));
         }
     }
+
+    applyDrivers(scene.nodes, scene.drivers, animationTimeForFrame(frameIndex, scene.drivers));
 
     for (int rootIndex : scene.roots) {
         traverseS72Node(scene, basePath, rootIndex, identity());
@@ -995,7 +1157,7 @@ struct RenderedImage {
 
 RenderedImage renderImage(const V1RenderSettings& settings) {
     if (settings.scenePath.extension() == ".s72") {
-        S72Scene scene = loadS72Scene(settings.scenePath);
+        S72Scene scene = loadS72Scene(settings.scenePath, settings.frameIndex);
         Image image(settings.width, settings.height);
         image.clear();
 

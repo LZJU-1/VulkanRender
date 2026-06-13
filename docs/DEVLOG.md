@@ -45,3 +45,19 @@ build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene assets\thi
 build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene assets\third_party\s72_examples\sg-Articulation.s72 --output out\official-articulation.bmp --width 1280 --height 720
 build\nmake-debug\src\vulkan_render.exe --profile v1 --preview --scene assets\third_party\s72_examples\rotation.s72 --width 720 --height 720
 ```
+
+## 2026-06-13 - Scene'72 Driver Animation
+
+- Added Scene'72 `DRIVER` support for v1 examples.
+- Implemented `translation`, `scale`, and `rotation` channels with `STEP`, `LINEAR`, and `SLERP` sampling.
+- Verified `sg-Articulation.s72` changes pose across frames and loops back to the start.
+- Verified realtime preview with the official articulated arm scene.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene assets\third_party\s72_examples\sg-Articulation.s72 --output out\official-articulation-frame001.bmp --width 1280 --height 720 --frames 1
+build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene assets\third_party\s72_examples\sg-Articulation.s72 --output out\official-articulation-frame025.bmp --width 1280 --height 720 --frames 25
+build\nmake-debug\src\vulkan_render.exe --profile v1 --preview --scene assets\third_party\s72_examples\sg-Articulation.s72 --width 1280 --height 720
+```
