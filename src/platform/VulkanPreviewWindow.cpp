@@ -429,6 +429,23 @@ public:
         ++frameIndex_;
     }
 
+    void updateGeometry(const GpuPreviewGeometry& geometry) {
+        const VkDeviceSize bytes = sizeof(GpuPreviewVertex) * geometry.vertices.size();
+        if (bytes > vertexBytes_) {
+            throw std::runtime_error("Animated geometry grew beyond the Vulkan preview vertex buffer");
+        }
+        if (bytes == 0) {
+            vertexCount_ = 0;
+            return;
+        }
+        vkWaitForFences(device_, 1, &inFlight_, VK_TRUE, UINT64_MAX);
+        void* mapped = nullptr;
+        require(vkMapMemory(device_, vertexMemory_, 0, bytes, 0, &mapped), "vkMapMemory(animated vertex)");
+        std::memcpy(mapped, geometry.vertices.data(), static_cast<std::size_t>(bytes));
+        vkUnmapMemory(device_, vertexMemory_);
+        vertexCount_ = static_cast<std::uint32_t>(geometry.vertices.size());
+    }
+
 private:
     void createInstance() {
         VkApplicationInfo appInfo{};
@@ -822,11 +839,11 @@ private:
 
     void createBuffers() {
         vertexCount_ = static_cast<std::uint32_t>(geometry_.vertices.size());
-        const VkDeviceSize vertexBytes = std::max<VkDeviceSize>(1, sizeof(GpuPreviewVertex) * geometry_.vertices.size());
-        createBuffer(vertexBytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vertexBuffer_, vertexMemory_);
+        vertexBytes_ = std::max<VkDeviceSize>(1, sizeof(GpuPreviewVertex) * geometry_.vertices.size());
+        createBuffer(vertexBytes_, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vertexBuffer_, vertexMemory_);
         void* mapped = nullptr;
-        require(vkMapMemory(device_, vertexMemory_, 0, vertexBytes, 0, &mapped), "vkMapMemory(vertex)");
-        std::memcpy(mapped, geometry_.vertices.data(), static_cast<std::size_t>(vertexBytes));
+        require(vkMapMemory(device_, vertexMemory_, 0, vertexBytes_, 0, &mapped), "vkMapMemory(vertex)");
+        std::memcpy(mapped, geometry_.vertices.data(), sizeof(GpuPreviewVertex) * geometry_.vertices.size());
         vkUnmapMemory(device_, vertexMemory_);
 
         createBuffer(sizeof(CameraUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, uniformBuffer_, uniformMemory_);
@@ -1105,6 +1122,7 @@ private:
     std::vector<VkFramebuffer> framebuffers_;
     VkBuffer vertexBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory vertexMemory_ = VK_NULL_HANDLE;
+    VkDeviceSize vertexBytes_ = 0;
     std::uint32_t vertexCount_ = 0;
     VkBuffer uniformBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory uniformMemory_ = VK_NULL_HANDLE;
@@ -1130,6 +1148,7 @@ struct PreviewState {
     bool roaming = false;
     float yaw = 0.0f;
     float pitch = 0.0f;
+    std::uint32_t frameIndex = 0;
     std::chrono::steady_clock::time_point lastTick = std::chrono::steady_clock::now();
 };
 
@@ -1191,6 +1210,19 @@ void updateCamera(PreviewState& state, float dt) {
     writeCameraPose(state, eyeOf(state.camera) + movement);
 }
 
+bool shouldAnimateGeometry(const PreviewState& state) {
+    return !state.settings.enableV2Shading && state.settings.scenePath.extension() == ".s72";
+}
+
+void advanceAnimatedGeometry(PreviewState& state) {
+    if (!shouldAnimateGeometry(state)) {
+        return;
+    }
+    state.settings.frameIndex = state.frameIndex++;
+    state.geometry = buildGpuPreviewGeometry(state.settings);
+    state.renderer->updateGeometry(state.geometry);
+}
+
 LRESULT CALLBACK vulkanPreviewProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
     case WM_CREATE:
@@ -1204,8 +1236,9 @@ LRESULT CALLBACK vulkanPreviewProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
             const auto now = std::chrono::steady_clock::now();
             const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - state->lastTick).count();
             state->lastTick = now;
-            updateCamera(*state, std::max(0.001f, static_cast<float>(elapsedMs) / 1000.0f));
             try {
+                advanceAnimatedGeometry(*state);
+                updateCamera(*state, std::max(0.001f, static_cast<float>(elapsedMs) / 1000.0f));
                 state->renderer->draw(state->camera);
             } catch (const std::exception& error) {
                 std::cerr << "Vulkan preview draw failed: " << error.what() << '\n';

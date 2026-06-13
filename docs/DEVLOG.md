@@ -150,6 +150,21 @@ scripts\build_msvc.bat
 C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
 ```
 
+## 2026-06-13 - V1 Vulkan Preview Animation Upload
+
+- Fixed v1 Scene'72 animation previews after the preview path moved to Vulkan.
+- The issue was that the Vulkan preview built its vertex buffer only once at window creation; animated `.s72` scenes changed through `frameIndex`, but the updated geometry was never uploaded to the GPU.
+- Added per-frame geometry rebuild/upload for v1 `.s72` previews while keeping v2 material previews cached/static.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v1 --preview --scene assets\third_party\s72_examples\sg-Articulation.s72 --width 1280 --height 720
+C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene assets\third_party\s72_examples\sg-Articulation.s72 --frames 1 --output out\articulation-frame-001-check.bmp --width 640 --height 360
+C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene assets\third_party\s72_examples\sg-Articulation.s72 --frames 24 --output out\articulation-frame-024-check.bmp --width 640 --height 360
+```
+
 ## 2026-06-13 - V2 GPU Material Preview Shading
 
 - Checked the Renderer72 README v2.0 demos: the reference splits material work into skybox/tone mapping, normal mapping, displacement mapping, PBR+IBL, and PBR material spheres.
