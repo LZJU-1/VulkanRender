@@ -27,3 +27,21 @@ Preview command:
 ```powershell
 build\nmake-debug\src\vulkan_render.exe --profile v1 --preview --scene assets\scenes\v1.scene --width 960 --height 540
 ```
+
+## 2026-06-13 - Official Scene'72 v1 Examples
+
+- Vendored the official `15-472/s72` `s24` examples needed for v1 demos: `rotation.s72` and `sg-Articulation.s72` with their `.b72` buffers.
+- Added a minimal Scene'72 v1 loader for official examples: JSON parsing, scene roots, node transforms, non-indexed `TRIANGLE_LIST` meshes, `POSITION` float3, and `COLOR` rgba8.
+- Rendered official examples:
+  - `out\official-rotation.bmp`
+  - `out\official-articulation.bmp`
+- Verified realtime preview with official `rotation.s72`.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene assets\third_party\s72_examples\rotation.s72 --output out\official-rotation.bmp --width 960 --height 960
+build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene assets\third_party\s72_examples\sg-Articulation.s72 --output out\official-articulation.bmp --width 1280 --height 720
+build\nmake-debug\src\vulkan_render.exe --profile v1 --preview --scene assets\third_party\s72_examples\rotation.s72 --width 720 --height 720
+```
