@@ -2,9 +2,11 @@ struct VertexIn {
     [[vk::location(0)]] float3 position : POSITION;
     [[vk::location(1)]] float3 normal : NORMAL;
     [[vk::location(2)]] float3 color : COLOR0;
-    [[vk::location(3)]] float roughness : TEXCOORD0;
-    [[vk::location(4)]] float metalness : TEXCOORD1;
-    [[vk::location(5)]] float materialKind : TEXCOORD2;
+    [[vk::location(3)]] float2 uv : TEXCOORD0;
+    [[vk::location(4)]] float textured : TEXCOORD1;
+    [[vk::location(5)]] float roughness : TEXCOORD2;
+    [[vk::location(6)]] float metalness : TEXCOORD3;
+    [[vk::location(7)]] float materialKind : TEXCOORD4;
 };
 
 struct VertexOut {
@@ -12,9 +14,11 @@ struct VertexOut {
     [[vk::location(0)]] float3 color : COLOR0;
     [[vk::location(1)]] float3 normal : NORMAL;
     [[vk::location(2)]] float3 worldPos : TEXCOORD0;
-    [[vk::location(3)]] float roughness : TEXCOORD1;
-    [[vk::location(4)]] float metalness : TEXCOORD2;
-    [[vk::location(5)]] float materialKind : TEXCOORD3;
+    [[vk::location(3)]] float2 uv : TEXCOORD1;
+    [[vk::location(4)]] float textured : TEXCOORD2;
+    [[vk::location(5)]] float roughness : TEXCOORD3;
+    [[vk::location(6)]] float metalness : TEXCOORD4;
+    [[vk::location(7)]] float materialKind : TEXCOORD5;
 };
 
 cbuffer Camera : register(b0) {
@@ -43,6 +47,8 @@ VertexOut main(VertexIn input) {
     output.color = input.color;
     output.normal = normalize(input.normal);
     output.worldPos = input.position;
+    output.uv = input.uv;
+    output.textured = input.textured;
     output.roughness = input.roughness;
     output.metalness = input.metalness;
     output.materialKind = input.materialKind;

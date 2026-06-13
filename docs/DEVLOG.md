@@ -150,6 +150,23 @@ scripts\build_msvc.bat
 C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
 ```
 
+## 2026-06-14 - V2 GPU Texture And Bump/Parallax Preview
+
+- Added per-vertex UVs to the GPU preview geometry instead of using one averaged UV per triangle.
+- Added a Vulkan sampled image + sampler descriptor path for the official `wood_floor_deck_diff_1k.png` albedo texture.
+- Uploads the albedo texture through a staging buffer into an optimal tiled GPU image.
+- Updated the v2 mesh fragment shader to sample albedo in the GPU fragment stage.
+- Added shader-side bump mapping and parallax-style UV displacement using albedo luminance as a height source for the current official material scene.
+- This moves v2 closer to the Renderer72 v2 feature set: sky/tone mapping, PBR material parameters, texture sampling, normal-map-style perturbation, and displacement-style parallax are now represented in the GPU path.
+- Current limits: the official local `materials.s72` bundle does not include dedicated normal or height maps, so this uses albedo-derived height until proper normal/displacement demo assets are added.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
+```
+
 ## 2026-06-14 - V2 GPU Sky And Material Parameters
 
 - Added roughness, metalness, and material kind to the Vulkan preview vertex layout.

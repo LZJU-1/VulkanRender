@@ -2,9 +2,11 @@ struct FragmentIn {
     [[vk::location(0)]] float3 color : COLOR0;
     [[vk::location(1)]] float3 normal : NORMAL;
     [[vk::location(2)]] float3 worldPos : TEXCOORD0;
-    [[vk::location(3)]] float roughness : TEXCOORD1;
-    [[vk::location(4)]] float metalness : TEXCOORD2;
-    [[vk::location(5)]] float materialKind : TEXCOORD3;
+    [[vk::location(3)]] float2 uv : TEXCOORD1;
+    [[vk::location(4)]] float textured : TEXCOORD2;
+    [[vk::location(5)]] float roughness : TEXCOORD3;
+    [[vk::location(6)]] float metalness : TEXCOORD4;
+    [[vk::location(7)]] float materialKind : TEXCOORD5;
 };
 
 cbuffer Camera : register(b0) {
@@ -13,6 +15,9 @@ cbuffer Camera : register(b0) {
     float4 upTanHalf;
     float4 forwardAspect;
 };
+
+[[vk::binding(1, 0)]] Texture2D<float4> albedoTexture;
+[[vk::binding(2, 0)]] SamplerState albedoSampler;
 
 float3 toneMap(float3 hdr) {
     float3 mapped = hdr / (hdr + 1.0.xxx);
@@ -34,11 +39,44 @@ float3 fresnelSchlick(float cosTheta, float3 f0) {
     return f0 + (1.0.xxx - f0) * pow(1.0 - saturate(cosTheta), 5.0);
 }
 
+float albedoHeight(float2 uv) {
+    float3 color = albedoTexture.Sample(albedoSampler, uv).rgb;
+    return dot(color, float3(0.2126, 0.7152, 0.0722));
+}
+
 float4 main(FragmentIn input) : SV_Target0 {
     float3 normal = normalize(input.normal);
     float3 view = normalize(eyeNear.xyz - input.worldPos);
     if (dot(normal, view) < 0.0) {
         normal = -normal;
+    }
+
+    float2 uv = input.uv;
+    if (input.textured > 0.5) {
+        float3 dpdx = ddx(input.worldPos);
+        float3 dpdy = ddy(input.worldPos);
+        float2 duvdx = ddx(input.uv);
+        float2 duvdy = ddy(input.uv);
+        float det = duvdx.x * duvdy.y - duvdx.y * duvdy.x;
+        float invDet = abs(det) > 1e-5 ? rcp(det) : 1.0;
+        float3 tangent = normalize((dpdx * duvdy.y - dpdy * duvdx.y) * invDet);
+        float3 bitangent = normalize((-dpdx * duvdy.x + dpdy * duvdx.x) * invDet);
+
+        float height = albedoHeight(uv);
+        float3 viewTangent = float3(dot(view, tangent), dot(view, bitangent), max(0.22, dot(view, normal)));
+        uv += viewTangent.xy * ((height - 0.5) * 0.035 / viewTangent.z);
+
+        uint texWidth = 1;
+        uint texHeight = 1;
+        albedoTexture.GetDimensions(texWidth, texHeight);
+        float2 texel = 1.0 / float2(max(texWidth, 1), max(texHeight, 1));
+        float hL = albedoHeight(uv - float2(texel.x, 0.0));
+        float hR = albedoHeight(uv + float2(texel.x, 0.0));
+        float hD = albedoHeight(uv - float2(0.0, texel.y));
+        float hU = albedoHeight(uv + float2(0.0, texel.y));
+        float dHdu = (hR - hL) * 3.0;
+        float dHdv = (hU - hD) * 3.0;
+        normal = normalize(normal - tangent * dHdu - bitangent * dHdv);
     }
 
     float3 lightDir = normalize(float3(-0.35, -0.55, 0.76));
@@ -49,7 +87,8 @@ float4 main(FragmentIn input) : SV_Target0 {
     float metalness = saturate(input.metalness);
     float materialKind = input.materialKind;
 
-    float3 base = saturate(input.color);
+    float3 texel = albedoTexture.Sample(albedoSampler, uv).rgb;
+    float3 base = lerp(saturate(input.color), texel, saturate(input.textured));
     float3 reflected = reflect(-view, normal);
     float3 env = skyRadiance(reflected);
     float3 ambient = skyRadiance(normal) * 0.20;

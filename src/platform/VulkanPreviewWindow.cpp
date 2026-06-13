@@ -1,5 +1,7 @@
 #include "platform/VulkanPreviewWindow.hpp"
 
+#include <stb_image.h>
+
 #define NOMINMAX
 #define VK_USE_PLATFORM_WIN32_KHR
 #define VK_NO_PROTOTYPES
@@ -84,12 +86,15 @@ PFN_vkCreateImage vkCreateImage = nullptr;
 PFN_vkDestroyImage vkDestroyImage = nullptr;
 PFN_vkGetImageMemoryRequirements vkGetImageMemoryRequirements = nullptr;
 PFN_vkBindImageMemory vkBindImageMemory = nullptr;
+PFN_vkCreateSampler vkCreateSampler = nullptr;
+PFN_vkDestroySampler vkDestroySampler = nullptr;
 PFN_vkCreateCommandPool vkCreateCommandPool = nullptr;
 PFN_vkDestroyCommandPool vkDestroyCommandPool = nullptr;
 PFN_vkAllocateCommandBuffers vkAllocateCommandBuffers = nullptr;
 PFN_vkResetCommandBuffer vkResetCommandBuffer = nullptr;
 PFN_vkBeginCommandBuffer vkBeginCommandBuffer = nullptr;
 PFN_vkEndCommandBuffer vkEndCommandBuffer = nullptr;
+PFN_vkFreeCommandBuffers vkFreeCommandBuffers = nullptr;
 PFN_vkCmdBeginRenderPass vkCmdBeginRenderPass = nullptr;
 PFN_vkCmdEndRenderPass vkCmdEndRenderPass = nullptr;
 PFN_vkCmdBindPipeline vkCmdBindPipeline = nullptr;
@@ -97,6 +102,8 @@ PFN_vkCmdBindDescriptorSets vkCmdBindDescriptorSets = nullptr;
 PFN_vkCmdBindVertexBuffers vkCmdBindVertexBuffers = nullptr;
 PFN_vkCmdSetViewport vkCmdSetViewport = nullptr;
 PFN_vkCmdSetScissor vkCmdSetScissor = nullptr;
+PFN_vkCmdPipelineBarrier vkCmdPipelineBarrier = nullptr;
+PFN_vkCmdCopyBufferToImage vkCmdCopyBufferToImage = nullptr;
 PFN_vkCmdDraw vkCmdDraw = nullptr;
 PFN_vkCreateSemaphore vkCreateSemaphore = nullptr;
 PFN_vkDestroySemaphore vkDestroySemaphore = nullptr;
@@ -105,6 +112,7 @@ PFN_vkDestroyFence vkDestroyFence = nullptr;
 PFN_vkWaitForFences vkWaitForFences = nullptr;
 PFN_vkResetFences vkResetFences = nullptr;
 PFN_vkQueueSubmit vkQueueSubmit = nullptr;
+PFN_vkQueueWaitIdle vkQueueWaitIdle = nullptr;
 
 HMODULE vulkanLibraryHandle() {
     static HMODULE library = nullptr;
@@ -344,6 +352,8 @@ public:
         createFramebuffers();
         previewLog("VulkanGpuRenderer: createBuffers");
         createBuffers();
+        previewLog("VulkanGpuRenderer: createTextureResources");
+        createTextureResources();
         previewLog("VulkanGpuRenderer: createDescriptors");
         createDescriptors();
         previewLog("VulkanGpuRenderer: createPipeline");
@@ -368,6 +378,10 @@ public:
         if (device_ != VK_NULL_HANDLE && pipelineLayout_ != VK_NULL_HANDLE) vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr);
         if (device_ != VK_NULL_HANDLE && descriptorPool_ != VK_NULL_HANDLE) vkDestroyDescriptorPool(device_, descriptorPool_, nullptr);
         if (device_ != VK_NULL_HANDLE && descriptorSetLayout_ != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, descriptorSetLayout_, nullptr);
+        if (device_ != VK_NULL_HANDLE && albedoSampler_ != VK_NULL_HANDLE) vkDestroySampler(device_, albedoSampler_, nullptr);
+        if (device_ != VK_NULL_HANDLE && albedoView_ != VK_NULL_HANDLE) vkDestroyImageView(device_, albedoView_, nullptr);
+        if (device_ != VK_NULL_HANDLE && albedoImage_ != VK_NULL_HANDLE) vkDestroyImage(device_, albedoImage_, nullptr);
+        if (device_ != VK_NULL_HANDLE && albedoMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, albedoMemory_, nullptr);
         if (device_ != VK_NULL_HANDLE && uniformBuffer_ != VK_NULL_HANDLE) vkDestroyBuffer(device_, uniformBuffer_, nullptr);
         if (device_ != VK_NULL_HANDLE && uniformMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, uniformMemory_, nullptr);
         if (device_ != VK_NULL_HANDLE && vertexBuffer_ != VK_NULL_HANDLE) vkDestroyBuffer(device_, vertexBuffer_, nullptr);
@@ -522,12 +536,15 @@ private:
         loadDevice(device_, vkDestroyImage, "vkDestroyImage");
         loadDevice(device_, vkGetImageMemoryRequirements, "vkGetImageMemoryRequirements");
         loadDevice(device_, vkBindImageMemory, "vkBindImageMemory");
+        loadDevice(device_, vkCreateSampler, "vkCreateSampler");
+        loadDevice(device_, vkDestroySampler, "vkDestroySampler");
         loadDevice(device_, vkCreateCommandPool, "vkCreateCommandPool");
         loadDevice(device_, vkDestroyCommandPool, "vkDestroyCommandPool");
         loadDevice(device_, vkAllocateCommandBuffers, "vkAllocateCommandBuffers");
         loadDevice(device_, vkResetCommandBuffer, "vkResetCommandBuffer");
         loadDevice(device_, vkBeginCommandBuffer, "vkBeginCommandBuffer");
         loadDevice(device_, vkEndCommandBuffer, "vkEndCommandBuffer");
+        loadDevice(device_, vkFreeCommandBuffers, "vkFreeCommandBuffers");
         loadDevice(device_, vkCmdBeginRenderPass, "vkCmdBeginRenderPass");
         loadDevice(device_, vkCmdEndRenderPass, "vkCmdEndRenderPass");
         loadDevice(device_, vkCmdBindPipeline, "vkCmdBindPipeline");
@@ -535,6 +552,8 @@ private:
         loadDevice(device_, vkCmdBindVertexBuffers, "vkCmdBindVertexBuffers");
         loadDevice(device_, vkCmdSetViewport, "vkCmdSetViewport");
         loadDevice(device_, vkCmdSetScissor, "vkCmdSetScissor");
+        loadDevice(device_, vkCmdPipelineBarrier, "vkCmdPipelineBarrier");
+        loadDevice(device_, vkCmdCopyBufferToImage, "vkCmdCopyBufferToImage");
         loadDevice(device_, vkCmdDraw, "vkCmdDraw");
         loadDevice(device_, vkCreateSemaphore, "vkCreateSemaphore");
         loadDevice(device_, vkDestroySemaphore, "vkDestroySemaphore");
@@ -543,6 +562,7 @@ private:
         loadDevice(device_, vkWaitForFences, "vkWaitForFences");
         loadDevice(device_, vkResetFences, "vkResetFences");
         loadDevice(device_, vkQueueSubmit, "vkQueueSubmit");
+        loadDevice(device_, vkQueueWaitIdle, "vkQueueWaitIdle");
     }
 
     void createSurface() {
@@ -850,6 +870,148 @@ private:
         createBuffer(sizeof(CameraUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, uniformBuffer_, uniformMemory_);
     }
 
+    VkCommandBuffer beginOneTimeCommands() {
+        VkCommandPoolCreateInfo pool{};
+        pool.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        pool.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+        pool.queueFamilyIndex = queueFamilies_.graphics;
+        require(vkCreateCommandPool(device_, &pool, nullptr, &uploadCommandPool_), "vkCreateCommandPool(upload)");
+
+        VkCommandBufferAllocateInfo allocate{};
+        allocate.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocate.commandPool = uploadCommandPool_;
+        allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocate.commandBufferCount = 1;
+        VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+        require(vkAllocateCommandBuffers(device_, &allocate, &commandBuffer), "vkAllocateCommandBuffers(upload)");
+
+        VkCommandBufferBeginInfo begin{};
+        begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        require(vkBeginCommandBuffer(commandBuffer, &begin), "vkBeginCommandBuffer(upload)");
+        return commandBuffer;
+    }
+
+    void endOneTimeCommands(VkCommandBuffer commandBuffer) {
+        require(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer(upload)");
+        VkSubmitInfo submit{};
+        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &commandBuffer;
+        require(vkQueueSubmit(graphicsQueue_, 1, &submit, VK_NULL_HANDLE), "vkQueueSubmit(upload)");
+        require(vkQueueWaitIdle(graphicsQueue_), "vkQueueWaitIdle(upload)");
+        vkFreeCommandBuffers(device_, uploadCommandPool_, 1, &commandBuffer);
+        vkDestroyCommandPool(device_, uploadCommandPool_, nullptr);
+        uploadCommandPool_ = VK_NULL_HANDLE;
+    }
+
+    void transitionImage(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout) {
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.oldLayout = oldLayout;
+        barrier.newLayout = newLayout;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = image;
+        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrier.subresourceRange.baseMipLevel = 0;
+        barrier.subresourceRange.levelCount = 1;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount = 1;
+
+        VkPipelineStageFlags srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        VkPipelineStageFlags dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        } else {
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        }
+        vkCmdPipelineBarrier(commandBuffer, srcStage, dstStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    }
+
+    void createTextureResources() {
+        int width = 1;
+        int height = 1;
+        int channels = 4;
+        stbi_uc white[] = {255, 255, 255, 255};
+        stbi_uc* loaded = nullptr;
+        stbi_uc* pixels = white;
+        if (!geometry_.albedoTexturePath.empty()) {
+            loaded = stbi_load(geometry_.albedoTexturePath.string().c_str(), &width, &height, &channels, 4);
+            if (loaded) {
+                pixels = loaded;
+                channels = 4;
+            } else {
+                previewLog("createTextureResources: failed to load " + geometry_.albedoTexturePath.string());
+            }
+        }
+
+        const VkDeviceSize imageBytes = static_cast<VkDeviceSize>(width) * static_cast<VkDeviceSize>(height) * 4;
+        VkBuffer stagingBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+        createBuffer(imageBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, stagingBuffer, stagingMemory);
+        void* mapped = nullptr;
+        require(vkMapMemory(device_, stagingMemory, 0, imageBytes, 0, &mapped), "vkMapMemory(texture staging)");
+        std::memcpy(mapped, pixels, static_cast<std::size_t>(imageBytes));
+        vkUnmapMemory(device_, stagingMemory);
+        if (loaded) {
+            stbi_image_free(loaded);
+        }
+
+        VkImageCreateInfo image{};
+        image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        image.imageType = VK_IMAGE_TYPE_2D;
+        image.extent = {static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height), 1};
+        image.mipLevels = 1;
+        image.arrayLayers = 1;
+        image.format = VK_FORMAT_R8G8B8A8_UNORM;
+        image.tiling = VK_IMAGE_TILING_OPTIMAL;
+        image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        image.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        image.samples = VK_SAMPLE_COUNT_1_BIT;
+        image.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        require(vkCreateImage(device_, &image, nullptr, &albedoImage_), "vkCreateImage(albedo)");
+
+        VkMemoryRequirements requirements{};
+        vkGetImageMemoryRequirements(device_, albedoImage_, &requirements);
+        VkMemoryAllocateInfo allocate{};
+        allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocate.allocationSize = requirements.size;
+        allocate.memoryTypeIndex = findMemoryType(physicalDevice_, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        require(vkAllocateMemory(device_, &allocate, nullptr, &albedoMemory_), "vkAllocateMemory(albedo)");
+        require(vkBindImageMemory(device_, albedoImage_, albedoMemory_, 0), "vkBindImageMemory(albedo)");
+
+        VkCommandBuffer commandBuffer = beginOneTimeCommands();
+        transitionImage(commandBuffer, albedoImage_, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        copy.imageSubresource.mipLevel = 0;
+        copy.imageSubresource.baseArrayLayer = 0;
+        copy.imageSubresource.layerCount = 1;
+        copy.imageExtent = {static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height), 1};
+        vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, albedoImage_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        transitionImage(commandBuffer, albedoImage_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        endOneTimeCommands(commandBuffer);
+
+        vkDestroyBuffer(device_, stagingBuffer, nullptr);
+        vkFreeMemory(device_, stagingMemory, nullptr);
+
+        albedoView_ = createImageView(albedoImage_, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT);
+        VkSamplerCreateInfo sampler{};
+        sampler.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        sampler.magFilter = VK_FILTER_LINEAR;
+        sampler.minFilter = VK_FILTER_LINEAR;
+        sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        sampler.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        sampler.maxLod = 0.0f;
+        require(vkCreateSampler(device_, &sampler, nullptr, &albedoSampler_), "vkCreateSampler(albedo)");
+    }
+
     void createDescriptors() {
         VkDescriptorSetLayoutBinding cameraBinding{};
         cameraBinding.binding = 0;
@@ -857,20 +1019,37 @@ private:
         cameraBinding.descriptorCount = 1;
         cameraBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
+        VkDescriptorSetLayoutBinding textureBinding{};
+        textureBinding.binding = 1;
+        textureBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        textureBinding.descriptorCount = 1;
+        textureBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        VkDescriptorSetLayoutBinding samplerBinding{};
+        samplerBinding.binding = 2;
+        samplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+        samplerBinding.descriptorCount = 1;
+        samplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        std::array<VkDescriptorSetLayoutBinding, 3> bindings{cameraBinding, textureBinding, samplerBinding};
         VkDescriptorSetLayoutCreateInfo layout{};
         layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        layout.bindingCount = 1;
-        layout.pBindings = &cameraBinding;
+        layout.bindingCount = static_cast<std::uint32_t>(bindings.size());
+        layout.pBindings = bindings.data();
         require(vkCreateDescriptorSetLayout(device_, &layout, nullptr, &descriptorSetLayout_), "vkCreateDescriptorSetLayout");
 
-        VkDescriptorPoolSize poolSize{};
-        poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        poolSize.descriptorCount = 1;
+        std::array<VkDescriptorPoolSize, 3> poolSizes{};
+        poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        poolSizes[0].descriptorCount = 1;
+        poolSizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        poolSizes[1].descriptorCount = 1;
+        poolSizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+        poolSizes[2].descriptorCount = 1;
         VkDescriptorPoolCreateInfo pool{};
         pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         pool.maxSets = 1;
-        pool.poolSizeCount = 1;
-        pool.pPoolSizes = &poolSize;
+        pool.poolSizeCount = static_cast<std::uint32_t>(poolSizes.size());
+        pool.pPoolSizes = poolSizes.data();
         require(vkCreateDescriptorPool(device_, &pool, nullptr, &descriptorPool_), "vkCreateDescriptorPool");
 
         VkDescriptorSetAllocateInfo allocate{};
@@ -884,14 +1063,32 @@ private:
         bufferInfo.buffer = uniformBuffer_;
         bufferInfo.offset = 0;
         bufferInfo.range = sizeof(CameraUniform);
-        VkWriteDescriptorSet write{};
-        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        write.dstSet = descriptorSet_;
-        write.dstBinding = 0;
-        write.descriptorCount = 1;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        write.pBufferInfo = &bufferInfo;
-        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        VkDescriptorImageInfo imageInfo{};
+        imageInfo.imageView = albedoView_;
+        imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkDescriptorImageInfo samplerInfo{};
+        samplerInfo.sampler = albedoSampler_;
+
+        std::array<VkWriteDescriptorSet, 3> writes{};
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet = descriptorSet_;
+        writes[0].dstBinding = 0;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[0].pBufferInfo = &bufferInfo;
+        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet = descriptorSet_;
+        writes[1].dstBinding = 1;
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        writes[1].pImageInfo = &imageInfo;
+        writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[2].dstSet = descriptorSet_;
+        writes[2].dstBinding = 2;
+        writes[2].descriptorCount = 1;
+        writes[2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+        writes[2].pImageInfo = &samplerInfo;
+        vkUpdateDescriptorSets(device_, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
     }
 
     VkShaderModule createShader(const std::filesystem::path& path) {
@@ -923,13 +1120,15 @@ private:
         binding.binding = 0;
         binding.stride = sizeof(GpuPreviewVertex);
         binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-        std::array<VkVertexInputAttributeDescription, 6> attributes{};
+        std::array<VkVertexInputAttributeDescription, 8> attributes{};
         attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuPreviewVertex, px)};
         attributes[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuPreviewVertex, nx)};
         attributes[2] = {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuPreviewVertex, r)};
-        attributes[3] = {3, 0, VK_FORMAT_R32_SFLOAT, offsetof(GpuPreviewVertex, roughness)};
-        attributes[4] = {4, 0, VK_FORMAT_R32_SFLOAT, offsetof(GpuPreviewVertex, metalness)};
-        attributes[5] = {5, 0, VK_FORMAT_R32_SFLOAT, offsetof(GpuPreviewVertex, kind)};
+        attributes[3] = {3, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(GpuPreviewVertex, u)};
+        attributes[4] = {4, 0, VK_FORMAT_R32_SFLOAT, offsetof(GpuPreviewVertex, textured)};
+        attributes[5] = {5, 0, VK_FORMAT_R32_SFLOAT, offsetof(GpuPreviewVertex, roughness)};
+        attributes[6] = {6, 0, VK_FORMAT_R32_SFLOAT, offsetof(GpuPreviewVertex, metalness)};
+        attributes[7] = {7, 0, VK_FORMAT_R32_SFLOAT, offsetof(GpuPreviewVertex, kind)};
 
         VkPipelineVertexInputStateCreateInfo vertexInput{};
         vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -1179,12 +1378,17 @@ private:
     std::uint32_t vertexCount_ = 0;
     VkBuffer uniformBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory uniformMemory_ = VK_NULL_HANDLE;
+    VkImage albedoImage_ = VK_NULL_HANDLE;
+    VkDeviceMemory albedoMemory_ = VK_NULL_HANDLE;
+    VkImageView albedoView_ = VK_NULL_HANDLE;
+    VkSampler albedoSampler_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout descriptorSetLayout_ = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool_ = VK_NULL_HANDLE;
     VkDescriptorSet descriptorSet_ = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     VkPipeline skyPipeline_ = VK_NULL_HANDLE;
+    VkCommandPool uploadCommandPool_ = VK_NULL_HANDLE;
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     VkCommandBuffer commandBuffer_ = VK_NULL_HANDLE;
     VkSemaphore imageAvailable_ = VK_NULL_HANDLE;

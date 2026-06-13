@@ -57,6 +57,9 @@ struct GpuPreviewVertex {
     float r = 1.0f;
     float g = 1.0f;
     float b = 1.0f;
+    float u = 0.0f;
+    float v = 0.0f;
+    float textured = 0.0f;
     float roughness = 0.7f;
     float metalness = 0.0f;
     float kind = 0.0f;
@@ -65,6 +68,7 @@ struct GpuPreviewVertex {
 struct GpuPreviewGeometry {
     std::vector<GpuPreviewVertex> vertices;
     V1CameraSettings camera;
+    std::filesystem::path albedoTexturePath;
 };
 
 V1RenderStats renderSoftwareV1(const V1RenderSettings& settings);

@@ -75,10 +75,14 @@ struct Triangle3 {
     Color color;
     Vec3 normal{0.0f, 0.0f, 1.0f};
     Vec2 uv{};
+    Vec2 uvA{};
+    Vec2 uvB{};
+    Vec2 uvC{};
     Vec3 baseColor{1.0f, 1.0f, 1.0f};
     float roughness = 0.7f;
     float metalness = 0.0f;
     MaterialKind materialKind = MaterialKind::Simple;
+    bool hasAlbedoTexture = false;
 };
 
 struct Mat4 {
@@ -1122,10 +1126,14 @@ void appendMeshTriangles(
             tri.normal = normalize(cross(tri.b - tri.a, tri.c - tri.a));
         }
         tri.uv = uv;
+        tri.uvA = uvs[i];
+        tri.uvB = uvs[i + 1];
+        tri.uvC = uvs[i + 2];
         tri.baseColor = baseColor;
         tri.roughness = roughness;
         tri.metalness = material.metalness;
         tri.materialKind = material.kind;
+        tri.hasAlbedoTexture = !material.albedoTexture.empty();
         triangles.push_back(tri);
     }
 }
@@ -1930,6 +1938,12 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
     camera = cameraFromSettings(settings.camera, camera);
 
     GpuPreviewGeometry geometry;
+    if (settings.enableV2Shading) {
+        const std::filesystem::path woodAlbedo = settings.scenePath.parent_path() / "wood_floor_deck_diff_1k.png";
+        if (std::filesystem::exists(woodAlbedo)) {
+            geometry.albedoTexturePath = woodAlbedo;
+        }
+    }
     geometry.vertices.reserve(triangles->size() * 3u);
     for (const Triangle3& tri : *triangles) {
         const Vec3 color = settings.enableV2Shading ? clamp01(tri.baseColor) : colorToVec(tri.color);
@@ -1940,9 +1954,10 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
         const float roughness = settings.enableV2Shading ? std::clamp(tri.roughness, 0.03f, 1.0f) : 0.7f;
         const float metalness = settings.enableV2Shading ? std::clamp(tri.metalness, 0.0f, 1.0f) : 0.0f;
         const float kind = settings.enableV2Shading ? gpuMaterialKind(tri.materialKind) : 0.0f;
-        geometry.vertices.push_back({tri.a.x, tri.a.y, tri.a.z, normal.x, normal.y, normal.z, color.x, color.y, color.z, roughness, metalness, kind});
-        geometry.vertices.push_back({tri.b.x, tri.b.y, tri.b.z, normal.x, normal.y, normal.z, color.x, color.y, color.z, roughness, metalness, kind});
-        geometry.vertices.push_back({tri.c.x, tri.c.y, tri.c.z, normal.x, normal.y, normal.z, color.x, color.y, color.z, roughness, metalness, kind});
+        const float textured = tri.hasAlbedoTexture ? 1.0f : 0.0f;
+        geometry.vertices.push_back({tri.a.x, tri.a.y, tri.a.z, normal.x, normal.y, normal.z, color.x, color.y, color.z, tri.uvA.x, tri.uvA.y, textured, roughness, metalness, kind});
+        geometry.vertices.push_back({tri.b.x, tri.b.y, tri.b.z, normal.x, normal.y, normal.z, color.x, color.y, color.z, tri.uvB.x, tri.uvB.y, textured, roughness, metalness, kind});
+        geometry.vertices.push_back({tri.c.x, tri.c.y, tri.c.z, normal.x, normal.y, normal.z, color.x, color.y, color.z, tri.uvC.x, tri.uvC.y, textured, roughness, metalness, kind});
     }
     geometry.camera = toCameraSettings(camera);
     return geometry;
