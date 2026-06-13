@@ -3,6 +3,9 @@
 #define CGLTF_IMPLEMENTATION
 #include <cgltf.h>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -30,6 +33,19 @@ struct Vec3 {
     float z = 0.0f;
 };
 
+struct Vec2 {
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
+enum class MaterialKind {
+    Simple,
+    Environment,
+    Mirror,
+    Lambertian,
+    Pbr
+};
+
 struct Color {
     std::uint8_t r = 0;
     std::uint8_t g = 0;
@@ -41,6 +57,12 @@ struct Triangle3 {
     Vec3 b;
     Vec3 c;
     Color color;
+    Vec3 normal{0.0f, 0.0f, 1.0f};
+    Vec2 uv{};
+    Vec3 baseColor{1.0f, 1.0f, 1.0f};
+    float roughness = 0.7f;
+    float metalness = 0.0f;
+    MaterialKind materialKind = MaterialKind::Simple;
 };
 
 struct Mat4 {
@@ -80,6 +102,7 @@ struct Camera {
 Vec3 operator+(Vec3 a, Vec3 b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
 Vec3 operator-(Vec3 a, Vec3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
 Vec3 operator*(Vec3 a, float s) { return {a.x * s, a.y * s, a.z * s}; }
+Vec3 operator*(Vec3 a, Vec3 b) { return {a.x * b.x, a.y * b.y, a.z * b.z}; }
 Vec3 operator/(Vec3 a, float s) { return {a.x / s, a.y / s, a.z / s}; }
 
 float dot(Vec3 a, Vec3 b) {
@@ -104,6 +127,58 @@ Vec3 normalize(Vec3 v) {
         return {};
     }
     return v * (1.0f / len);
+}
+
+Vec3 lerp(Vec3 a, Vec3 b, float t) {
+    return a * (1.0f - t) + b * t;
+}
+
+Vec3 clamp01(Vec3 v) {
+    return {
+        std::clamp(v.x, 0.0f, 1.0f),
+        std::clamp(v.y, 0.0f, 1.0f),
+        std::clamp(v.z, 0.0f, 1.0f),
+    };
+}
+
+Vec3 reflect(Vec3 v, Vec3 n) {
+    return v - n * (2.0f * dot(v, n));
+}
+
+float luminance(Vec3 color) {
+    return color.x * 0.2126f + color.y * 0.7152f + color.z * 0.0722f;
+}
+
+Vec3 colorToVec(Color color) {
+    return {
+        static_cast<float>(color.r) / 255.0f,
+        static_cast<float>(color.g) / 255.0f,
+        static_cast<float>(color.b) / 255.0f,
+    };
+}
+
+Color vecToColor(Vec3 color) {
+    const Vec3 mapped = clamp01(color);
+    return {
+        static_cast<std::uint8_t>(mapped.x * 255.0f + 0.5f),
+        static_cast<std::uint8_t>(mapped.y * 255.0f + 0.5f),
+        static_cast<std::uint8_t>(mapped.z * 255.0f + 0.5f),
+    };
+}
+
+Color toneMap(Vec3 hdr) {
+    hdr = hdr * 1.35f;
+    const Vec3 mapped{
+        hdr.x / (1.0f + hdr.x),
+        hdr.y / (1.0f + hdr.y),
+        hdr.z / (1.0f + hdr.z),
+    };
+    const Vec3 gamma{
+        std::pow(std::clamp(mapped.x, 0.0f, 1.0f), 1.0f / 2.2f),
+        std::pow(std::clamp(mapped.y, 0.0f, 1.0f), 1.0f / 2.2f),
+        std::pow(std::clamp(mapped.z, 0.0f, 1.0f), 1.0f / 2.2f),
+    };
+    return vecToColor(gamma);
 }
 
 Quat normalize(Quat q) {
@@ -178,6 +253,14 @@ Vec3 transformPoint(const Mat4& m, Vec3 p) {
     };
 }
 
+Vec3 transformVector(const Mat4& m, Vec3 v) {
+    return {
+        m.m[0][0] * v.x + m.m[0][1] * v.y + m.m[0][2] * v.z,
+        m.m[1][0] * v.x + m.m[1][1] * v.y + m.m[1][2] * v.z,
+        m.m[2][0] * v.x + m.m[2][1] * v.y + m.m[2][2] * v.z,
+    };
+}
+
 Vec3 rotateBy(Quat q, Vec3 v) {
     const Vec3 u{q.x, q.y, q.z};
     return u * (2.0f * dot(u, v)) + v * (q.w * q.w - dot(u, u)) + cross(u, v) * (2.0f * q.w);
@@ -223,6 +306,17 @@ Color mixColor(Color a, Color b, Color c, float shade) {
         convert(static_cast<std::uint32_t>(a.g) + b.g + c.g),
         convert(static_cast<std::uint32_t>(a.b) + b.b + c.b),
     };
+}
+
+Vec3 proceduralEnvironmentRadiance(Vec3 direction) {
+    direction = normalize(direction);
+    const float horizon = std::clamp(direction.z * 0.5f + 0.5f, 0.0f, 1.0f);
+    const Vec3 ground{0.45f, 0.40f, 0.34f};
+    const Vec3 horizonColor{1.10f, 0.93f, 0.72f};
+    const Vec3 sky{0.36f, 0.54f, 0.92f};
+    Vec3 color = lerp(ground, lerp(horizonColor, sky, horizon), horizon);
+    const float sun = std::pow(std::max(0.0f, dot(direction, normalize(Vec3{-0.30f, -0.62f, 0.72f}))), 120.0f);
+    return color + Vec3{5.0f, 4.3f, 3.3f} * sun;
 }
 
 class Json {
@@ -427,7 +521,21 @@ struct S72Mesh {
     std::string name;
     std::uint32_t count = 0;
     S72Attribute position;
+    S72Attribute normal;
+    S72Attribute tangent;
+    S72Attribute texcoord;
     S72Attribute color;
+    int material = -1;
+};
+
+struct S72Material {
+    std::string name;
+    MaterialKind kind = MaterialKind::Simple;
+    Vec3 albedo{1.0f, 1.0f, 1.0f};
+    std::filesystem::path albedoTexture;
+    float roughness = 0.7f;
+    std::filesystem::path roughnessTexture;
+    float metalness = 0.0f;
 };
 
 struct S72Node {
@@ -456,14 +564,82 @@ struct S72Driver {
 
 struct S72Scene {
     std::vector<S72Mesh> meshes;
+    std::vector<S72Material> materials;
     std::vector<S72Node> nodes;
     std::vector<S72Camera> cameras;
     std::vector<S72Driver> drivers;
     std::vector<int> roots;
     std::vector<Triangle3> triangles;
     Camera camera;
+    std::filesystem::path environmentTexture;
     bool hasCamera = false;
 };
+
+struct Texture2D {
+    int width = 0;
+    int height = 0;
+    std::vector<Vec3> pixels;
+
+    bool empty() const {
+        return width <= 0 || height <= 0 || pixels.empty();
+    }
+
+    Vec3 sample(Vec2 uv) const {
+        if (empty()) {
+            return {1.0f, 1.0f, 1.0f};
+        }
+        const float u = uv.x - std::floor(uv.x);
+        const float v = uv.y - std::floor(uv.y);
+        const int x = std::clamp(static_cast<int>(u * static_cast<float>(width)), 0, width - 1);
+        const int y = std::clamp(static_cast<int>((1.0f - v) * static_cast<float>(height)), 0, height - 1);
+        return pixels[static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x)];
+    }
+};
+
+Texture2D loadTexture(const std::filesystem::path& path) {
+    Texture2D texture;
+    int channels = 0;
+    stbi_uc* data = stbi_load(path.string().c_str(), &texture.width, &texture.height, &channels, 4);
+    if (!data) {
+        throw std::runtime_error("Could not load texture: " + path.string());
+    }
+    texture.pixels.resize(static_cast<std::size_t>(texture.width) * static_cast<std::size_t>(texture.height));
+    for (int y = 0; y < texture.height; ++y) {
+        for (int x = 0; x < texture.width; ++x) {
+            const std::size_t src = (static_cast<std::size_t>(y) * static_cast<std::size_t>(texture.width) + static_cast<std::size_t>(x)) * 4u;
+            texture.pixels[static_cast<std::size_t>(y) * static_cast<std::size_t>(texture.width) + static_cast<std::size_t>(x)] = {
+                static_cast<float>(data[src + 0u]) / 255.0f,
+                static_cast<float>(data[src + 1u]) / 255.0f,
+                static_cast<float>(data[src + 2u]) / 255.0f,
+            };
+        }
+    }
+    stbi_image_free(data);
+    return texture;
+}
+
+const Texture2D& cachedTexture(
+    std::map<std::filesystem::path, Texture2D>& cache,
+    const std::filesystem::path& basePath,
+    const std::filesystem::path& relativePath
+) {
+    const std::filesystem::path resolved = relativePath.is_absolute() ? relativePath : basePath / relativePath;
+    const auto found = cache.find(resolved);
+    if (found != cache.end()) {
+        return found->second;
+    }
+    return cache.emplace(resolved, loadTexture(resolved)).first->second;
+}
+
+Vec3 environmentRadiance(Vec3 direction, const Texture2D* texture = nullptr) {
+    direction = normalize(direction);
+    if (texture && !texture->empty()) {
+        const float u = std::atan2(direction.y, direction.x) / (2.0f * kPi) + 0.5f;
+        const float v = std::acos(std::clamp(direction.z, -1.0f, 1.0f)) / kPi;
+        return texture->sample({u, 1.0f - v}) * 2.2f;
+    }
+    return proceduralEnvironmentRadiance(direction);
+}
 
 std::string readTextFile(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
@@ -550,6 +726,52 @@ std::vector<float> toFloats(const Json* value) {
     return out;
 }
 
+Vec2 toVec2(const Json* value, Vec2 fallback = {}) {
+    if (!value || value->type != Json::Type::Array || value->array.size() < 2) {
+        return fallback;
+    }
+    return {
+        static_cast<float>(value->array[0].numberOr(fallback.x)),
+        static_cast<float>(value->array[1].numberOr(fallback.y)),
+    };
+}
+
+std::filesystem::path textureSource(const Json* value) {
+    if (!value || value->type != Json::Type::Object) {
+        return {};
+    }
+    if (const Json* src = value->find("src")) {
+        return src->stringOr("");
+    }
+    return {};
+}
+
+Vec3 materialColorOrTexture(const Json* value, Vec3 fallback, std::filesystem::path& texture) {
+    if (!value) {
+        return fallback;
+    }
+    if (value->type == Json::Type::Array) {
+        return toVec3(value, fallback);
+    }
+    if (value->type == Json::Type::Object) {
+        texture = textureSource(value);
+    }
+    return fallback;
+}
+
+float materialScalarOrTexture(const Json* value, float fallback, std::filesystem::path& texture) {
+    if (!value) {
+        return fallback;
+    }
+    if (value->type == Json::Type::Number) {
+        return static_cast<float>(value->number);
+    }
+    if (value->type == Json::Type::Object) {
+        texture = textureSource(value);
+    }
+    return fallback;
+}
+
 S72Attribute parseAttribute(const Json* value) {
     S72Attribute attr;
     if (!value || value->type != Json::Type::Object) {
@@ -575,9 +797,52 @@ S72Mesh parseMesh(const Json& object) {
     const Json* attributes = object.find("attributes");
     if (attributes && attributes->type == Json::Type::Object) {
         mesh.position = parseAttribute(attributes->find("POSITION"));
+        mesh.normal = parseAttribute(attributes->find("NORMAL"));
+        mesh.tangent = parseAttribute(attributes->find("TANGENT"));
+        mesh.texcoord = parseAttribute(attributes->find("TEXCOORD"));
         mesh.color = parseAttribute(attributes->find("COLOR"));
     }
+    mesh.material = toRef(object.find("material"));
     return mesh;
+}
+
+S72Material parseMaterial(const Json& object) {
+    S72Material material;
+    if (const Json* name = object.find("name")) {
+        material.name = name->stringOr("");
+    }
+
+    if (object.find("environment")) {
+        material.kind = MaterialKind::Environment;
+    } else if (object.find("mirror")) {
+        material.kind = MaterialKind::Mirror;
+    } else if (const Json* lambertian = object.find("lambertian")) {
+        material.kind = MaterialKind::Lambertian;
+        if (lambertian->type == Json::Type::Object) {
+            material.albedo = materialColorOrTexture(lambertian->find("albedo"), material.albedo, material.albedoTexture);
+        }
+    } else if (const Json* pbr = object.find("pbr")) {
+        material.kind = MaterialKind::Pbr;
+        if (pbr->type == Json::Type::Object) {
+            material.albedo = materialColorOrTexture(pbr->find("albedo"), material.albedo, material.albedoTexture);
+            material.roughness = materialScalarOrTexture(pbr->find("roughness"), material.roughness, material.roughnessTexture);
+            if (const Json* metalness = pbr->find("metalness")) {
+                material.metalness = static_cast<float>(metalness->numberOr(material.metalness));
+            }
+        }
+    }
+
+    material.roughness = std::clamp(material.roughness, 0.03f, 1.0f);
+    material.metalness = std::clamp(material.metalness, 0.0f, 1.0f);
+    return material;
+}
+
+std::filesystem::path parseEnvironmentTexture(const Json& object) {
+    const Json* radiance = object.find("radiance");
+    if (!radiance || radiance->type != Json::Type::Object) {
+        return {};
+    }
+    return textureSource(radiance);
 }
 
 S72Node parseNode(const Json& object) {
@@ -713,39 +978,117 @@ void appendMeshTriangles(
     const S72Mesh& mesh,
     const Mat4& transform,
     const std::filesystem::path& basePath,
+    const std::vector<S72Material>& materials,
+    std::map<std::filesystem::path, Texture2D>& textureCache,
     std::vector<Triangle3>& triangles
 ) {
     if (mesh.count < 3 || mesh.position.src.empty()) {
         return;
     }
-    if (mesh.position.format != "R32G32B32_SFLOAT" || mesh.color.format != "R8G8B8A8_UNORM") {
-        throw std::runtime_error("v1 Scene'72 loader currently supports POSITION float3 and COLOR rgba8 only");
+    if (mesh.position.format != "R32G32B32_SFLOAT") {
+        throw std::runtime_error("Scene'72 loader requires POSITION float3");
+    }
+    if (!mesh.color.src.empty() && mesh.color.format != "R8G8B8A8_UNORM") {
+        throw std::runtime_error("Scene'72 loader currently supports COLOR rgba8 only");
+    }
+    if (!mesh.normal.src.empty() && mesh.normal.format != "R32G32B32_SFLOAT") {
+        throw std::runtime_error("Scene'72 loader currently supports NORMAL float3 only");
+    }
+    if (!mesh.texcoord.src.empty() && mesh.texcoord.format != "R32G32_SFLOAT") {
+        throw std::runtime_error("Scene'72 loader currently supports TEXCOORD float2 only");
     }
 
     const std::filesystem::path positionPath = basePath / mesh.position.src;
-    const std::filesystem::path colorPath = basePath / mesh.color.src;
     const std::vector<std::uint8_t> positionBytes = readBinaryFile(positionPath);
-    const std::vector<std::uint8_t> colorBytes = colorPath == positionPath ? positionBytes : readBinaryFile(colorPath);
+
+    const std::filesystem::path colorPath = basePath / mesh.color.src;
+    const std::filesystem::path normalPath = basePath / mesh.normal.src;
+    const std::filesystem::path texcoordPath = basePath / mesh.texcoord.src;
+    const std::vector<std::uint8_t> colorBytes = mesh.color.src.empty()
+        ? std::vector<std::uint8_t>{}
+        : (colorPath == positionPath ? positionBytes : readBinaryFile(colorPath));
+    const std::vector<std::uint8_t> normalBytes = mesh.normal.src.empty()
+        ? std::vector<std::uint8_t>{}
+        : (normalPath == positionPath ? positionBytes : readBinaryFile(normalPath));
+    const std::vector<std::uint8_t> texcoordBytes = mesh.texcoord.src.empty()
+        ? std::vector<std::uint8_t>{}
+        : (texcoordPath == positionPath ? positionBytes : readBinaryFile(texcoordPath));
 
     std::vector<Vec3> positions(mesh.count);
     std::vector<Color> colors(mesh.count);
+    std::vector<Vec3> normals(mesh.count);
+    std::vector<Vec2> uvs(mesh.count);
     for (std::uint32_t i = 0; i < mesh.count; ++i) {
         const std::size_t p = static_cast<std::size_t>(mesh.position.offset) + static_cast<std::size_t>(i) * mesh.position.stride;
         positions[i] = transformPoint(transform, {readF32(positionBytes, p + 0), readF32(positionBytes, p + 4), readF32(positionBytes, p + 8)});
 
-        const std::size_t c = static_cast<std::size_t>(mesh.color.offset) + static_cast<std::size_t>(i) * mesh.color.stride;
-        if (c + 4 > colorBytes.size()) {
-            throw std::runtime_error("Scene'72 color attribute read is out of bounds");
+        colors[i] = {230, 230, 230};
+        if (!mesh.color.src.empty()) {
+            const std::size_t c = static_cast<std::size_t>(mesh.color.offset) + static_cast<std::size_t>(i) * mesh.color.stride;
+            if (c + 4 > colorBytes.size()) {
+                throw std::runtime_error("Scene'72 color attribute read is out of bounds");
+            }
+            colors[i] = {colorBytes[c + 0], colorBytes[c + 1], colorBytes[c + 2]};
         }
-        colors[i] = {colorBytes[c + 0], colorBytes[c + 1], colorBytes[c + 2]};
+
+        normals[i] = {0.0f, 0.0f, 1.0f};
+        if (!mesh.normal.src.empty()) {
+            const std::size_t n = static_cast<std::size_t>(mesh.normal.offset) + static_cast<std::size_t>(i) * mesh.normal.stride;
+            normals[i] = normalize(transformVector(transform, {readF32(normalBytes, n + 0), readF32(normalBytes, n + 4), readF32(normalBytes, n + 8)}));
+        }
+
+        if (!mesh.texcoord.src.empty()) {
+            const std::size_t t = static_cast<std::size_t>(mesh.texcoord.offset) + static_cast<std::size_t>(i) * mesh.texcoord.stride;
+            uvs[i] = {readF32(texcoordBytes, t + 0), readF32(texcoordBytes, t + 4)};
+        }
+    }
+
+    S72Material material;
+    if (mesh.material >= 0 && static_cast<std::size_t>(mesh.material) < materials.size()) {
+        material = materials[static_cast<std::size_t>(mesh.material)];
     }
 
     for (std::uint32_t i = 0; i + 2 < mesh.count; i += 3) {
-        triangles.push_back({positions[i], positions[i + 1], positions[i + 2], mixColor(colors[i], colors[i + 1], colors[i + 2], 1.0f)});
+        const Color vertexColor = mixColor(colors[i], colors[i + 1], colors[i + 2], 1.0f);
+        const Vec2 uv{
+            (uvs[i].x + uvs[i + 1].x + uvs[i + 2].x) / 3.0f,
+            (uvs[i].y + uvs[i + 1].y + uvs[i + 2].y) / 3.0f,
+        };
+        Vec3 baseColor = material.kind == MaterialKind::Simple ? colorToVec(vertexColor) : material.albedo;
+        if (!material.albedoTexture.empty()) {
+            baseColor = cachedTexture(textureCache, basePath, material.albedoTexture).sample(uv);
+        }
+
+        float roughness = material.roughness;
+        if (!material.roughnessTexture.empty()) {
+            roughness = std::clamp(luminance(cachedTexture(textureCache, basePath, material.roughnessTexture).sample(uv)), 0.03f, 1.0f);
+        }
+
+        Triangle3 tri;
+        tri.a = positions[i];
+        tri.b = positions[i + 1];
+        tri.c = positions[i + 2];
+        tri.color = vertexColor;
+        tri.normal = normalize(normals[i] + normals[i + 1] + normals[i + 2]);
+        if (length(tri.normal) <= 0.00001f) {
+            tri.normal = normalize(cross(tri.b - tri.a, tri.c - tri.a));
+        }
+        tri.uv = uv;
+        tri.baseColor = baseColor;
+        tri.roughness = roughness;
+        tri.metalness = material.metalness;
+        tri.materialKind = material.kind;
+        triangles.push_back(tri);
     }
 }
 
-void traverseS72Node(S72Scene& scene, const std::filesystem::path& basePath, int objectIndex, const Mat4& parent) {
+void traverseS72Node(
+    S72Scene& scene,
+    const std::filesystem::path& basePath,
+    std::map<std::filesystem::path, Texture2D>& textureCache,
+    int objectIndex,
+    const Mat4& parent
+) {
     if (objectIndex < 0 || static_cast<std::size_t>(objectIndex) >= scene.nodes.size()) {
         return;
     }
@@ -755,7 +1098,14 @@ void traverseS72Node(S72Scene& scene, const std::filesystem::path& basePath, int
     const Mat4 world = multiply(parent, local);
 
     if (node.mesh >= 0 && static_cast<std::size_t>(node.mesh) < scene.meshes.size()) {
-        appendMeshTriangles(scene.meshes[static_cast<std::size_t>(node.mesh)], world, basePath, scene.triangles);
+        appendMeshTriangles(
+            scene.meshes[static_cast<std::size_t>(node.mesh)],
+            world,
+            basePath,
+            scene.materials,
+            textureCache,
+            scene.triangles
+        );
     }
 
     if (!scene.hasCamera && node.camera >= 0 && static_cast<std::size_t>(node.camera) < scene.cameras.size()) {
@@ -773,7 +1123,7 @@ void traverseS72Node(S72Scene& scene, const std::filesystem::path& basePath, int
     }
 
     for (int child : node.children) {
-        traverseS72Node(scene, basePath, child, world);
+        traverseS72Node(scene, basePath, textureCache, child, world);
     }
 }
 
@@ -809,6 +1159,7 @@ S72Scene loadS72Scene(const std::filesystem::path& path, std::uint32_t frameInde
 
     S72Scene scene;
     scene.meshes.resize(root.array.size());
+    scene.materials.resize(root.array.size());
     scene.nodes.resize(root.array.size());
     scene.cameras.resize(root.array.size());
     const std::filesystem::path basePath = path.parent_path();
@@ -821,6 +1172,10 @@ S72Scene loadS72Scene(const std::filesystem::path& path, std::uint32_t frameInde
         const std::string type = object.find("type") ? object.find("type")->stringOr("") : "";
         if (type == "MESH") {
             scene.meshes[i] = parseMesh(object);
+        } else if (type == "MATERIAL") {
+            scene.materials[i] = parseMaterial(object);
+        } else if (type == "ENVIRONMENT") {
+            scene.environmentTexture = parseEnvironmentTexture(object);
         } else if (type == "NODE") {
             scene.nodes[i] = parseNode(object);
         } else if (type == "CAMERA") {
@@ -834,8 +1189,9 @@ S72Scene loadS72Scene(const std::filesystem::path& path, std::uint32_t frameInde
 
     applyDrivers(scene.nodes, scene.drivers, animationTimeForFrame(frameIndex, scene.drivers));
 
+    std::map<std::filesystem::path, Texture2D> textureCache;
     for (int rootIndex : scene.roots) {
-        traverseS72Node(scene, basePath, rootIndex, identity());
+        traverseS72Node(scene, basePath, textureCache, rootIndex, identity());
     }
 
     scene.camera = autoCameraFor(scene.triangles);
@@ -936,7 +1292,15 @@ void appendGltfPrimitive(const cgltf_node& node, const cgltf_primitive& primitiv
         const Color ca = readAccessorColor(colors, ia, materialColor);
         const Color cb = readAccessorColor(colors, ib, materialColor);
         const Color cc = readAccessorColor(colors, ic, materialColor);
-        triangles.push_back({a, b, c, mixColor(ca, cb, cc, 1.0f)});
+        const Color color = mixColor(ca, cb, cc, 1.0f);
+        Triangle3 tri;
+        tri.a = a;
+        tri.b = b;
+        tri.c = c;
+        tri.color = color;
+        tri.normal = normalize(cross(b - a, c - a));
+        tri.baseColor = colorToVec(color);
+        triangles.push_back(tri);
     }
 }
 
@@ -1040,6 +1404,17 @@ public:
             };
             for (std::uint32_t x = 0; x < width_; ++x) {
                 pixels_[y * width_ + x] = color;
+            }
+        }
+    }
+
+    void clearV2Sky(const Texture2D* environmentMap = nullptr) {
+        for (std::uint32_t y = 0; y < height_; ++y) {
+            for (std::uint32_t x = 0; x < width_; ++x) {
+                const float u = (static_cast<float>(x) + 0.5f) / static_cast<float>(width_);
+                const float v = (static_cast<float>(y) + 0.5f) / static_cast<float>(height_);
+                const Vec3 direction = normalize(Vec3{(u - 0.5f) * 1.8f, 1.0f, (0.5f - v) * 1.35f});
+                pixels_[y * width_ + x] = toneMap(environmentRadiance(direction, environmentMap));
             }
         }
     }
@@ -1262,7 +1637,69 @@ void drawCube(Image& image, const CubeInstance& cube, const Camera& camera, cons
     }
 }
 
-void drawTriangle3(Image& image, const Triangle3& tri, const Camera& camera, const CameraBasis& basis, const V1RenderSettings& settings, V1RenderStats& stats) {
+Color shadeV2Triangle(const Triangle3& tri, const Camera& camera, const Texture2D* environmentMap) {
+    const Vec3 center = (tri.a + tri.b + tri.c) / 3.0f;
+    Vec3 normal = normalize(tri.normal);
+    if (length(normal) <= 0.00001f) {
+        normal = normalize(cross(tri.b - tri.a, tri.c - tri.a));
+    }
+    const Vec3 view = normalize(camera.eye - center);
+    if (dot(normal, view) < 0.0f) {
+        normal = normal * -1.0f;
+    }
+
+    const Vec3 light = normalize(Vec3{-0.30f, -0.62f, 0.72f});
+    const float ndotl = std::max(0.0f, dot(normal, light));
+    const float ndotv = std::max(0.05f, dot(normal, view));
+    const Vec3 reflected = reflect(view * -1.0f, normal);
+    const Vec3 env = environmentRadiance(reflected, environmentMap);
+    const Vec3 ambient = environmentRadiance(normal, environmentMap) * 0.28f;
+    const Vec3 base = clamp01(tri.baseColor);
+
+    Vec3 hdr{};
+    switch (tri.materialKind) {
+    case MaterialKind::Environment:
+        hdr = env;
+        break;
+    case MaterialKind::Mirror:
+        hdr = env * 1.15f;
+        break;
+    case MaterialKind::Lambertian:
+        hdr = base * (ambient + Vec3{1.25f, 1.18f, 1.05f} * ndotl);
+        break;
+    case MaterialKind::Pbr: {
+        const float roughness = std::clamp(tri.roughness, 0.03f, 1.0f);
+        const float metalness = std::clamp(tri.metalness, 0.0f, 1.0f);
+        const Vec3 halfVector = normalize(light + view);
+        const float ndoth = std::max(0.0f, dot(normal, halfVector));
+        const float specPower = std::max(3.0f, (1.0f - roughness) * 96.0f + 2.0f);
+        const float spec = std::pow(ndoth, specPower) * (1.0f - roughness * 0.65f);
+        const Vec3 dielectricF0{0.04f, 0.04f, 0.04f};
+        const Vec3 f0 = lerp(dielectricF0, base, metalness);
+        const float fresnel = std::pow(1.0f - ndotv, 5.0f);
+        const Vec3 specular = (f0 + (Vec3{1.0f, 1.0f, 1.0f} - f0) * fresnel) * (spec + 0.35f) * env;
+        const Vec3 diffuse = base * (1.0f - metalness) * (ambient + Vec3{1.0f, 0.96f, 0.88f} * ndotl);
+        hdr = diffuse + specular;
+        break;
+    }
+    case MaterialKind::Simple:
+    default:
+        hdr = colorToVec(tri.color) * (Vec3{0.35f, 0.38f, 0.42f} + Vec3{0.75f, 0.72f, 0.66f} * ndotl);
+        break;
+    }
+
+    return toneMap(hdr);
+}
+
+void drawTriangle3(
+    Image& image,
+    const Triangle3& tri,
+    const Camera& camera,
+    const CameraBasis& basis,
+    const V1RenderSettings& settings,
+    V1RenderStats& stats,
+    const Texture2D* environmentMap = nullptr
+) {
     const Vec3 normal = normalize(cross(tri.b - tri.a, tri.c - tri.a));
     Vertex2 pa;
     Vertex2 pb;
@@ -1270,6 +1707,12 @@ void drawTriangle3(Image& image, const Triangle3& tri, const Camera& camera, con
     if (!project(toCamera(tri.a, camera, basis), camera, settings.width, settings.height, pa)
         || !project(toCamera(tri.b, camera, basis), camera, settings.width, settings.height, pb)
         || !project(toCamera(tri.c, camera, basis), camera, settings.width, settings.height, pc)) {
+        return;
+    }
+
+    if (settings.enableV2Shading) {
+        image.drawTriangle(pa, pb, pc, shadeV2Triangle(tri, camera, environmentMap));
+        ++stats.trianglesSubmitted;
         return;
     }
 
@@ -1294,8 +1737,10 @@ RenderedImage renderImage(const V1RenderSettings& settings) {
     if (extension == ".s72" || extension == ".gltf" || extension == ".glb") {
         std::vector<Triangle3> triangles;
         Camera camera;
+        std::filesystem::path environmentTexturePath;
         if (extension == ".s72") {
             S72Scene scene = loadS72Scene(settings.scenePath, settings.frameIndex);
+            environmentTexturePath = scene.environmentTexture;
             triangles = std::move(scene.triangles);
             camera = scene.camera;
         } else {
@@ -1305,7 +1750,16 @@ RenderedImage renderImage(const V1RenderSettings& settings) {
         }
 
         Image image(settings.width, settings.height);
-        image.clear();
+        Texture2D environmentMap;
+        if (settings.enableV2Shading && !environmentTexturePath.empty()) {
+            environmentMap = loadTexture(settings.scenePath.parent_path() / environmentTexturePath);
+        }
+        const Texture2D* environmentMapPtr = environmentMap.empty() ? nullptr : &environmentMap;
+        if (settings.enableV2Shading) {
+            image.clearV2Sky(environmentMapPtr);
+        } else {
+            image.clear();
+        }
 
         V1RenderStats stats;
         stats.objectCount = static_cast<std::uint32_t>(triangles.size());
@@ -1314,7 +1768,7 @@ RenderedImage renderImage(const V1RenderSettings& settings) {
         const CameraBasis basis = makeBasis(camera);
         for (const Triangle3& tri : triangles) {
             ++stats.visibleObjects;
-            drawTriangle3(image, tri, camera, basis, settings, stats);
+            drawTriangle3(image, tri, camera, basis, settings, stats, environmentMapPtr);
         }
 
         return {std::move(image), stats};

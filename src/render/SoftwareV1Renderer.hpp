@@ -10,6 +10,7 @@ struct V1RenderSettings {
     std::uint32_t width = 1280;
     std::uint32_t height = 720;
     std::uint32_t frameIndex = 0;
+    bool enableV2Shading = false;
     std::filesystem::path scenePath;
     std::filesystem::path outputPath;
 };

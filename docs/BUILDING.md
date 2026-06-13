@@ -49,10 +49,17 @@ build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene assets\thi
 build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene assets\third_party\s72_examples\sg-Articulation.s72 --output out\official-articulation.bmp --width 1280 --height 720
 ```
 
+Render the official v2 materials example:
+
+```powershell
+build\nmake-debug\src\vulkan_render.exe --profile v2 --render --scene assets\third_party\s72_examples\materials.s72 --output out\v2-materials.bmp --width 1280 --height 720
+```
+
 Open an official Scene'72 example in the realtime preview window:
 
 ```powershell
 build\nmake-debug\src\vulkan_render.exe --profile v1 --preview --scene assets\third_party\s72_examples\rotation.s72 --width 720 --height 720
+build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
 ```
 
 Render a glTF or GLB model:

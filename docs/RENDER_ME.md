@@ -41,7 +41,21 @@ build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene path\to\mo
 
 Target behavior: add skybox rendering, tone mapping, normal mapping, displacement mapping, PBR material parameters, and environment map precomputation.
 
-Current implementation: graph stages are named and ordered so shader/resource work can be filled in without changing the public profile.
+Current implementation: `--profile v2` has a software validation path that loads the official Scene'72 `materials.s72` demo, reads `MATERIAL` and `ENVIRONMENT` records, consumes `NORMAL` and `TEXCOORD` attributes, samples PNG textures through `stb_image`, draws an environment-map skybox approximation, applies tone mapping, and shades simple/environment/mirror/lambertian/PBR material families. This is intentionally CPU-backed for quick visual regression before the real Vulkan PBR pipeline is filled in.
+
+Official materials render:
+
+```powershell
+build\nmake-debug\src\vulkan_render.exe --profile v2 --render --scene assets\third_party\s72_examples\materials.s72 --output out\v2-materials.bmp --width 1280 --height 720
+```
+
+Realtime preview:
+
+```powershell
+build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
+```
+
+Known v2 limits: the current skybox uses the official HDRI PNG through a simple 2D directional lookup rather than a real cubemap sampler, normal/displacement map resources are represented in the graph but not yet fully evaluated in Vulkan shaders, and glTF PBR textures remain future work.
 
 ## v3 Lights And Shadows
 

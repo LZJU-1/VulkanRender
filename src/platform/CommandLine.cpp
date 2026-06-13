@@ -100,7 +100,7 @@ void CommandLine::printHelp(std::ostream& out) {
         << "  --profile <" << profileKeys() << ">  Select a staged renderer profile\n"
         << "  --scene <path>             Scene file for profiles that support loading\n"
         << "  --render                   Render a headless image for the selected profile\n"
-        << "  --preview                  Open a realtime preview window for v1\n"
+        << "  --preview                  Open a realtime preview window for v1/v2 software paths\n"
         << "  --output <path>            Output BMP path; implies --render\n"
         << "  --width <n>                Output width for headless renders\n"
         << "  --height <n>               Output height for headless renders\n"

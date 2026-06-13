@@ -75,3 +75,20 @@ Example commands:
 build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene path\to\model.glb --output out\model.bmp --width 1280 --height 720
 build\nmake-debug\src\vulkan_render.exe --profile v1 --preview --scene path\to\model.gltf --width 1280 --height 720
 ```
+
+## 2026-06-13 - v2.0 PBR And IBL Software Validation
+
+- Vendored the official Scene'72 `materials.s72` demo assets: material meshes, Ox Bridge Morning environment images, and Wood Floor Deck albedo/roughness textures.
+- Added `stb_image` for PNG texture loading.
+- Extended the Scene'72 loader with `MATERIAL`, `ENVIRONMENT`, `NORMAL`, `TANGENT`, and `TEXCOORD` support.
+- Implemented a v2 software validation path behind `--profile v2`: textured lambertian material, mirror/environment material approximation, PBR-style roughness/metalness shading, environment-map skybox approximation, and tone mapping.
+- Wired v2 render and preview commands through the existing software frame renderer while keeping v1 behavior intact.
+- Documented current limits: this is not yet the final Vulkan PBR pipeline; normal/displacement map shader evaluation and true cubemap IBL prefiltering remain future work.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+build\nmake-debug\src\vulkan_render.exe --profile v2 --render --scene assets\third_party\s72_examples\materials.s72 --output out\v2-materials.bmp --width 1280 --height 720
+build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene assets\third_party\s72_examples\sg-Articulation.s72 --output out\v1-regression-articulation.bmp --width 640 --height 360 --frames 25
+```

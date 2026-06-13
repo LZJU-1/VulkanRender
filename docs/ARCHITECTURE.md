@@ -24,6 +24,7 @@ flowchart TD
 - `platform`: command line parsing and process-facing configuration.
 - `core`: profile registry, render graph construction, and application orchestration.
 - `rhi`: backend abstraction. The current Vulkan backend performs runtime capability probing; later passes should allocate real resources only through this layer.
+- `render`: CPU validation renderer used by v1 and v2 to make each milestone visually testable before the matching Vulkan resources and shaders are complete.
 - `rt`: realtime ray tracing concepts are represented as profile and graph stages first, then become concrete BLAS/TLAS and pipeline code behind the RHI.
 
 ## Version Profiles
@@ -35,6 +36,12 @@ flowchart TD
 | `v3` | Light and shadow families | shadow atlas, spot light, sphere light, cascaded sun |
 | `v4` | Deferred renderer and SSAO | G-buffer, SSAO, deferred light composition |
 | `v5-rt` | Realtime ray tracing | BLAS, TLAS, SBT, raygen, miss, closest hit, accumulation |
+
+## v2 Validation Path
+
+The v2 profile now has a concrete software path for the official Scene'72 `materials.s72` asset. It parses material families, normal and UV attributes, PNG albedo/roughness textures, and the Scene'72 environment texture. The render graph still describes the intended Vulkan shape (`environment.ibl-precompute`, `forward.pbr-material`, `skybox.draw`, `post.tone-map`), while the CPU path provides stable output for testing loader semantics and material interpretation.
+
+Current v2 gaps are deliberately documented: the environment lookup is approximate, normal/displacement mapping are not yet shader-evaluated, and glTF PBR texture support is not part of this milestone.
 
 ## Realtime Ray Tracing Plan
 
@@ -53,4 +60,3 @@ The v5 graph is built even on unsupported hardware, but execution reports that R
 - Smoke runs execute the graph through the mock backend.
 - Vulkan smoke tests should stay optional and device-dependent.
 - Scene tests should be data-light by default; large assets belong behind explicit download/LFS steps.
-

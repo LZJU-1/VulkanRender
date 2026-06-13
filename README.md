@@ -27,20 +27,21 @@ ctest --preset nmake-debug
 ```powershell
 .\build\msvc-debug\src\Debug\vulkan_render.exe --profile v1 --frames 2
 .\build\msvc-debug\src\Debug\vulkan_render.exe --profile v5-rt --enable-rt --list-devices
+build\nmake-debug\src\vulkan_render.exe --profile v2 --render --scene assets\third_party\s72_examples\materials.s72 --output out\v2-materials.bmp --width 1280 --height 720
 ```
 
 Profiles:
 
 - `v1`: scene loading, animation, simple forward shading, frustum culling
-- `v2`: skybox, tone mapping, normal/displacement mapping, PBR and IBL precompute hooks
+- `v2`: skybox, tone mapping, Scene'72 material families, textured lambertian/PBR approximation, and IBL precompute hooks
 - `v3`: spot, sphere, and directional light shadow stages
 - `v4`: deferred shading, G-buffer, SSAO, many-light composition
 - `v5-rt`: realtime ray tracing profile with BLAS/TLAS, ray generation, miss, closest-hit, and accumulation passes
 
 Asset formats:
 
-- Scene'72 `.s72 + .b72` examples are supported in the v1 preview path.
+- Scene'72 `.s72 + .b72` examples are supported in the v1 and v2 software preview paths.
 - Static `.gltf` and `.glb` meshes are supported in the v1 preview path.
-- Skinned animation, texture sampling, alpha blending, and full PBR material import are planned for later profiles.
+- Skinned animation, alpha blending, full glTF PBR texture import, and the real Vulkan PBR shader path are planned for later profiles.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/RENDER_ME.md](docs/RENDER_ME.md).

@@ -8,13 +8,16 @@
 - Mock backend for SDK-free builds.
 - Vulkan backend for device and extension enumeration when the SDK is available.
 - Unit tests for profile and graph behavior.
+- v1 software render and realtime preview window.
+- Official Scene'72 v1 loader with driver animation.
+- Static glTF/GLB mesh import.
+- v2 software validation path for the official `materials.s72` demo, including material families, UV/normal attributes, PNG texture sampling, approximate environment lighting, and tone mapping.
 
 ## Next Engineering Steps
 
-1. Replace mock scene pass data with a compact JSON scene loader.
-2. Add window/swapchain support behind the RHI.
-3. Implement v1 forward raster pass with simple shaders.
-4. Add G-buffer image resources and deferred composition.
+1. Move the v2 material model from CPU validation into Vulkan descriptor sets, sampled images, and fragment shaders.
+2. Add true cubemap/environment prefilter resources for diffuse irradiance and roughness-dependent specular IBL.
+3. Add normal/displacement evaluation in the v2 shader path.
+4. Add G-buffer image resources and deferred composition for v4.
 5. Implement RT resources: BLAS/TLAS build inputs, scratch buffers, shader binding table, and ray tracing dispatch.
 6. Port selected offline path tracing material/sampling ideas into realtime-friendly shader code.
-

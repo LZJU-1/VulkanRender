@@ -13,6 +13,7 @@ set(VR_SOURCES
 add_executable(vulkan_render ${VR_SOURCES})
 target_include_directories(vulkan_render PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_include_directories(vulkan_render PRIVATE "${PROJECT_SOURCE_DIR}/third_party/cgltf")
+target_include_directories(vulkan_render PRIVATE "${PROJECT_SOURCE_DIR}/third_party/stb")
 target_compile_features(vulkan_render PRIVATE cxx_std_20)
 
 if(MSVC)

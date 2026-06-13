@@ -60,8 +60,8 @@ int RendererApp::run() {
     }
 
     if (config_.renderImage) {
-        if (profile->id != ProfileId::V1SceneForward) {
-            std::cout << "Render output is currently implemented for v1 only; selected profile was not rendered.\n";
+        if (profile->id != ProfileId::V1SceneForward && profile->id != ProfileId::V2PbrIbl) {
+            std::cout << "Render output is currently implemented for v1 and the v2 software validation path only; selected profile was not rendered.\n";
             return 0;
         }
 
@@ -69,12 +69,15 @@ int RendererApp::run() {
         settings.width = config_.width;
         settings.height = config_.height;
         settings.frameIndex = config_.frames - 1u;
-        settings.scenePath = config_.scenePath.empty() ? "assets/scenes/v1.scene" : config_.scenePath;
+        settings.enableV2Shading = profile->id == ProfileId::V2PbrIbl;
+        settings.scenePath = config_.scenePath.empty()
+            ? (settings.enableV2Shading ? "assets/third_party/s72_examples/materials.s72" : "assets/scenes/v1.scene")
+            : config_.scenePath;
         settings.outputPath = config_.outputPath;
 
         const V1RenderStats stats = renderSoftwareV1(settings);
         std::cout
-            << "Rendered v1 image: " << stats.outputPath.string()
+            << "Rendered " << profile->key << " image: " << stats.outputPath.string()
             << " objects=" << stats.objectCount
             << " visible=" << stats.visibleObjects
             << " triangles=" << stats.trianglesSubmitted
@@ -82,15 +85,18 @@ int RendererApp::run() {
     }
 
     if (config_.previewWindow) {
-        if (profile->id != ProfileId::V1SceneForward) {
-            std::cout << "Realtime preview is currently implemented for v1 only.\n";
+        if (profile->id != ProfileId::V1SceneForward && profile->id != ProfileId::V2PbrIbl) {
+            std::cout << "Realtime preview is currently implemented for v1 and the v2 software validation path only.\n";
             return 0;
         }
 
         V1RenderSettings settings;
         settings.width = config_.width;
         settings.height = config_.height;
-        settings.scenePath = config_.scenePath.empty() ? "assets/scenes/v1.scene" : config_.scenePath;
+        settings.enableV2Shading = profile->id == ProfileId::V2PbrIbl;
+        settings.scenePath = config_.scenePath.empty()
+            ? (settings.enableV2Shading ? "assets/third_party/s72_examples/materials.s72" : "assets/scenes/v1.scene")
+            : config_.scenePath;
         settings.outputPath = config_.outputPath;
         return runV1PreviewWindow(settings);
     }
