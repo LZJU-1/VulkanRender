@@ -74,6 +74,9 @@ struct Triangle3 {
     Vec3 c;
     Color color;
     Vec3 normal{0.0f, 0.0f, 1.0f};
+    Vec3 normalA{0.0f, 0.0f, 1.0f};
+    Vec3 normalB{0.0f, 0.0f, 1.0f};
+    Vec3 normalC{0.0f, 0.0f, 1.0f};
     Vec2 uv{};
     Vec2 uvA{};
     Vec2 uvB{};
@@ -1125,6 +1128,9 @@ void appendMeshTriangles(
         if (length(tri.normal) <= 0.00001f) {
             tri.normal = normalize(cross(tri.b - tri.a, tri.c - tri.a));
         }
+        tri.normalA = length(normals[i]) > 0.00001f ? normals[i] : tri.normal;
+        tri.normalB = length(normals[i + 1]) > 0.00001f ? normals[i + 1] : tri.normal;
+        tri.normalC = length(normals[i + 2]) > 0.00001f ? normals[i + 2] : tri.normal;
         tri.uv = uv;
         tri.uvA = uvs[i];
         tri.uvB = uvs[i + 1];
@@ -1263,6 +1269,14 @@ Vec3 transformGltfPoint(const float* m, Vec3 p) {
     };
 }
 
+Vec3 transformGltfVector(const float* m, Vec3 v) {
+    return {
+        m[0] * v.x + m[4] * v.y + m[8] * v.z,
+        m[1] * v.x + m[5] * v.y + m[9] * v.z,
+        m[2] * v.x + m[6] * v.y + m[10] * v.z,
+    };
+}
+
 Color colorFromFactor(const cgltf_primitive& primitive) {
     if (primitive.material && primitive.material->has_pbr_metallic_roughness) {
         const float* base = primitive.material->pbr_metallic_roughness.base_color_factor;
@@ -1352,6 +1366,7 @@ void appendGltfPrimitive(const cgltf_node& node, const cgltf_primitive& primitiv
         return;
     }
     const cgltf_accessor* colors = findAttribute(primitive, cgltf_attribute_type_color);
+    const cgltf_accessor* normals = findAttribute(primitive, cgltf_attribute_type_normal);
     const Color materialColor = colorFromFactor(primitive);
     float world[16]{};
     cgltf_node_transform_world(&node, world);
@@ -1377,6 +1392,9 @@ void appendGltfPrimitive(const cgltf_node& node, const cgltf_primitive& primitiv
         tri.c = c;
         tri.color = color;
         tri.normal = normalize(cross(b - a, c - a));
+        tri.normalA = normals ? normalize(transformGltfVector(world, readAccessorVec3(normals, ia))) : tri.normal;
+        tri.normalB = normals ? normalize(transformGltfVector(world, readAccessorVec3(normals, ib))) : tri.normal;
+        tri.normalC = normals ? normalize(transformGltfVector(world, readAccessorVec3(normals, ic))) : tri.normal;
         tri.baseColor = colorToVec(color);
         triangles.push_back(tri);
     }
@@ -1961,17 +1979,28 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
     geometry.vertices.reserve(triangles->size() * 3u);
     for (const Triangle3& tri : *triangles) {
         const Vec3 color = settings.enableV2Shading ? clamp01(tri.baseColor) : colorToVec(tri.color);
-        Vec3 normal = normalize(tri.normal);
-        if (length(normal) <= 0.00001f) {
-            normal = normalize(cross(tri.b - tri.a, tri.c - tri.a));
+        const Vec3 fallbackNormal = length(tri.normal) > 0.00001f
+            ? normalize(tri.normal)
+            : normalize(cross(tri.b - tri.a, tri.c - tri.a));
+        Vec3 normalA = normalize(tri.normalA);
+        Vec3 normalB = normalize(tri.normalB);
+        Vec3 normalC = normalize(tri.normalC);
+        if (length(normalA) <= 0.00001f) {
+            normalA = fallbackNormal;
+        }
+        if (length(normalB) <= 0.00001f) {
+            normalB = fallbackNormal;
+        }
+        if (length(normalC) <= 0.00001f) {
+            normalC = fallbackNormal;
         }
         const float roughness = settings.enableV2Shading ? std::clamp(tri.roughness, 0.03f, 1.0f) : 0.7f;
         const float metalness = settings.enableV2Shading ? std::clamp(tri.metalness, 0.0f, 1.0f) : 0.0f;
         const float kind = settings.enableV2Shading ? gpuMaterialKind(tri.materialKind) : 0.0f;
         const float textured = tri.hasAlbedoTexture ? 1.0f : 0.0f;
-        geometry.vertices.push_back({tri.a.x, tri.a.y, tri.a.z, normal.x, normal.y, normal.z, color.x, color.y, color.z, tri.uvA.x, tri.uvA.y, textured, roughness, metalness, kind});
-        geometry.vertices.push_back({tri.b.x, tri.b.y, tri.b.z, normal.x, normal.y, normal.z, color.x, color.y, color.z, tri.uvB.x, tri.uvB.y, textured, roughness, metalness, kind});
-        geometry.vertices.push_back({tri.c.x, tri.c.y, tri.c.z, normal.x, normal.y, normal.z, color.x, color.y, color.z, tri.uvC.x, tri.uvC.y, textured, roughness, metalness, kind});
+        geometry.vertices.push_back({tri.a.x, tri.a.y, tri.a.z, normalA.x, normalA.y, normalA.z, color.x, color.y, color.z, tri.uvA.x, tri.uvA.y, textured, roughness, metalness, kind});
+        geometry.vertices.push_back({tri.b.x, tri.b.y, tri.b.z, normalB.x, normalB.y, normalB.z, color.x, color.y, color.z, tri.uvB.x, tri.uvB.y, textured, roughness, metalness, kind});
+        geometry.vertices.push_back({tri.c.x, tri.c.y, tri.c.z, normalC.x, normalC.y, normalC.z, color.x, color.y, color.z, tri.uvC.x, tri.uvC.y, textured, roughness, metalness, kind});
     }
     geometry.camera = toCameraSettings(camera);
     return geometry;

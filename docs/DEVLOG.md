@@ -150,6 +150,20 @@ scripts\build_msvc.bat
 C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
 ```
 
+## 2026-06-14 - V2 Smooth Vertex Normals
+
+- Fixed visible faceted triangle shading in the Vulkan v2 preview.
+- The Scene'72 loader already read per-vertex normals, but the GPU preview collapsed them into a single averaged triangle normal.
+- Added per-corner normals to the internal triangle representation and upload them as per-vertex Vulkan attributes.
+- Added glTF normal import for static model previews, falling back to face normals when a model does not provide normals.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
+```
+
 ## 2026-06-14 - V2 Renderer72-Aligned PBR Demo Assets
 
 - Downloaded and organized a CC0 ambientCG material package for v2 feature validation:
