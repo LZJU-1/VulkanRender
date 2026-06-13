@@ -1958,6 +1958,10 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
     GpuPreviewGeometry geometry;
     if (settings.enableV2Shading) {
         const std::filesystem::path sceneAssetRoot = settings.scenePath.parent_path();
+        const std::filesystem::path envBackground = sceneAssetRoot / "ox_bridge_morning.png";
+        if (std::filesystem::exists(envBackground)) {
+            geometry.environmentBackgroundTexturePath = envBackground;
+        }
         const std::filesystem::path envDiffuse = sceneAssetRoot / "ox_bridge_morning.lambertian.png";
         if (std::filesystem::exists(envDiffuse)) {
             geometry.environmentDiffuseTexturePath = envDiffuse;

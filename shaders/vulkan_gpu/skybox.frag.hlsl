@@ -10,7 +10,7 @@ cbuffer Camera : register(b0) {
 };
 
 [[vk::binding(5, 0)]] SamplerState materialSampler;
-[[vk::binding(7, 0)]] Texture2D<float4> environmentSpecularR0Texture;
+[[vk::binding(6, 0)]] Texture2D<float4> environmentBackgroundTexture;
 
 static const float PI = 3.14159265;
 
@@ -44,6 +44,6 @@ float4 main(FragmentIn input) : SV_Target0 {
         + rightFar.xyz * (ndc.x * upTanHalf.w * forwardAspect.w)
         - upTanHalf.xyz * (ndc.y * upTanHalf.w)
     );
-    float3 env = environmentSpecularR0Texture.Sample(materialSampler, environmentUv(dir)).rgb * 2.2;
-    return float4(toneMap(lerp(skyRadiance(dir), env, 0.92)), 1.0);
+    float3 env = environmentBackgroundTexture.Sample(materialSampler, environmentUv(dir)).rgb * 2.2;
+    return float4(toneMap(env), 1.0);
 }

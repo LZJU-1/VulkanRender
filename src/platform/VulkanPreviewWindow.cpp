@@ -33,7 +33,7 @@ constexpr float kPi = 3.14159265358979323846f;
 constexpr int kWindowTimer = 1;
 constexpr std::uint32_t kMaterialTextureCount = 4;
 constexpr std::uint32_t kEnvironmentSpecularTextureCount = 5;
-constexpr std::uint32_t kTextureCount = kMaterialTextureCount + 1 + kEnvironmentSpecularTextureCount;
+constexpr std::uint32_t kTextureCount = kMaterialTextureCount + 2 + kEnvironmentSpecularTextureCount;
 
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
 PFN_vkCreateInstance vkCreateInstance = nullptr;
@@ -1247,9 +1247,10 @@ private:
         createSampledTexture(geometry_.normalTexturePath, {128, 128, 255, 255}, textures_[1]);
         createSampledTexture(geometry_.roughnessTexturePath, {178, 178, 178, 255}, textures_[2]);
         createSampledTexture(geometry_.displacementTexturePath, {128, 128, 128, 255}, textures_[3]);
-        createSampledTexture(geometry_.environmentDiffuseTexturePath, {90, 120, 180, 255}, textures_[4]);
+        createSampledTexture(geometry_.environmentBackgroundTexturePath, {90, 120, 180, 255}, textures_[4]);
+        createSampledTexture(geometry_.environmentDiffuseTexturePath, {90, 120, 180, 255}, textures_[5]);
         for (std::uint32_t i = 0; i < kEnvironmentSpecularTextureCount; ++i) {
-            createSampledTexture(geometry_.environmentSpecularTexturePaths[i], {90, 120, 180, 255}, textures_[5 + i]);
+            createSampledTexture(geometry_.environmentSpecularTexturePaths[i], {90, 120, 180, 255}, textures_[6 + i]);
         }
         maxTextureMipLevels_ = 1;
         for (const TextureResource& texture : textures_) {
@@ -1278,7 +1279,7 @@ private:
         cameraBinding.descriptorCount = 1;
         cameraBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        std::array<VkDescriptorSetLayoutBinding, 12> bindings{};
+        std::array<VkDescriptorSetLayoutBinding, 13> bindings{};
         bindings[0] = cameraBinding;
         for (std::uint32_t i = 0; i < kMaterialTextureCount; ++i) {
             bindings[1 + i].binding = 1 + i;
@@ -1332,7 +1333,7 @@ private:
         VkDescriptorImageInfo samplerInfo{};
         samplerInfo.sampler = textureSampler_;
 
-        std::array<VkWriteDescriptorSet, 12> writes{};
+        std::array<VkWriteDescriptorSet, 13> writes{};
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet = descriptorSet_;
         writes[0].dstBinding = 0;

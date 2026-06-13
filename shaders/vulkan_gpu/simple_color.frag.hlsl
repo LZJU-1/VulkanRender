@@ -21,12 +21,12 @@ cbuffer Camera : register(b0) {
 [[vk::binding(3, 0)]] Texture2D<float4> roughnessTexture;
 [[vk::binding(4, 0)]] Texture2D<float4> displacementTexture;
 [[vk::binding(5, 0)]] SamplerState materialSampler;
-[[vk::binding(6, 0)]] Texture2D<float4> environmentDiffuseTexture;
-[[vk::binding(7, 0)]] Texture2D<float4> environmentSpecularR0Texture;
-[[vk::binding(8, 0)]] Texture2D<float4> environmentSpecularR1Texture;
-[[vk::binding(9, 0)]] Texture2D<float4> environmentSpecularR2Texture;
-[[vk::binding(10, 0)]] Texture2D<float4> environmentSpecularR3Texture;
-[[vk::binding(11, 0)]] Texture2D<float4> environmentSpecularR4Texture;
+[[vk::binding(7, 0)]] Texture2D<float4> environmentDiffuseTexture;
+[[vk::binding(8, 0)]] Texture2D<float4> environmentSpecularR0Texture;
+[[vk::binding(9, 0)]] Texture2D<float4> environmentSpecularR1Texture;
+[[vk::binding(10, 0)]] Texture2D<float4> environmentSpecularR2Texture;
+[[vk::binding(11, 0)]] Texture2D<float4> environmentSpecularR3Texture;
+[[vk::binding(12, 0)]] Texture2D<float4> environmentSpecularR4Texture;
 
 static const float PI = 3.14159265;
 

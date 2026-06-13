@@ -171,11 +171,12 @@ C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --pro
 ## 2026-06-14 - V2 Image-Based Lighting Preview
 
 - Added official Scene'72 Ox Bridge Morning IBL textures to the Vulkan v2 preview path:
+  - `ox_bridge_morning.png` for the visible background environment.
   - `ox_bridge_morning.lambertian.png` for diffuse irradiance.
   - `ox_bridge_morning.ggx-1.png` through `ox_bridge_morning.ggx-5.png` for roughness-dependent specular radiance.
 - Expanded the Vulkan descriptor layout from material textures only to material textures plus IBL environment textures.
 - Updated the PBR fragment shader to use diffuse irradiance, roughness-blended prefiltered specular radiance, and an environment BRDF approximation.
-- Updated the sky pass to sample the same low-roughness environment map so the background and material reflections match.
+- Updated the sky pass to sample the full-resolution background environment rather than a prefiltered GGX map.
 
 Validation commands:
 

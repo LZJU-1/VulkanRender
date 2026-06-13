@@ -73,6 +73,7 @@ struct GpuPreviewGeometry {
     std::filesystem::path normalTexturePath;
     std::filesystem::path roughnessTexturePath;
     std::filesystem::path displacementTexturePath;
+    std::filesystem::path environmentBackgroundTexturePath;
     std::filesystem::path environmentDiffuseTexturePath;
     std::array<std::filesystem::path, 5> environmentSpecularTexturePaths;
 };
