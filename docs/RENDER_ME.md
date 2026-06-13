@@ -55,7 +55,9 @@ Realtime preview:
 build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
 ```
 
-Known v2 limits: the current skybox uses the official HDRI PNG through a simple 2D directional lookup rather than a real cubemap sampler, normal/displacement map resources are represented in the graph but not yet fully evaluated in Vulkan shaders, and glTF PBR textures remain future work.
+Preview controls: press `R` to toggle free camera roaming, `WASD` to move, `Q/E` or `Ctrl/Space` for vertical movement, arrow keys or `IJKL` to look, `Shift` to move faster, and `Esc` to close the window.
+
+Known v2 limits: the current skybox is a procedural preview background while the official environment texture is used only as an approximate lighting/reflection source. Normal/displacement map resources are represented in the graph but not yet fully evaluated in Vulkan shaders, and glTF PBR textures remain future work.
 
 ## v3 Lights And Shadows
 

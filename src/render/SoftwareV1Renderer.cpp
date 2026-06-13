@@ -319,6 +319,38 @@ Vec3 proceduralEnvironmentRadiance(Vec3 direction) {
     return color + Vec3{5.0f, 4.3f, 3.3f} * sun;
 }
 
+V1CameraSettings toCameraSettings(const Camera& camera) {
+    return {
+        true,
+        camera.eye.x,
+        camera.eye.y,
+        camera.eye.z,
+        camera.target.x,
+        camera.target.y,
+        camera.target.z,
+        camera.up.x,
+        camera.up.y,
+        camera.up.z,
+        camera.fovY,
+        camera.nearPlane,
+        camera.farPlane,
+    };
+}
+
+Camera cameraFromSettings(const V1CameraSettings& settings, const Camera& fallback) {
+    if (!settings.enabled) {
+        return fallback;
+    }
+    Camera camera;
+    camera.eye = {settings.eyeX, settings.eyeY, settings.eyeZ};
+    camera.target = {settings.targetX, settings.targetY, settings.targetZ};
+    camera.up = {settings.upX, settings.upY, settings.upZ};
+    camera.fovY = settings.fovY > 0.0f ? settings.fovY : fallback.fovY;
+    camera.nearPlane = settings.nearPlane > 0.0f ? settings.nearPlane : fallback.nearPlane;
+    camera.farPlane = settings.farPlane > 0.0f ? settings.farPlane : fallback.farPlane;
+    return camera;
+}
+
 class Json {
 public:
     enum class Type {
@@ -1408,13 +1440,13 @@ public:
         }
     }
 
-    void clearV2Sky(const Texture2D* environmentMap = nullptr) {
+    void clearV2Sky() {
         for (std::uint32_t y = 0; y < height_; ++y) {
             for (std::uint32_t x = 0; x < width_; ++x) {
                 const float u = (static_cast<float>(x) + 0.5f) / static_cast<float>(width_);
                 const float v = (static_cast<float>(y) + 0.5f) / static_cast<float>(height_);
                 const Vec3 direction = normalize(Vec3{(u - 0.5f) * 1.8f, 1.0f, (0.5f - v) * 1.35f});
-                pixels_[y * width_ + x] = toneMap(environmentRadiance(direction, environmentMap));
+                pixels_[y * width_ + x] = toneMap(proceduralEnvironmentRadiance(direction));
             }
         }
     }
@@ -1730,6 +1762,7 @@ void drawTriangle3(
 struct RenderedImage {
     Image image;
     V1RenderStats stats;
+    V1CameraSettings camera;
 };
 
 RenderedImage renderImage(const V1RenderSettings& settings) {
@@ -1748,6 +1781,7 @@ RenderedImage renderImage(const V1RenderSettings& settings) {
             triangles = std::move(scene.triangles);
             camera = scene.camera;
         }
+        camera = cameraFromSettings(settings.camera, camera);
 
         Image image(settings.width, settings.height);
         Texture2D environmentMap;
@@ -1756,7 +1790,7 @@ RenderedImage renderImage(const V1RenderSettings& settings) {
         }
         const Texture2D* environmentMapPtr = environmentMap.empty() ? nullptr : &environmentMap;
         if (settings.enableV2Shading) {
-            image.clearV2Sky(environmentMapPtr);
+            image.clearV2Sky();
         } else {
             image.clear();
         }
@@ -1771,11 +1805,11 @@ RenderedImage renderImage(const V1RenderSettings& settings) {
             drawTriangle3(image, tri, camera, basis, settings, stats, environmentMapPtr);
         }
 
-        return {std::move(image), stats};
+        return {std::move(image), stats, toCameraSettings(camera)};
     }
 
     const auto cubes = loadScene(settings.scenePath);
-    const Camera camera;
+    const Camera camera = cameraFromSettings(settings.camera, Camera{});
     const CameraBasis basis = makeBasis(camera);
     const float aspect = static_cast<float>(settings.width) / static_cast<float>(settings.height);
 
@@ -1796,7 +1830,7 @@ RenderedImage renderImage(const V1RenderSettings& settings) {
         drawCube(image, cube, camera, basis, settings, stats);
     }
 
-    return {std::move(image), stats};
+    return {std::move(image), stats, toCameraSettings(camera)};
 }
 
 } // namespace
@@ -1812,6 +1846,7 @@ V1Frame renderSoftwareV1Frame(const V1RenderSettings& settings) {
     frame.width = settings.width;
     frame.height = settings.height;
     frame.bgra = rendered.image.toBgra();
+    frame.camera = rendered.camera;
     frame.stats = rendered.stats;
     return frame;
 }

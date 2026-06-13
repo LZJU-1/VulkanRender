@@ -92,3 +92,17 @@ scripts\build_msvc.bat
 build\nmake-debug\src\vulkan_render.exe --profile v2 --render --scene assets\third_party\s72_examples\materials.s72 --output out\v2-materials.bmp --width 1280 --height 720
 build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene assets\third_party\s72_examples\sg-Articulation.s72 --output out\v1-regression-articulation.bmp --width 640 --height 360 --frames 25
 ```
+
+## 2026-06-13 - v2 Camera Roaming And Skybox Cleanup
+
+- Removed the stretched HDRI-style background lookup that made the v2 preview look striped.
+- Kept the official Scene'72 environment image as an approximate lighting/reflection source, while using a cleaner procedural preview sky for the visible background.
+- Added a roaming camera mode to the Windows preview window.
+- Preview controls: `R` toggles roaming, `WASD` moves, `Q/E` or `Ctrl/Space` move vertically, arrows or `IJKL` look around, `Shift` moves faster, `Esc` closes the window.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+build\nmake-debug\src\vulkan_render.exe --profile v2 --render --scene assets\third_party\s72_examples\materials.s72 --output out\v2-materials-fixed.bmp --width 1280 --height 720
+```
