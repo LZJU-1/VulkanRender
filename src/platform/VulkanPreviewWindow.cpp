@@ -31,6 +31,9 @@ namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
 constexpr int kWindowTimer = 1;
+constexpr std::uint32_t kMaterialTextureCount = 4;
+constexpr std::uint32_t kEnvironmentSpecularTextureCount = 5;
+constexpr std::uint32_t kTextureCount = kMaterialTextureCount + 1 + kEnvironmentSpecularTextureCount;
 
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
 PFN_vkCreateInstance vkCreateInstance = nullptr;
@@ -1244,6 +1247,10 @@ private:
         createSampledTexture(geometry_.normalTexturePath, {128, 128, 255, 255}, textures_[1]);
         createSampledTexture(geometry_.roughnessTexturePath, {178, 178, 178, 255}, textures_[2]);
         createSampledTexture(geometry_.displacementTexturePath, {128, 128, 128, 255}, textures_[3]);
+        createSampledTexture(geometry_.environmentDiffuseTexturePath, {90, 120, 180, 255}, textures_[4]);
+        for (std::uint32_t i = 0; i < kEnvironmentSpecularTextureCount; ++i) {
+            createSampledTexture(geometry_.environmentSpecularTexturePaths[i], {90, 120, 180, 255}, textures_[5 + i]);
+        }
         maxTextureMipLevels_ = 1;
         for (const TextureResource& texture : textures_) {
             maxTextureMipLevels_ = std::max(maxTextureMipLevels_, texture.mipLevels);
@@ -1271,9 +1278,9 @@ private:
         cameraBinding.descriptorCount = 1;
         cameraBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        std::array<VkDescriptorSetLayoutBinding, 6> bindings{};
+        std::array<VkDescriptorSetLayoutBinding, 12> bindings{};
         bindings[0] = cameraBinding;
-        for (std::uint32_t i = 0; i < 4; ++i) {
+        for (std::uint32_t i = 0; i < kMaterialTextureCount; ++i) {
             bindings[1 + i].binding = 1 + i;
             bindings[1 + i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
             bindings[1 + i].descriptorCount = 1;
@@ -1285,6 +1292,12 @@ private:
         samplerBinding.descriptorCount = 1;
         samplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         bindings[5] = samplerBinding;
+        for (std::uint32_t i = kMaterialTextureCount; i < kTextureCount; ++i) {
+            bindings[2 + i].binding = 2 + i;
+            bindings[2 + i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            bindings[2 + i].descriptorCount = 1;
+            bindings[2 + i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
         VkDescriptorSetLayoutCreateInfo layout{};
         layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
         layout.bindingCount = static_cast<std::uint32_t>(bindings.size());
@@ -1295,7 +1308,7 @@ private:
         poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         poolSizes[0].descriptorCount = 1;
         poolSizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-        poolSizes[1].descriptorCount = 4;
+        poolSizes[1].descriptorCount = kTextureCount;
         poolSizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLER;
         poolSizes[2].descriptorCount = 1;
         VkDescriptorPoolCreateInfo pool{};
@@ -1319,15 +1332,15 @@ private:
         VkDescriptorImageInfo samplerInfo{};
         samplerInfo.sampler = textureSampler_;
 
-        std::array<VkWriteDescriptorSet, 6> writes{};
+        std::array<VkWriteDescriptorSet, 12> writes{};
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet = descriptorSet_;
         writes[0].dstBinding = 0;
         writes[0].descriptorCount = 1;
         writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         writes[0].pBufferInfo = &bufferInfo;
-        std::array<VkDescriptorImageInfo, 4> imageInfos{};
-        for (std::uint32_t i = 0; i < 4; ++i) {
+        std::array<VkDescriptorImageInfo, kTextureCount> imageInfos{};
+        for (std::uint32_t i = 0; i < kMaterialTextureCount; ++i) {
             imageInfos[i].imageView = textures_[i].view;
             imageInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             writes[1 + i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1343,6 +1356,16 @@ private:
         writes[5].descriptorCount = 1;
         writes[5].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
         writes[5].pImageInfo = &samplerInfo;
+        for (std::uint32_t i = kMaterialTextureCount; i < kTextureCount; ++i) {
+            imageInfos[i].imageView = textures_[i].view;
+            imageInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            writes[2 + i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[2 + i].dstSet = descriptorSet_;
+            writes[2 + i].dstBinding = 2 + i;
+            writes[2 + i].descriptorCount = 1;
+            writes[2 + i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            writes[2 + i].pImageInfo = &imageInfos[i];
+        }
         vkUpdateDescriptorSets(device_, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
     }
 
@@ -1637,7 +1660,7 @@ private:
     std::uint32_t vertexCount_ = 0;
     VkBuffer uniformBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory uniformMemory_ = VK_NULL_HANDLE;
-    std::array<TextureResource, 4> textures_{};
+    std::array<TextureResource, kTextureCount> textures_{};
     VkSampler textureSampler_ = VK_NULL_HANDLE;
     bool samplerAnisotropy_ = false;
     float maxSamplerAnisotropy_ = 1.0f;

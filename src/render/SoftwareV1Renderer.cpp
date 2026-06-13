@@ -1957,6 +1957,18 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
 
     GpuPreviewGeometry geometry;
     if (settings.enableV2Shading) {
+        const std::filesystem::path sceneAssetRoot = settings.scenePath.parent_path();
+        const std::filesystem::path envDiffuse = sceneAssetRoot / "ox_bridge_morning.lambertian.png";
+        if (std::filesystem::exists(envDiffuse)) {
+            geometry.environmentDiffuseTexturePath = envDiffuse;
+        }
+        for (std::size_t i = 0; i < geometry.environmentSpecularTexturePaths.size(); ++i) {
+            const std::filesystem::path envSpecular = sceneAssetRoot / ("ox_bridge_morning.ggx-" + std::to_string(i + 1) + ".png");
+            if (std::filesystem::exists(envSpecular)) {
+                geometry.environmentSpecularTexturePaths[i] = envSpecular;
+            }
+        }
+
         const std::filesystem::path thirdPartyRoot = settings.scenePath.parent_path().parent_path();
         const std::filesystem::path pbrDemo = thirdPartyRoot / "ambientcg/Rock064_1K-JPG";
         const std::filesystem::path rockAlbedo = pbrDemo / "Rock064_1K-JPG_Color.jpg";

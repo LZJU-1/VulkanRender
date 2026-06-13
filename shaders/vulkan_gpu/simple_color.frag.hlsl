@@ -21,6 +21,14 @@ cbuffer Camera : register(b0) {
 [[vk::binding(3, 0)]] Texture2D<float4> roughnessTexture;
 [[vk::binding(4, 0)]] Texture2D<float4> displacementTexture;
 [[vk::binding(5, 0)]] SamplerState materialSampler;
+[[vk::binding(6, 0)]] Texture2D<float4> environmentDiffuseTexture;
+[[vk::binding(7, 0)]] Texture2D<float4> environmentSpecularR0Texture;
+[[vk::binding(8, 0)]] Texture2D<float4> environmentSpecularR1Texture;
+[[vk::binding(9, 0)]] Texture2D<float4> environmentSpecularR2Texture;
+[[vk::binding(10, 0)]] Texture2D<float4> environmentSpecularR3Texture;
+[[vk::binding(11, 0)]] Texture2D<float4> environmentSpecularR4Texture;
+
+static const float PI = 3.14159265;
 
 float3 toneMap(float3 hdr) {
     float3 mapped = hdr / (hdr + 1.0.xxx);
@@ -40,6 +48,41 @@ float3 skyRadiance(float3 dir) {
 
 float3 fresnelSchlick(float cosTheta, float3 f0) {
     return f0 + (1.0.xxx - f0) * pow(1.0 - saturate(cosTheta), 5.0);
+}
+
+float2 environmentUv(float3 dir) {
+    dir = normalize(dir);
+    float u = atan2(dir.y, dir.x) / (2.0 * PI) + 0.5;
+    float v = 1.0 - acos(clamp(dir.z, -1.0, 1.0)) / PI;
+    return float2(u, v);
+}
+
+float3 sampleDiffuseIrradiance(float3 normal) {
+    return environmentDiffuseTexture.Sample(materialSampler, environmentUv(normal)).rgb * 2.2;
+}
+
+float3 sampleSpecularLevel(float3 reflected, uint level) {
+    float2 uv = environmentUv(reflected);
+    if (level == 0) return environmentSpecularR0Texture.Sample(materialSampler, uv).rgb * 2.2;
+    if (level == 1) return environmentSpecularR1Texture.Sample(materialSampler, uv).rgb * 2.2;
+    if (level == 2) return environmentSpecularR2Texture.Sample(materialSampler, uv).rgb * 2.2;
+    if (level == 3) return environmentSpecularR3Texture.Sample(materialSampler, uv).rgb * 2.2;
+    return environmentSpecularR4Texture.Sample(materialSampler, uv).rgb * 2.2;
+}
+
+float3 samplePrefilteredSpecular(float3 reflected, float roughness) {
+    float level = saturate(roughness) * 4.0;
+    uint lo = (uint)floor(level);
+    uint hi = min(lo + 1, 4);
+    return lerp(sampleSpecularLevel(reflected, lo), sampleSpecularLevel(reflected, hi), frac(level));
+}
+
+float2 environmentBrdf(float ndotv, float roughness) {
+    float4 c0 = float4(-1.0, -0.0275, -0.572, 0.022);
+    float4 c1 = float4(1.0, 0.0425, 1.04, -0.04);
+    float4 r = roughness * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28 * ndotv)) * r.x + r.y;
+    return float2(-1.04, 1.04) * a004 + r.zw;
 }
 
 float albedoHeight(float2 uv) {
@@ -98,26 +141,30 @@ float4 main(FragmentIn input) : SV_Target0 {
     float3 texel = albedoTexture.Sample(materialSampler, uv).rgb;
     float3 base = lerp(saturate(input.color), texel, saturate(input.textured));
     float3 reflected = reflect(-view, normal);
-    float3 env = skyRadiance(reflected);
-    float3 ambient = skyRadiance(normal) * 0.20;
+    float3 env = samplePrefilteredSpecular(reflected, roughness);
+    float3 mirrorEnv = samplePrefilteredSpecular(reflected, 0.0);
+    float3 diffuseIbl = sampleDiffuseIrradiance(normal) * 0.55;
 
     float specPower = max(2.0, (1.0 - roughness) * 112.0 + 4.0);
     float specTerm = pow(saturate(dot(normal, halfVector)), specPower) * (1.0 - roughness * 0.72);
     float3 f0 = lerp(0.04.xxx, base, metalness);
     float3 fresnel = fresnelSchlick(ndotv, f0);
+    float2 brdf = environmentBrdf(ndotv, roughness);
     float rim = pow(1.0 - ndotv, 3.0) * 0.15;
+    float3 direct = float3(1.15, 1.05, 0.92) * ndotl;
+    float3 diffuse = base * (1.0 - metalness) * (diffuseIbl + direct);
+    float3 specularIbl = env * (fresnel * brdf.x + brdf.y);
+    float3 directSpecular = fresnel * specTerm * 0.65;
 
     float3 hdr;
     if (materialKind > 1.5 && materialKind < 2.5) {
-        hdr = env * 1.25;
+        hdr = mirrorEnv * 1.20;
     } else if (materialKind > 3.5) {
-        float3 diffuse = base * (1.0 - metalness) * (ambient + float3(1.15, 1.05, 0.92) * ndotl);
-        float3 specular = fresnel * env * (0.25 + specTerm * 1.25);
-        hdr = diffuse + specular + rim.xxx * float3(0.35, 0.45, 0.70);
+        hdr = diffuse + specularIbl + directSpecular + rim.xxx * float3(0.35, 0.45, 0.70);
     } else if (materialKind > 2.5) {
-        hdr = base * (ambient + float3(1.20, 1.08, 0.92) * ndotl);
+        hdr = base * (diffuseIbl + direct);
     } else if (materialKind > 0.5) {
-        hdr = env;
+        hdr = mirrorEnv;
     } else {
         hdr = base * (0.24 + 0.80 * ndotl) + specTerm.xxx * 0.18;
     }

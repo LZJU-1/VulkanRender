@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <array>
 #include <filesystem>
 #include <vector>
 
@@ -72,6 +73,8 @@ struct GpuPreviewGeometry {
     std::filesystem::path normalTexturePath;
     std::filesystem::path roughnessTexturePath;
     std::filesystem::path displacementTexturePath;
+    std::filesystem::path environmentDiffuseTexturePath;
+    std::array<std::filesystem::path, 5> environmentSpecularTexturePaths;
 };
 
 V1RenderStats renderSoftwareV1(const V1RenderSettings& settings);
