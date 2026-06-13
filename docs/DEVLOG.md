@@ -106,3 +106,15 @@ Validation commands:
 scripts\build_msvc.bat
 build\nmake-debug\src\vulkan_render.exe --profile v2 --render --scene assets\third_party\s72_examples\materials.s72 --output out\v2-materials-fixed.bmp --width 1280 --height 720
 ```
+
+## 2026-06-13 - v2 Preview Cache
+
+- Identified the main preview bottleneck: the v2 software window was reloading Scene'72 JSON, `.b72` buffers, and PNG textures every frame.
+- Added an in-process cache for static v2 Scene'72 geometry and environment textures.
+- Kept v1 Scene'72 animation uncached so driver animation remains correct.
+
+Validation command:
+
+```powershell
+scripts\build_msvc.bat
+```

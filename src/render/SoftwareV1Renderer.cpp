@@ -1297,6 +1297,28 @@ struct GltfScene {
     Camera camera;
 };
 
+struct CachedS72Scene {
+    std::vector<Triangle3> triangles;
+    Camera camera;
+    std::filesystem::path environmentTexture;
+};
+
+const CachedS72Scene& cachedStaticS72Scene(const std::filesystem::path& path) {
+    static std::map<std::filesystem::path, CachedS72Scene> cache;
+    const std::filesystem::path key = std::filesystem::absolute(path).lexically_normal();
+    const auto found = cache.find(key);
+    if (found != cache.end()) {
+        return found->second;
+    }
+
+    S72Scene scene = loadS72Scene(path, 0);
+    CachedS72Scene cached;
+    cached.triangles = std::move(scene.triangles);
+    cached.camera = scene.camera;
+    cached.environmentTexture = std::move(scene.environmentTexture);
+    return cache.emplace(key, std::move(cached)).first->second;
+}
+
 void appendGltfPrimitive(const cgltf_node& node, const cgltf_primitive& primitive, std::vector<Triangle3>& triangles) {
     if (primitive.type != cgltf_primitive_type_triangles) {
         return;
@@ -1768,27 +1790,35 @@ struct RenderedImage {
 RenderedImage renderImage(const V1RenderSettings& settings) {
     const std::string extension = settings.scenePath.extension().string();
     if (extension == ".s72" || extension == ".gltf" || extension == ".glb") {
-        std::vector<Triangle3> triangles;
+        std::vector<Triangle3> ownedTriangles;
+        const std::vector<Triangle3>* triangles = &ownedTriangles;
         Camera camera;
         std::filesystem::path environmentTexturePath;
         if (extension == ".s72") {
-            S72Scene scene = loadS72Scene(settings.scenePath, settings.frameIndex);
-            environmentTexturePath = scene.environmentTexture;
-            triangles = std::move(scene.triangles);
-            camera = scene.camera;
+            if (settings.enableV2Shading) {
+                const CachedS72Scene& scene = cachedStaticS72Scene(settings.scenePath);
+                environmentTexturePath = scene.environmentTexture;
+                triangles = &scene.triangles;
+                camera = scene.camera;
+            } else {
+                S72Scene scene = loadS72Scene(settings.scenePath, settings.frameIndex);
+                environmentTexturePath = scene.environmentTexture;
+                ownedTriangles = std::move(scene.triangles);
+                camera = scene.camera;
+            }
         } else {
             GltfScene scene = loadGltfScene(settings.scenePath);
-            triangles = std::move(scene.triangles);
+            ownedTriangles = std::move(scene.triangles);
             camera = scene.camera;
         }
         camera = cameraFromSettings(settings.camera, camera);
 
         Image image(settings.width, settings.height);
-        Texture2D environmentMap;
+        static std::map<std::filesystem::path, Texture2D> environmentTextureCache;
+        const Texture2D* environmentMapPtr = nullptr;
         if (settings.enableV2Shading && !environmentTexturePath.empty()) {
-            environmentMap = loadTexture(settings.scenePath.parent_path() / environmentTexturePath);
+            environmentMapPtr = &cachedTexture(environmentTextureCache, settings.scenePath.parent_path(), environmentTexturePath);
         }
-        const Texture2D* environmentMapPtr = environmentMap.empty() ? nullptr : &environmentMap;
         if (settings.enableV2Shading) {
             image.clearV2Sky();
         } else {
@@ -1796,11 +1826,11 @@ RenderedImage renderImage(const V1RenderSettings& settings) {
         }
 
         V1RenderStats stats;
-        stats.objectCount = static_cast<std::uint32_t>(triangles.size());
+        stats.objectCount = static_cast<std::uint32_t>(triangles->size());
         stats.outputPath = settings.outputPath;
 
         const CameraBasis basis = makeBasis(camera);
-        for (const Triangle3& tri : triangles) {
+        for (const Triangle3& tri : *triangles) {
             ++stats.visibleObjects;
             drawTriangle3(image, tri, camera, basis, settings, stats, environmentMapPtr);
         }
