@@ -150,6 +150,28 @@ scripts\build_msvc.bat
 C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
 ```
 
+## 2026-06-14 - V2 Renderer72-Aligned PBR Demo Assets
+
+- Downloaded and organized a CC0 ambientCG material package for v2 feature validation:
+  - Source: `https://ambientcg.com/a/Rock064`
+  - Archive: `assets/third_party/ambientcg/downloads/Rock064_1K-JPG.zip`
+  - Extracted files: `assets/third_party/ambientcg/Rock064_1K-JPG/`
+- Added source/license notes in `assets/third_party/ambientcg/README.md`.
+- Extended v2 GPU preview texture bindings from one albedo texture to a PBR texture set:
+  - albedo/color
+  - normal
+  - roughness
+  - displacement
+- Updated the v2 shader to use the dedicated normal map for tangent-space normal mapping, roughness map for specular response, and displacement map for parallax-style UV offset.
+- The v2 preview now uses the ambientCG Rock064 PBR texture set when it is present, falling back to the official Scene'72 wood textures otherwise.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
+```
+
 ## 2026-06-14 - V2 GPU Texture And Bump/Parallax Preview
 
 - Added per-vertex UVs to the GPU preview geometry instead of using one averaged UV per triangle.

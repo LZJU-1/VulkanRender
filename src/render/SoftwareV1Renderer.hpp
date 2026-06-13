@@ -69,6 +69,9 @@ struct GpuPreviewGeometry {
     std::vector<GpuPreviewVertex> vertices;
     V1CameraSettings camera;
     std::filesystem::path albedoTexturePath;
+    std::filesystem::path normalTexturePath;
+    std::filesystem::path roughnessTexturePath;
+    std::filesystem::path displacementTexturePath;
 };
 
 V1RenderStats renderSoftwareV1(const V1RenderSettings& settings);

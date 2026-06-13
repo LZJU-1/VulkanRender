@@ -1939,9 +1939,23 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
 
     GpuPreviewGeometry geometry;
     if (settings.enableV2Shading) {
-        const std::filesystem::path woodAlbedo = settings.scenePath.parent_path() / "wood_floor_deck_diff_1k.png";
-        if (std::filesystem::exists(woodAlbedo)) {
-            geometry.albedoTexturePath = woodAlbedo;
+        const std::filesystem::path thirdPartyRoot = settings.scenePath.parent_path().parent_path();
+        const std::filesystem::path pbrDemo = thirdPartyRoot / "ambientcg/Rock064_1K-JPG";
+        const std::filesystem::path rockAlbedo = pbrDemo / "Rock064_1K-JPG_Color.jpg";
+        if (std::filesystem::exists(rockAlbedo)) {
+            geometry.albedoTexturePath = rockAlbedo;
+            geometry.normalTexturePath = pbrDemo / "Rock064_1K-JPG_NormalGL.jpg";
+            geometry.roughnessTexturePath = pbrDemo / "Rock064_1K-JPG_Roughness.jpg";
+            geometry.displacementTexturePath = pbrDemo / "Rock064_1K-JPG_Displacement.jpg";
+        } else {
+            const std::filesystem::path woodAlbedo = settings.scenePath.parent_path() / "wood_floor_deck_diff_1k.png";
+            const std::filesystem::path woodRoughness = settings.scenePath.parent_path() / "wood_floor_deck_rough_1k.png";
+            if (std::filesystem::exists(woodAlbedo)) {
+                geometry.albedoTexturePath = woodAlbedo;
+            }
+            if (std::filesystem::exists(woodRoughness)) {
+                geometry.roughnessTexturePath = woodRoughness;
+            }
         }
     }
     geometry.vertices.reserve(triangles->size() * 3u);

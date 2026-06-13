@@ -17,7 +17,10 @@ cbuffer Camera : register(b0) {
 };
 
 [[vk::binding(1, 0)]] Texture2D<float4> albedoTexture;
-[[vk::binding(2, 0)]] SamplerState albedoSampler;
+[[vk::binding(2, 0)]] Texture2D<float4> normalTexture;
+[[vk::binding(3, 0)]] Texture2D<float4> roughnessTexture;
+[[vk::binding(4, 0)]] Texture2D<float4> displacementTexture;
+[[vk::binding(5, 0)]] SamplerState materialSampler;
 
 float3 toneMap(float3 hdr) {
     float3 mapped = hdr / (hdr + 1.0.xxx);
@@ -40,7 +43,7 @@ float3 fresnelSchlick(float cosTheta, float3 f0) {
 }
 
 float albedoHeight(float2 uv) {
-    float3 color = albedoTexture.Sample(albedoSampler, uv).rgb;
+    float3 color = displacementTexture.Sample(materialSampler, uv).rgb;
     return dot(color, float3(0.2126, 0.7152, 0.0722));
 }
 
@@ -76,18 +79,23 @@ float4 main(FragmentIn input) : SV_Target0 {
         float hU = albedoHeight(uv + float2(0.0, texel.y));
         float dHdu = (hR - hL) * 3.0;
         float dHdv = (hU - hD) * 3.0;
-        normal = normalize(normal - tangent * dHdu - bitangent * dHdv);
+        float3 tangentNormal = normalTexture.Sample(materialSampler, uv).xyz * 2.0 - 1.0;
+        tangentNormal.y = -tangentNormal.y;
+        float3 normalMapped = normalize(tangent * tangentNormal.x + bitangent * tangentNormal.y + normal * tangentNormal.z);
+        float3 heightNormal = normalize(normal - tangent * dHdu - bitangent * dHdv);
+        normal = normalize(lerp(heightNormal, normalMapped, 0.82));
     }
 
     float3 lightDir = normalize(float3(-0.35, -0.55, 0.76));
     float ndotl = saturate(dot(normal, lightDir));
     float3 halfVector = normalize(lightDir + view);
     float ndotv = max(0.04, saturate(dot(normal, view)));
-    float roughness = clamp(input.roughness, 0.03, 1.0);
+    float roughnessMap = roughnessTexture.Sample(materialSampler, uv).r;
+    float roughness = clamp(lerp(input.roughness, roughnessMap, saturate(input.textured)), 0.03, 1.0);
     float metalness = saturate(input.metalness);
     float materialKind = input.materialKind;
 
-    float3 texel = albedoTexture.Sample(albedoSampler, uv).rgb;
+    float3 texel = albedoTexture.Sample(materialSampler, uv).rgb;
     float3 base = lerp(saturate(input.color), texel, saturate(input.textured));
     float3 reflected = reflect(-view, normal);
     float3 env = skyRadiance(reflected);

@@ -145,6 +145,12 @@ struct QueueFamilies {
     bool hasPresent = false;
 };
 
+struct TextureResource {
+    VkImage image = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkImageView view = VK_NULL_HANDLE;
+};
+
 Vec3 operator+(Vec3 a, Vec3 b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
 Vec3 operator-(Vec3 a, Vec3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
 Vec3 operator*(Vec3 a, float s) { return {a.x * s, a.y * s, a.z * s}; }
@@ -378,10 +384,12 @@ public:
         if (device_ != VK_NULL_HANDLE && pipelineLayout_ != VK_NULL_HANDLE) vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr);
         if (device_ != VK_NULL_HANDLE && descriptorPool_ != VK_NULL_HANDLE) vkDestroyDescriptorPool(device_, descriptorPool_, nullptr);
         if (device_ != VK_NULL_HANDLE && descriptorSetLayout_ != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, descriptorSetLayout_, nullptr);
-        if (device_ != VK_NULL_HANDLE && albedoSampler_ != VK_NULL_HANDLE) vkDestroySampler(device_, albedoSampler_, nullptr);
-        if (device_ != VK_NULL_HANDLE && albedoView_ != VK_NULL_HANDLE) vkDestroyImageView(device_, albedoView_, nullptr);
-        if (device_ != VK_NULL_HANDLE && albedoImage_ != VK_NULL_HANDLE) vkDestroyImage(device_, albedoImage_, nullptr);
-        if (device_ != VK_NULL_HANDLE && albedoMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, albedoMemory_, nullptr);
+        if (device_ != VK_NULL_HANDLE && textureSampler_ != VK_NULL_HANDLE) vkDestroySampler(device_, textureSampler_, nullptr);
+        for (TextureResource& texture : textures_) {
+            if (device_ != VK_NULL_HANDLE && texture.view != VK_NULL_HANDLE) vkDestroyImageView(device_, texture.view, nullptr);
+            if (device_ != VK_NULL_HANDLE && texture.image != VK_NULL_HANDLE) vkDestroyImage(device_, texture.image, nullptr);
+            if (device_ != VK_NULL_HANDLE && texture.memory != VK_NULL_HANDLE) vkFreeMemory(device_, texture.memory, nullptr);
+        }
         if (device_ != VK_NULL_HANDLE && uniformBuffer_ != VK_NULL_HANDLE) vkDestroyBuffer(device_, uniformBuffer_, nullptr);
         if (device_ != VK_NULL_HANDLE && uniformMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, uniformMemory_, nullptr);
         if (device_ != VK_NULL_HANDLE && vertexBuffer_ != VK_NULL_HANDLE) vkDestroyBuffer(device_, vertexBuffer_, nullptr);
@@ -932,20 +940,23 @@ private:
         vkCmdPipelineBarrier(commandBuffer, srcStage, dstStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
     }
 
-    void createTextureResources() {
+    void createSampledTexture(
+        const std::filesystem::path& path,
+        const std::array<stbi_uc, 4>& fallback,
+        TextureResource& texture
+    ) {
         int width = 1;
         int height = 1;
         int channels = 4;
-        stbi_uc white[] = {255, 255, 255, 255};
         stbi_uc* loaded = nullptr;
-        stbi_uc* pixels = white;
-        if (!geometry_.albedoTexturePath.empty()) {
-            loaded = stbi_load(geometry_.albedoTexturePath.string().c_str(), &width, &height, &channels, 4);
+        const stbi_uc* pixels = fallback.data();
+        if (!path.empty()) {
+            loaded = stbi_load(path.string().c_str(), &width, &height, &channels, 4);
             if (loaded) {
                 pixels = loaded;
                 channels = 4;
             } else {
-                previewLog("createTextureResources: failed to load " + geometry_.albedoTexturePath.string());
+                previewLog("createTextureResources: failed to load " + path.string());
             }
         }
 
@@ -973,33 +984,41 @@ private:
         image.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         image.samples = VK_SAMPLE_COUNT_1_BIT;
         image.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        require(vkCreateImage(device_, &image, nullptr, &albedoImage_), "vkCreateImage(albedo)");
+        require(vkCreateImage(device_, &image, nullptr, &texture.image), "vkCreateImage(texture)");
 
         VkMemoryRequirements requirements{};
-        vkGetImageMemoryRequirements(device_, albedoImage_, &requirements);
+        vkGetImageMemoryRequirements(device_, texture.image, &requirements);
         VkMemoryAllocateInfo allocate{};
         allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
         allocate.allocationSize = requirements.size;
         allocate.memoryTypeIndex = findMemoryType(physicalDevice_, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        require(vkAllocateMemory(device_, &allocate, nullptr, &albedoMemory_), "vkAllocateMemory(albedo)");
-        require(vkBindImageMemory(device_, albedoImage_, albedoMemory_, 0), "vkBindImageMemory(albedo)");
+        require(vkAllocateMemory(device_, &allocate, nullptr, &texture.memory), "vkAllocateMemory(texture)");
+        require(vkBindImageMemory(device_, texture.image, texture.memory, 0), "vkBindImageMemory(texture)");
 
         VkCommandBuffer commandBuffer = beginOneTimeCommands();
-        transitionImage(commandBuffer, albedoImage_, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        transitionImage(commandBuffer, texture.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         VkBufferImageCopy copy{};
         copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         copy.imageSubresource.mipLevel = 0;
         copy.imageSubresource.baseArrayLayer = 0;
         copy.imageSubresource.layerCount = 1;
         copy.imageExtent = {static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height), 1};
-        vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, albedoImage_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
-        transitionImage(commandBuffer, albedoImage_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        transitionImage(commandBuffer, texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         endOneTimeCommands(commandBuffer);
 
         vkDestroyBuffer(device_, stagingBuffer, nullptr);
         vkFreeMemory(device_, stagingMemory, nullptr);
 
-        albedoView_ = createImageView(albedoImage_, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT);
+        texture.view = createImageView(texture.image, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT);
+    }
+
+    void createTextureResources() {
+        createSampledTexture(geometry_.albedoTexturePath, {255, 255, 255, 255}, textures_[0]);
+        createSampledTexture(geometry_.normalTexturePath, {128, 128, 255, 255}, textures_[1]);
+        createSampledTexture(geometry_.roughnessTexturePath, {178, 178, 178, 255}, textures_[2]);
+        createSampledTexture(geometry_.displacementTexturePath, {128, 128, 128, 255}, textures_[3]);
+
         VkSamplerCreateInfo sampler{};
         sampler.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
         sampler.magFilter = VK_FILTER_LINEAR;
@@ -1009,7 +1028,7 @@ private:
         sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
         sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
         sampler.maxLod = 0.0f;
-        require(vkCreateSampler(device_, &sampler, nullptr, &albedoSampler_), "vkCreateSampler(albedo)");
+        require(vkCreateSampler(device_, &sampler, nullptr, &textureSampler_), "vkCreateSampler(texture)");
     }
 
     void createDescriptors() {
@@ -1019,19 +1038,20 @@ private:
         cameraBinding.descriptorCount = 1;
         cameraBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        VkDescriptorSetLayoutBinding textureBinding{};
-        textureBinding.binding = 1;
-        textureBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-        textureBinding.descriptorCount = 1;
-        textureBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
+        std::array<VkDescriptorSetLayoutBinding, 6> bindings{};
+        bindings[0] = cameraBinding;
+        for (std::uint32_t i = 0; i < 4; ++i) {
+            bindings[1 + i].binding = 1 + i;
+            bindings[1 + i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            bindings[1 + i].descriptorCount = 1;
+            bindings[1 + i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
         VkDescriptorSetLayoutBinding samplerBinding{};
-        samplerBinding.binding = 2;
+        samplerBinding.binding = 5;
         samplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
         samplerBinding.descriptorCount = 1;
         samplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-        std::array<VkDescriptorSetLayoutBinding, 3> bindings{cameraBinding, textureBinding, samplerBinding};
+        bindings[5] = samplerBinding;
         VkDescriptorSetLayoutCreateInfo layout{};
         layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
         layout.bindingCount = static_cast<std::uint32_t>(bindings.size());
@@ -1042,7 +1062,7 @@ private:
         poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         poolSizes[0].descriptorCount = 1;
         poolSizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-        poolSizes[1].descriptorCount = 1;
+        poolSizes[1].descriptorCount = 4;
         poolSizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLER;
         poolSizes[2].descriptorCount = 1;
         VkDescriptorPoolCreateInfo pool{};
@@ -1063,31 +1083,33 @@ private:
         bufferInfo.buffer = uniformBuffer_;
         bufferInfo.offset = 0;
         bufferInfo.range = sizeof(CameraUniform);
-        VkDescriptorImageInfo imageInfo{};
-        imageInfo.imageView = albedoView_;
-        imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         VkDescriptorImageInfo samplerInfo{};
-        samplerInfo.sampler = albedoSampler_;
+        samplerInfo.sampler = textureSampler_;
 
-        std::array<VkWriteDescriptorSet, 3> writes{};
+        std::array<VkWriteDescriptorSet, 6> writes{};
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet = descriptorSet_;
         writes[0].dstBinding = 0;
         writes[0].descriptorCount = 1;
         writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         writes[0].pBufferInfo = &bufferInfo;
-        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[1].dstSet = descriptorSet_;
-        writes[1].dstBinding = 1;
-        writes[1].descriptorCount = 1;
-        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-        writes[1].pImageInfo = &imageInfo;
-        writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[2].dstSet = descriptorSet_;
-        writes[2].dstBinding = 2;
-        writes[2].descriptorCount = 1;
-        writes[2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-        writes[2].pImageInfo = &samplerInfo;
+        std::array<VkDescriptorImageInfo, 4> imageInfos{};
+        for (std::uint32_t i = 0; i < 4; ++i) {
+            imageInfos[i].imageView = textures_[i].view;
+            imageInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            writes[1 + i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[1 + i].dstSet = descriptorSet_;
+            writes[1 + i].dstBinding = 1 + i;
+            writes[1 + i].descriptorCount = 1;
+            writes[1 + i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            writes[1 + i].pImageInfo = &imageInfos[i];
+        }
+        writes[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[5].dstSet = descriptorSet_;
+        writes[5].dstBinding = 5;
+        writes[5].descriptorCount = 1;
+        writes[5].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+        writes[5].pImageInfo = &samplerInfo;
         vkUpdateDescriptorSets(device_, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
     }
 
@@ -1378,10 +1400,8 @@ private:
     std::uint32_t vertexCount_ = 0;
     VkBuffer uniformBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory uniformMemory_ = VK_NULL_HANDLE;
-    VkImage albedoImage_ = VK_NULL_HANDLE;
-    VkDeviceMemory albedoMemory_ = VK_NULL_HANDLE;
-    VkImageView albedoView_ = VK_NULL_HANDLE;
-    VkSampler albedoSampler_ = VK_NULL_HANDLE;
+    std::array<TextureResource, 4> textures_{};
+    VkSampler textureSampler_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout descriptorSetLayout_ = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool_ = VK_NULL_HANDLE;
     VkDescriptorSet descriptorSet_ = VK_NULL_HANDLE;
