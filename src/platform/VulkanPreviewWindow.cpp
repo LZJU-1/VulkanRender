@@ -106,6 +106,17 @@ PFN_vkWaitForFences vkWaitForFences = nullptr;
 PFN_vkResetFences vkResetFences = nullptr;
 PFN_vkQueueSubmit vkQueueSubmit = nullptr;
 
+HMODULE vulkanLibraryHandle() {
+    static HMODULE library = nullptr;
+    if (!library) {
+        library = LoadLibraryW(L"vulkan-1.dll");
+        if (!library) {
+            throw std::runtime_error("Could not load vulkan-1.dll");
+        }
+    }
+    return library;
+}
+
 struct Vec3 {
     float x = 0.0f;
     float y = 0.0f;
@@ -182,6 +193,69 @@ std::vector<std::uint32_t> readSpirv(const std::filesystem::path& path) {
     return words;
 }
 
+std::filesystem::path executablePath() {
+    std::wstring buffer(32768, L'\0');
+    const DWORD size = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (size == 0) {
+        return {};
+    }
+    buffer.resize(size);
+    return std::filesystem::path(buffer);
+}
+
+std::filesystem::path resolveProjectPath(const std::filesystem::path& relativePath) {
+    if (relativePath.is_absolute() || std::filesystem::exists(relativePath)) {
+        return relativePath;
+    }
+
+    std::filesystem::path cursor = executablePath().parent_path();
+    while (!cursor.empty()) {
+        const std::filesystem::path candidate = cursor / relativePath;
+        if (std::filesystem::exists(candidate)) {
+            return candidate;
+        }
+        const std::filesystem::path parent = cursor.parent_path();
+        if (parent == cursor) {
+            break;
+        }
+        cursor = parent;
+    }
+    return relativePath;
+}
+
+std::filesystem::path projectRootPath() {
+    std::filesystem::path cursor = executablePath().parent_path();
+    while (!cursor.empty()) {
+        if (std::filesystem::exists(cursor / "assets") && std::filesystem::exists(cursor / "shaders")) {
+            return cursor;
+        }
+        const std::filesystem::path parent = cursor.parent_path();
+        if (parent == cursor) {
+            break;
+        }
+        cursor = parent;
+    }
+    return std::filesystem::current_path();
+}
+
+std::filesystem::path previewLogPath() {
+    const std::filesystem::path path = projectRootPath() / "out/vulkan-preview.log";
+    if (path.has_parent_path()) {
+        std::filesystem::create_directories(path.parent_path());
+    }
+    return path;
+}
+
+void previewLog(const std::string& message) {
+    std::ofstream out(previewLogPath(), std::ios::app);
+    out << message << '\n';
+}
+
+void resetPreviewLog() {
+    std::ofstream out(previewLogPath(), std::ios::trunc);
+    out << "Vulkan preview log\n";
+}
+
 void require(VkResult result, const char* what) {
     if (result != VK_SUCCESS) {
         throw std::runtime_error(std::string(what) + " failed");
@@ -213,16 +287,20 @@ void loadDevice(VkDevice device, T& target, const char* name) {
 }
 
 void loadVulkanLibrary() {
-    static HMODULE library = nullptr;
-    if (library) {
+    static bool loaded = false;
+    if (loaded) {
         return;
     }
-    library = LoadLibraryW(L"vulkan-1.dll");
-    if (!library) {
-        throw std::runtime_error("Could not load vulkan-1.dll");
-    }
+    SetEnvironmentVariableW(
+        L"VK_LOADER_LAYERS_DISABLE",
+        L"VK_LAYER_VALVE_steam_overlay,VK_LAYER_VALVE_steam_fossilize"
+    );
+    SetEnvironmentVariableW(L"DISABLE_LAYER_NV_OPTIMUS_1", L"1");
+    SetEnvironmentVariableW(L"DISABLE_LAYER_NV_PRESENT_1", L"1");
+    HMODULE library = vulkanLibraryHandle();
     loadGlobal(library, vkGetInstanceProcAddr, "vkGetInstanceProcAddr");
     loadGlobal(library, vkCreateInstance, "vkCreateInstance");
+    loaded = true;
 }
 
 std::uint32_t findMemoryType(VkPhysicalDevice physicalDevice, std::uint32_t bits, VkMemoryPropertyFlags flags) {
@@ -240,22 +318,41 @@ class VulkanGpuRenderer {
 public:
     VulkanGpuRenderer(HWND hwnd, std::uint32_t width, std::uint32_t height, const GpuPreviewGeometry& geometry)
         : hwnd_(hwnd), width_(width), height_(height), geometry_(geometry) {
+        previewLog("VulkanGpuRenderer: loadVulkanLibrary");
         loadVulkanLibrary();
+        previewLog("VulkanGpuRenderer: createInstance");
         createInstance();
+        previewLog("VulkanGpuRenderer: loadInstanceFunctions");
         loadInstanceFunctions();
+        previewLog("VulkanGpuRenderer: createSurface");
         createSurface();
+        previewLog("VulkanGpuRenderer: selectDevice");
         selectDevice();
+        previewLog("VulkanGpuRenderer: createDevice");
         createDevice();
+        previewLog("VulkanGpuRenderer: loadDeviceFunctions");
         loadDeviceFunctions();
+        previewLog("VulkanGpuRenderer: fetchDeviceQueues");
+        fetchDeviceQueues();
+        previewLog("VulkanGpuRenderer: createSwapchain");
         createSwapchain();
+        previewLog("VulkanGpuRenderer: createRenderPass");
         createRenderPass();
+        previewLog("VulkanGpuRenderer: createDepthResources");
         createDepthResources();
+        previewLog("VulkanGpuRenderer: createFramebuffers");
         createFramebuffers();
+        previewLog("VulkanGpuRenderer: createBuffers");
         createBuffers();
+        previewLog("VulkanGpuRenderer: createDescriptors");
         createDescriptors();
+        previewLog("VulkanGpuRenderer: createPipeline");
         createPipeline();
+        previewLog("VulkanGpuRenderer: createCommands");
         createCommands();
+        previewLog("VulkanGpuRenderer: createSync");
         createSync();
+        previewLog("VulkanGpuRenderer: ready");
     }
 
     ~VulkanGpuRenderer() {
@@ -287,18 +384,26 @@ public:
     }
 
     void draw(const V1CameraSettings& camera) {
+        const bool logFrame = frameIndex_ < 4;
+        if (logFrame) previewLog("draw: wait fence");
         vkWaitForFences(device_, 1, &inFlight_, VK_TRUE, UINT64_MAX);
+        if (logFrame) previewLog("draw: reset fence");
         vkResetFences(device_, 1, &inFlight_);
 
         std::uint32_t imageIndex = 0;
+        if (logFrame) previewLog("draw: acquire");
         VkResult acquire = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX, imageAvailable_, VK_NULL_HANDLE, &imageIndex);
         if (acquire != VK_SUCCESS && acquire != VK_SUBOPTIMAL_KHR) {
+            previewLog("draw: acquire returned non-success");
             return;
         }
 
+        if (logFrame) previewLog("draw: update uniform");
         updateUniform(camera);
+        if (logFrame) previewLog("draw: record command buffer");
         recordCommandBuffer(commandBuffer_, imageIndex);
 
+        if (logFrame) previewLog("draw: submit");
         const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         VkSubmitInfo submit{};
         submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -311,6 +416,7 @@ public:
         submit.pSignalSemaphores = &renderFinished_;
         require(vkQueueSubmit(graphicsQueue_, 1, &submit, inFlight_), "vkQueueSubmit");
 
+        if (logFrame) previewLog("draw: present");
         VkPresentInfoKHR present{};
         present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
         present.waitSemaphoreCount = 1;
@@ -319,6 +425,8 @@ public:
         present.pSwapchains = &swapchain_;
         present.pImageIndices = &imageIndex;
         vkQueuePresentKHR(presentQueue_, &present);
+        if (logFrame) previewLog("draw: done");
+        ++frameIndex_;
     }
 
 private:
@@ -439,7 +547,9 @@ private:
                 out.hasGraphics = true;
             }
             VkBool32 present = VK_FALSE;
-            vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface_, &present);
+            if (surface_ != VK_NULL_HANDLE) {
+                require(vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface_, &present), "vkGetPhysicalDeviceSurfaceSupportKHR");
+            }
             if (present) {
                 out.present = i;
                 out.hasPresent = true;
@@ -475,11 +585,23 @@ private:
             if (!hasSwapchain) {
                 continue;
             }
+            VkSurfaceCapabilitiesKHR caps{};
+            require(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface_, &caps), "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
+            std::uint32_t formatCount = 0;
+            require(vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface_, &formatCount, nullptr), "vkGetPhysicalDeviceSurfaceFormatsKHR");
+            if (formatCount == 0) {
+                continue;
+            }
             physicalDevice_ = device;
             queueFamilies_ = families;
             VkPhysicalDeviceProperties properties{};
             vkGetPhysicalDeviceProperties(device, &properties);
             gpuName_ = properties.deviceName;
+            previewLog(
+                "selectDevice: " + gpuName_
+                + " graphicsQueue=" + std::to_string(queueFamilies_.graphics)
+                + " presentQueue=" + std::to_string(queueFamilies_.present)
+            );
             return;
         }
         throw std::runtime_error("No Vulkan GPU supports graphics, present, and swapchain");
@@ -510,6 +632,9 @@ private:
         createInfo.enabledExtensionCount = 1;
         createInfo.ppEnabledExtensionNames = extensions;
         require(vkCreateDevice(physicalDevice_, &createInfo, nullptr, &device_), "vkCreateDevice");
+    }
+
+    void fetchDeviceQueues() {
         vkGetDeviceQueue(device_, queueFamilies_.graphics, 0, &graphicsQueue_);
         vkGetDeviceQueue(device_, queueFamilies_.present, 0, &presentQueue_);
     }
@@ -752,7 +877,7 @@ private:
     }
 
     VkShaderModule createShader(const std::filesystem::path& path) {
-        const std::vector<std::uint32_t> code = readSpirv(path);
+        const std::vector<std::uint32_t> code = readSpirv(resolveProjectPath(path));
         VkShaderModuleCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
         createInfo.codeSize = code.size() * sizeof(std::uint32_t);
@@ -992,6 +1117,7 @@ private:
     VkSemaphore imageAvailable_ = VK_NULL_HANDLE;
     VkSemaphore renderFinished_ = VK_NULL_HANDLE;
     VkFence inFlight_ = VK_NULL_HANDLE;
+    std::uint32_t frameIndex_ = 0;
 };
 
 struct PreviewState {
@@ -1068,7 +1194,6 @@ LRESULT CALLBACK vulkanPreviewProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
     switch (message) {
     case WM_CREATE:
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams));
-        SetTimer(hwnd, kWindowTimer, 16, nullptr);
         return 0;
     case WM_TIMER:
         if (PreviewState* state = stateFrom(hwnd)) {
@@ -1079,7 +1204,12 @@ LRESULT CALLBACK vulkanPreviewProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
             const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - state->lastTick).count();
             state->lastTick = now;
             updateCamera(*state, std::max(0.001f, static_cast<float>(elapsedMs) / 1000.0f));
-            state->renderer->draw(state->camera);
+            try {
+                state->renderer->draw(state->camera);
+            } catch (const std::exception& error) {
+                std::cerr << "Vulkan preview draw failed: " << error.what() << '\n';
+                DestroyWindow(hwnd);
+            }
         }
         return 0;
     case WM_KEYDOWN:
@@ -1126,9 +1256,13 @@ LRESULT CALLBACK vulkanPreviewProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
 } // namespace
 
 int runVulkanPreviewWindow(V1RenderSettings settings) {
+    resetPreviewLog();
+    previewLog("runVulkanPreviewWindow: begin");
     PreviewState state;
     state.settings = std::move(settings);
+    previewLog("runVulkanPreviewWindow: build geometry");
     state.geometry = buildGpuPreviewGeometry(state.settings);
+    previewLog("runVulkanPreviewWindow: geometry vertices=" + std::to_string(state.geometry.vertices.size()));
     state.camera = state.geometry.camera;
     deriveAnglesFromCamera(state);
 
@@ -1161,16 +1295,21 @@ int runVulkanPreviewWindow(V1RenderSettings settings) {
     );
     if (!hwnd) {
         std::cerr << "Could not create Vulkan preview window.\n";
+        previewLog("runVulkanPreviewWindow: CreateWindowExW failed");
         return 1;
     }
 
     try {
+        previewLog("runVulkanPreviewWindow: create renderer");
         state.renderer = std::make_unique<VulkanGpuRenderer>(hwnd, state.settings.width, state.settings.height, state.geometry);
     } catch (const std::exception& error) {
         std::cerr << "Could not initialize Vulkan GPU preview: " << error.what() << '\n';
+        previewLog(std::string("runVulkanPreviewWindow: renderer init failed: ") + error.what());
         DestroyWindow(hwnd);
         return 1;
     }
+    previewLog("runVulkanPreviewWindow: timer start");
+    SetTimer(hwnd, kWindowTimer, 16, nullptr);
 
     std::cout << "Opened Vulkan GPU preview window. vertices=" << state.geometry.vertices.size()
               << ". Press R for roaming, Esc to exit.\n";

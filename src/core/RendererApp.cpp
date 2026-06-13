@@ -8,10 +8,53 @@
 #include "rhi/RenderDevice.hpp"
 
 #include <iostream>
+#include <filesystem>
 #include <stdexcept>
 #include <utility>
 
+#if defined(_WIN32)
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 namespace vr {
+namespace {
+
+std::filesystem::path executablePath() {
+#if defined(_WIN32)
+    std::wstring buffer(32768, L'\0');
+    const DWORD size = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (size == 0) {
+        return {};
+    }
+    buffer.resize(size);
+    return std::filesystem::path(buffer);
+#else
+    return {};
+#endif
+}
+
+std::filesystem::path resolveInputPath(const std::filesystem::path& path) {
+    if (path.empty() || path.is_absolute() || std::filesystem::exists(path)) {
+        return path;
+    }
+
+    std::filesystem::path cursor = executablePath().parent_path();
+    while (!cursor.empty()) {
+        const std::filesystem::path candidate = cursor / path;
+        if (std::filesystem::exists(candidate)) {
+            return candidate;
+        }
+        const std::filesystem::path parent = cursor.parent_path();
+        if (parent == cursor) {
+            break;
+        }
+        cursor = parent;
+    }
+    return path;
+}
+
+} // namespace
 
 RendererApp::RendererApp(AppConfig config) : config_(std::move(config)) {}
 
@@ -45,6 +88,7 @@ int RendererApp::run() {
     graph.describe(std::cout);
 
     if (!config_.scenePath.empty()) {
+        config_.scenePath = resolveInputPath(config_.scenePath).string();
         std::cout << "Scene: " << config_.scenePath << '\n';
     }
 
@@ -74,6 +118,7 @@ int RendererApp::run() {
         settings.scenePath = config_.scenePath.empty()
             ? (settings.enableV2Shading ? "assets/third_party/s72_examples/materials.s72" : "assets/scenes/v1.scene")
             : config_.scenePath;
+        settings.scenePath = resolveInputPath(settings.scenePath);
         settings.outputPath = config_.outputPath;
 
         const V1RenderStats stats = renderSoftwareV1(settings);
@@ -98,6 +143,7 @@ int RendererApp::run() {
         settings.scenePath = config_.scenePath.empty()
             ? (settings.enableV2Shading ? "assets/third_party/s72_examples/materials.s72" : "assets/scenes/v1.scene")
             : config_.scenePath;
+        settings.scenePath = resolveInputPath(settings.scenePath);
         settings.outputPath = config_.outputPath;
         if (settings.scenePath.extension() == ".scene") {
             std::cout << "GPU preview needs mesh geometry; falling back to the legacy CPU preview for .scene files.\n";

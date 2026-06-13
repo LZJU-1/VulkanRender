@@ -134,3 +134,18 @@ Validation commands:
 scripts\build_msvc.bat
 build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
 ```
+
+## 2026-06-13 - Vulkan Preview Startup Hardening
+
+- Moved the Win32 preview timer startup until after the Vulkan renderer is fully initialized.
+- Added draw-loop exception handling so recoverable Vulkan preview errors report to stderr instead of crashing silently.
+- Resolved relative scene and shader paths by walking upward from the executable directory, so commands can be launched outside the repository root.
+- Reworked Vulkan GPU startup to match the proven NTC/Donut order more closely: create the window surface before adapter selection, require graphics+present support on the chosen queue family, enable `VK_KHR_swapchain`, load device-level function pointers after `vkCreateDevice`, and only then fetch graphics/present queues.
+- Fixed the immediate access violation: `vkGetDeviceQueue` was being called before its function pointer was loaded, which could jump through address `0x0` right after device creation.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
+```
