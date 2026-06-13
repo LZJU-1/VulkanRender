@@ -3,6 +3,7 @@ set(VR_SOURCES
     core/RenderGraph.cpp
     core/RendererApp.cpp
     platform/CommandLine.cpp
+    platform/PreviewWindow.cpp
     render/SoftwareV1Renderer.cpp
     rhi/RenderDevice.cpp
     rhi/VulkanDevice.cpp
@@ -17,6 +18,10 @@ if(MSVC)
     target_compile_options(vulkan_render PRIVATE /W4 /permissive-)
 else()
     target_compile_options(vulkan_render PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(WIN32)
+    target_link_libraries(vulkan_render PRIVATE user32 gdi32)
 endif()
 
 if(VR_ENABLE_VULKAN)

@@ -16,6 +16,12 @@ build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene assets\sce
 
 This produces a headless BMP with simple material cubes, animation at the selected frame, and a deliberately off-frustum cube that is counted as culled.
 
+Realtime preview:
+
+```powershell
+build\nmake-debug\src\vulkan_render.exe --profile v1 --preview --scene assets\scenes\v1.scene --width 960 --height 540
+```
+
 ## v2 PBR And IBL
 
 Target behavior: add skybox rendering, tone mapping, normal mapping, displacement mapping, PBR material parameters, and environment map precomputation.

@@ -55,6 +55,8 @@ AppConfig CommandLine::parse(int argc, char** argv) {
             config.height = parseU32(requireValue(i, argc, argv, arg), arg);
         } else if (arg == "--render") {
             config.renderImage = true;
+        } else if (arg == "--preview") {
+            config.previewWindow = true;
         } else if (arg == "--frames") {
             config.frames = parseU32(requireValue(i, argc, argv, arg), arg);
         } else if (arg == "--list-devices") {
@@ -98,6 +100,7 @@ void CommandLine::printHelp(std::ostream& out) {
         << "  --profile <" << profileKeys() << ">  Select a staged renderer profile\n"
         << "  --scene <path>             Scene file for profiles that support loading\n"
         << "  --render                   Render a headless image for the selected profile\n"
+        << "  --preview                  Open a realtime preview window for v1\n"
         << "  --output <path>            Output BMP path; implies --render\n"
         << "  --width <n>                Output width for headless renders\n"
         << "  --height <n>               Output height for headless renders\n"

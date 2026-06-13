@@ -10,6 +10,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace vr {
@@ -236,6 +237,18 @@ public:
         }
     }
 
+    std::vector<std::uint32_t> toBgra() const {
+        std::vector<std::uint32_t> bgra(width_ * height_);
+        for (std::size_t i = 0; i < pixels_.size(); ++i) {
+            const Color pixel = pixels_[i];
+            bgra[i] = 0xff000000u
+                | (static_cast<std::uint32_t>(pixel.r) << 16u)
+                | (static_cast<std::uint32_t>(pixel.g) << 8u)
+                | static_cast<std::uint32_t>(pixel.b);
+        }
+        return bgra;
+    }
+
 private:
     static float edge(Vertex2 a, Vertex2 b, Vertex2 p) {
         return (p.x - a.x) * (b.y - a.y) - (p.y - a.y) * (b.x - a.x);
@@ -364,13 +377,12 @@ void drawCube(Image& image, const CubeInstance& cube, const Camera& camera, cons
     }
 }
 
-} // namespace
+struct RenderedImage {
+    Image image;
+    V1RenderStats stats;
+};
 
-V1RenderStats renderSoftwareV1(const V1RenderSettings& settings) {
-    if (settings.width < 16 || settings.height < 16) {
-        throw std::runtime_error("v1 render size is too small");
-    }
-
+RenderedImage renderImage(const V1RenderSettings& settings) {
     const auto cubes = loadScene(settings.scenePath);
     const Camera camera;
     const CameraBasis basis = makeBasis(camera);
@@ -393,8 +405,30 @@ V1RenderStats renderSoftwareV1(const V1RenderSettings& settings) {
         drawCube(image, cube, camera, basis, settings, stats);
     }
 
-    image.writeBmp(settings.outputPath);
-    return stats;
+    return {std::move(image), stats};
+}
+
+} // namespace
+
+V1Frame renderSoftwareV1Frame(const V1RenderSettings& settings) {
+    if (settings.width < 16 || settings.height < 16) {
+        throw std::runtime_error("v1 render size is too small");
+    }
+
+    RenderedImage rendered = renderImage(settings);
+
+    V1Frame frame;
+    frame.width = settings.width;
+    frame.height = settings.height;
+    frame.bgra = rendered.image.toBgra();
+    frame.stats = rendered.stats;
+    return frame;
+}
+
+V1RenderStats renderSoftwareV1(const V1RenderSettings& settings) {
+    RenderedImage rendered = renderImage(settings);
+    rendered.image.writeBmp(settings.outputPath);
+    return rendered.stats;
 }
 
 } // namespace vr

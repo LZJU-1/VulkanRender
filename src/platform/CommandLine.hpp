@@ -14,6 +14,7 @@ struct AppConfig {
     std::uint32_t width = 1280;
     std::uint32_t height = 720;
     bool renderImage = false;
+    bool previewWindow = false;
     bool listDevices = false;
     bool enableValidation = false;
     bool enableRayTracing = false;

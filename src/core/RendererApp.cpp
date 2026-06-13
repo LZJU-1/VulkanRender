@@ -2,6 +2,7 @@
 
 #include "core/FeatureProfile.hpp"
 #include "core/RenderGraph.hpp"
+#include "platform/PreviewWindow.hpp"
 #include "render/SoftwareV1Renderer.hpp"
 #include "rhi/RenderDevice.hpp"
 
@@ -78,6 +79,20 @@ int RendererApp::run() {
             << " visible=" << stats.visibleObjects
             << " triangles=" << stats.trianglesSubmitted
             << '\n';
+    }
+
+    if (config_.previewWindow) {
+        if (profile->id != ProfileId::V1SceneForward) {
+            std::cout << "Realtime preview is currently implemented for v1 only.\n";
+            return 0;
+        }
+
+        V1RenderSettings settings;
+        settings.width = config_.width;
+        settings.height = config_.height;
+        settings.scenePath = config_.scenePath.empty() ? "assets/scenes/v1.scene" : config_.scenePath;
+        settings.outputPath = config_.outputPath;
+        return runV1PreviewWindow(settings);
     }
 
     return 0;

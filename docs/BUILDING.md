@@ -35,3 +35,9 @@ Render the current v1 image:
 ```powershell
 build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene assets\scenes\v1.scene --output out\v1.bmp --width 1280 --height 720 --frames 16
 ```
+
+Open the v1 realtime preview window:
+
+```powershell
+build\nmake-debug\src\vulkan_render.exe --profile v1 --preview --scene assets\scenes\v1.scene --width 960 --height 540
+```

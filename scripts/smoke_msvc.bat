@@ -22,9 +22,9 @@ if errorlevel 1 exit /b 1
 
 cl /nologo /std:c++20 /EHsc /W4 /permissive- /DVR_HAS_VULKAN=0 /I src ^
     src\main.cpp src\core\FeatureProfile.cpp src\core\RenderGraph.cpp src\core\RendererApp.cpp ^
-    src\platform\CommandLine.cpp src\rhi\RenderDevice.cpp src\rhi\VulkanDevice.cpp ^
+    src\platform\CommandLine.cpp src\platform\PreviewWindow.cpp src\render\SoftwareV1Renderer.cpp ^
+    src\rhi\RenderDevice.cpp src\rhi\VulkanDevice.cpp user32.lib gdi32.lib ^
     /Fe:build\vulkan_render_smoke.exe
 if errorlevel 1 exit /b 1
 
 build\vulkan_render_smoke.exe --profile v5-rt --enable-rt --frames 1
-
