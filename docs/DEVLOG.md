@@ -149,3 +149,17 @@ Validation commands:
 scripts\build_msvc.bat
 C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
 ```
+
+## 2026-06-13 - V2 GPU Material Preview Shading
+
+- Checked the Renderer72 README v2.0 demos: the reference splits material work into skybox/tone mapping, normal mapping, displacement mapping, PBR+IBL, and PBR material spheres.
+- Extended the Vulkan preview vertex layout with world-space normals.
+- Updated the Vulkan preview shaders from flat color to a simple lit material preview with direct light, specular highlight, and rim term.
+- Kept the renderer on the official Scene'72 `materials.s72` demo for v2 material validation; full Vulkan texture descriptors, normal maps, displacement, and IBL remain planned follow-up work.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
+```

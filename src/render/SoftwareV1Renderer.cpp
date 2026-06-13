@@ -1917,9 +1917,13 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
     geometry.vertices.reserve(triangles->size() * 3u);
     for (const Triangle3& tri : *triangles) {
         const Vec3 color = settings.enableV2Shading ? clamp01(tri.baseColor) : colorToVec(tri.color);
-        geometry.vertices.push_back({tri.a.x, tri.a.y, tri.a.z, color.x, color.y, color.z});
-        geometry.vertices.push_back({tri.b.x, tri.b.y, tri.b.z, color.x, color.y, color.z});
-        geometry.vertices.push_back({tri.c.x, tri.c.y, tri.c.z, color.x, color.y, color.z});
+        Vec3 normal = normalize(tri.normal);
+        if (length(normal) <= 0.00001f) {
+            normal = normalize(cross(tri.b - tri.a, tri.c - tri.a));
+        }
+        geometry.vertices.push_back({tri.a.x, tri.a.y, tri.a.z, normal.x, normal.y, normal.z, color.x, color.y, color.z});
+        geometry.vertices.push_back({tri.b.x, tri.b.y, tri.b.z, normal.x, normal.y, normal.z, color.x, color.y, color.z});
+        geometry.vertices.push_back({tri.c.x, tri.c.y, tri.c.z, normal.x, normal.y, normal.z, color.x, color.y, color.z});
     }
     geometry.camera = toCameraSettings(camera);
     return geometry;

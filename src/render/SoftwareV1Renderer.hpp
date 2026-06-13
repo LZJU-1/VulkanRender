@@ -51,6 +51,9 @@ struct GpuPreviewVertex {
     float px = 0.0f;
     float py = 0.0f;
     float pz = 0.0f;
+    float nx = 0.0f;
+    float ny = 0.0f;
+    float nz = 1.0f;
     float r = 1.0f;
     float g = 1.0f;
     float b = 1.0f;

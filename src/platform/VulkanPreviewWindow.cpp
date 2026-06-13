@@ -905,9 +905,10 @@ private:
         binding.binding = 0;
         binding.stride = sizeof(GpuPreviewVertex);
         binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-        std::array<VkVertexInputAttributeDescription, 2> attributes{};
+        std::array<VkVertexInputAttributeDescription, 3> attributes{};
         attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuPreviewVertex, px)};
-        attributes[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuPreviewVertex, r)};
+        attributes[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuPreviewVertex, nx)};
+        attributes[2] = {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuPreviewVertex, r)};
 
         VkPipelineVertexInputStateCreateInfo vertexInput{};
         vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
