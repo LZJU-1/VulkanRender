@@ -184,6 +184,11 @@ C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --pro
   - Sky and PBR shaders now sample `TextureCube` resources instead of manually sampling a 2D strip.
   - The PBR shader now samples a generated split-sum environment BRDF LUT.
   - Displacement mapping now uses parallax occlusion mapping with iterative layer stepping and UV discard.
+- Added a Renderer72-style material submission path for the Vulkan preview:
+  - GPU preview geometry now carries material texture sets and draw batches.
+  - The Vulkan path creates one descriptor set per material texture set.
+  - Mesh rendering binds the material descriptor set per batch before issuing `vkCmdDraw`.
+  - Shared environment cubemaps and BRDF LUT remain common across material sets.
 
 Validation commands:
 

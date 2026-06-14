@@ -69,10 +69,19 @@ struct GpuPreviewVertex {
 struct GpuPreviewGeometry {
     std::vector<GpuPreviewVertex> vertices;
     V1CameraSettings camera;
-    std::filesystem::path albedoTexturePath;
-    std::filesystem::path normalTexturePath;
-    std::filesystem::path roughnessTexturePath;
-    std::filesystem::path displacementTexturePath;
+    struct MaterialTextures {
+        std::filesystem::path albedoTexturePath;
+        std::filesystem::path normalTexturePath;
+        std::filesystem::path roughnessTexturePath;
+        std::filesystem::path displacementTexturePath;
+    };
+    struct Batch {
+        std::uint32_t firstVertex = 0;
+        std::uint32_t vertexCount = 0;
+        std::uint32_t materialIndex = 0;
+    };
+    std::vector<MaterialTextures> materials;
+    std::vector<Batch> batches;
     std::filesystem::path environmentBackgroundTexturePath;
     std::filesystem::path environmentDiffuseTexturePath;
     std::array<std::filesystem::path, 5> environmentSpecularTexturePaths;

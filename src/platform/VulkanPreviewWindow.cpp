@@ -33,8 +33,11 @@ constexpr float kPi = 3.14159265358979323846f;
 constexpr int kWindowTimer = 1;
 constexpr std::uint32_t kMaterialTextureCount = 4;
 constexpr std::uint32_t kEnvironmentSpecularTextureCount = 5;
-constexpr std::uint32_t kTextureCount = kMaterialTextureCount + 2 + kEnvironmentSpecularTextureCount + 1;
-constexpr std::uint32_t kEnvironmentBrdfTextureIndex = kTextureCount - 1;
+constexpr std::uint32_t kSharedTextureCount = 2 + kEnvironmentSpecularTextureCount + 1;
+constexpr std::uint32_t kEnvironmentBackgroundTexture = 0;
+constexpr std::uint32_t kEnvironmentDiffuseTexture = 1;
+constexpr std::uint32_t kEnvironmentSpecularTextureBase = 2;
+constexpr std::uint32_t kEnvironmentBrdfTextureIndex = kSharedTextureCount - 1;
 
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
 PFN_vkCreateInstance vkCreateInstance = nullptr;
@@ -157,6 +160,10 @@ struct TextureResource {
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
     std::uint32_t mipLevels = 1;
+};
+
+struct MaterialTextureResources {
+    std::array<TextureResource, kMaterialTextureCount> textures;
 };
 
 struct RgbaFloat {
@@ -470,6 +477,10 @@ public:
         createTextureResources();
         previewLog("VulkanGpuRenderer: createDescriptors");
         createDescriptors();
+        previewLog(
+            "VulkanGpuRenderer: materialSets=" + std::to_string(materialTextures_.size())
+            + " batches=" + std::to_string(geometry_.batches.size())
+        );
         previewLog("VulkanGpuRenderer: createPipeline");
         createPipeline();
         previewLog("VulkanGpuRenderer: createCommands");
@@ -493,7 +504,14 @@ public:
         if (device_ != VK_NULL_HANDLE && descriptorPool_ != VK_NULL_HANDLE) vkDestroyDescriptorPool(device_, descriptorPool_, nullptr);
         if (device_ != VK_NULL_HANDLE && descriptorSetLayout_ != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, descriptorSetLayout_, nullptr);
         if (device_ != VK_NULL_HANDLE && textureSampler_ != VK_NULL_HANDLE) vkDestroySampler(device_, textureSampler_, nullptr);
-        for (TextureResource& texture : textures_) {
+        for (MaterialTextureResources& material : materialTextures_) {
+            for (TextureResource& texture : material.textures) {
+                if (device_ != VK_NULL_HANDLE && texture.view != VK_NULL_HANDLE) vkDestroyImageView(device_, texture.view, nullptr);
+                if (device_ != VK_NULL_HANDLE && texture.image != VK_NULL_HANDLE) vkDestroyImage(device_, texture.image, nullptr);
+                if (device_ != VK_NULL_HANDLE && texture.memory != VK_NULL_HANDLE) vkFreeMemory(device_, texture.memory, nullptr);
+            }
+        }
+        for (TextureResource& texture : sharedTextures_) {
             if (device_ != VK_NULL_HANDLE && texture.view != VK_NULL_HANDLE) vkDestroyImageView(device_, texture.view, nullptr);
             if (device_ != VK_NULL_HANDLE && texture.image != VK_NULL_HANDLE) vkDestroyImage(device_, texture.image, nullptr);
             if (device_ != VK_NULL_HANDLE && texture.memory != VK_NULL_HANDLE) vkFreeMemory(device_, texture.memory, nullptr);
@@ -1505,18 +1523,31 @@ private:
     }
 
     void createTextureResources() {
-        createSampledTexture(geometry_.albedoTexturePath, {255, 255, 255, 255}, textures_[0]);
-        createSampledTexture(geometry_.normalTexturePath, {128, 128, 255, 255}, textures_[1]);
-        createSampledTexture(geometry_.roughnessTexturePath, {178, 178, 178, 255}, textures_[2]);
-        createSampledTexture(geometry_.displacementTexturePath, {128, 128, 128, 255}, textures_[3]);
-        createRgbeCubeTexture(geometry_.environmentBackgroundTexturePath, {0.22f, 0.34f, 0.55f, 1.0f}, textures_[4]);
-        createRgbeCubeTexture(geometry_.environmentDiffuseTexturePath, {0.22f, 0.34f, 0.55f, 1.0f}, textures_[5]);
-        for (std::uint32_t i = 0; i < kEnvironmentSpecularTextureCount; ++i) {
-            createRgbeCubeTexture(geometry_.environmentSpecularTexturePaths[i], {0.22f, 0.34f, 0.55f, 1.0f}, textures_[6 + i]);
+        const std::size_t materialCount = std::max<std::size_t>(1, geometry_.materials.size());
+        materialTextures_.resize(materialCount);
+        for (std::size_t i = 0; i < materialTextures_.size(); ++i) {
+            const GpuPreviewGeometry::MaterialTextures material = i < geometry_.materials.size()
+                ? geometry_.materials[i]
+                : GpuPreviewGeometry::MaterialTextures{};
+            createSampledTexture(material.albedoTexturePath, {255, 255, 255, 255}, materialTextures_[i].textures[0]);
+            createSampledTexture(material.normalTexturePath, {128, 128, 255, 255}, materialTextures_[i].textures[1]);
+            createSampledTexture(material.roughnessTexturePath, {178, 178, 178, 255}, materialTextures_[i].textures[2]);
+            createSampledTexture(material.displacementTexturePath, {128, 128, 128, 255}, materialTextures_[i].textures[3]);
         }
-        createEnvironmentBrdfTexture(textures_[kEnvironmentBrdfTextureIndex]);
+
+        createRgbeCubeTexture(geometry_.environmentBackgroundTexturePath, {0.22f, 0.34f, 0.55f, 1.0f}, sharedTextures_[kEnvironmentBackgroundTexture]);
+        createRgbeCubeTexture(geometry_.environmentDiffuseTexturePath, {0.22f, 0.34f, 0.55f, 1.0f}, sharedTextures_[kEnvironmentDiffuseTexture]);
+        for (std::uint32_t i = 0; i < kEnvironmentSpecularTextureCount; ++i) {
+            createRgbeCubeTexture(geometry_.environmentSpecularTexturePaths[i], {0.22f, 0.34f, 0.55f, 1.0f}, sharedTextures_[kEnvironmentSpecularTextureBase + i]);
+        }
+        createEnvironmentBrdfTexture(sharedTextures_[kEnvironmentBrdfTextureIndex]);
         maxTextureMipLevels_ = 1;
-        for (const TextureResource& texture : textures_) {
+        for (const MaterialTextureResources& material : materialTextures_) {
+            for (const TextureResource& texture : material.textures) {
+                maxTextureMipLevels_ = std::max(maxTextureMipLevels_, texture.mipLevels);
+            }
+        }
+        for (const TextureResource& texture : sharedTextures_) {
             maxTextureMipLevels_ = std::max(maxTextureMipLevels_, texture.mipLevels);
         }
 
@@ -1542,7 +1573,7 @@ private:
         cameraBinding.descriptorCount = 1;
         cameraBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        std::array<VkDescriptorSetLayoutBinding, kTextureCount + 2> bindings{};
+        std::array<VkDescriptorSetLayoutBinding, kMaterialTextureCount + kSharedTextureCount + 2> bindings{};
         bindings[0] = cameraBinding;
         for (std::uint32_t i = 0; i < kMaterialTextureCount; ++i) {
             bindings[1 + i].binding = 1 + i;
@@ -1556,11 +1587,11 @@ private:
         samplerBinding.descriptorCount = 1;
         samplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         bindings[5] = samplerBinding;
-        for (std::uint32_t i = kMaterialTextureCount; i < kTextureCount; ++i) {
-            bindings[2 + i].binding = 2 + i;
-            bindings[2 + i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-            bindings[2 + i].descriptorCount = 1;
-            bindings[2 + i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        for (std::uint32_t i = 0; i < kSharedTextureCount; ++i) {
+            bindings[6 + i].binding = 6 + i;
+            bindings[6 + i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            bindings[6 + i].descriptorCount = 1;
+            bindings[6 + i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         }
         VkDescriptorSetLayoutCreateInfo layout{};
         layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -1570,24 +1601,26 @@ private:
 
         std::array<VkDescriptorPoolSize, 3> poolSizes{};
         poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        poolSizes[0].descriptorCount = 1;
         poolSizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-        poolSizes[1].descriptorCount = kTextureCount;
         poolSizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLER;
-        poolSizes[2].descriptorCount = 1;
+        poolSizes[0].descriptorCount = static_cast<std::uint32_t>(materialTextures_.size());
+        poolSizes[1].descriptorCount = static_cast<std::uint32_t>((kMaterialTextureCount + kSharedTextureCount) * materialTextures_.size());
+        poolSizes[2].descriptorCount = static_cast<std::uint32_t>(materialTextures_.size());
         VkDescriptorPoolCreateInfo pool{};
         pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        pool.maxSets = 1;
+        pool.maxSets = static_cast<std::uint32_t>(materialTextures_.size());
         pool.poolSizeCount = static_cast<std::uint32_t>(poolSizes.size());
         pool.pPoolSizes = poolSizes.data();
         require(vkCreateDescriptorPool(device_, &pool, nullptr, &descriptorPool_), "vkCreateDescriptorPool");
 
+        std::vector<VkDescriptorSetLayout> layouts(materialTextures_.size(), descriptorSetLayout_);
+        descriptorSets_.resize(materialTextures_.size());
         VkDescriptorSetAllocateInfo allocate{};
         allocate.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
         allocate.descriptorPool = descriptorPool_;
-        allocate.descriptorSetCount = 1;
-        allocate.pSetLayouts = &descriptorSetLayout_;
-        require(vkAllocateDescriptorSets(device_, &allocate, &descriptorSet_), "vkAllocateDescriptorSets");
+        allocate.descriptorSetCount = static_cast<std::uint32_t>(descriptorSets_.size());
+        allocate.pSetLayouts = layouts.data();
+        require(vkAllocateDescriptorSets(device_, &allocate, descriptorSets_.data()), "vkAllocateDescriptorSets");
 
         VkDescriptorBufferInfo bufferInfo{};
         bufferInfo.buffer = uniformBuffer_;
@@ -1596,41 +1629,48 @@ private:
         VkDescriptorImageInfo samplerInfo{};
         samplerInfo.sampler = textureSampler_;
 
-        std::array<VkWriteDescriptorSet, kTextureCount + 2> writes{};
-        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[0].dstSet = descriptorSet_;
-        writes[0].dstBinding = 0;
-        writes[0].descriptorCount = 1;
-        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        writes[0].pBufferInfo = &bufferInfo;
-        std::array<VkDescriptorImageInfo, kTextureCount> imageInfos{};
-        for (std::uint32_t i = 0; i < kMaterialTextureCount; ++i) {
-            imageInfos[i].imageView = textures_[i].view;
-            imageInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            writes[1 + i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[1 + i].dstSet = descriptorSet_;
-            writes[1 + i].dstBinding = 1 + i;
-            writes[1 + i].descriptorCount = 1;
-            writes[1 + i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-            writes[1 + i].pImageInfo = &imageInfos[i];
+        std::vector<std::array<VkDescriptorImageInfo, kMaterialTextureCount + kSharedTextureCount>> imageInfos(descriptorSets_.size());
+        std::vector<std::array<VkWriteDescriptorSet, kMaterialTextureCount + kSharedTextureCount + 2>> writes(descriptorSets_.size());
+        for (std::size_t setIndex = 0; setIndex < descriptorSets_.size(); ++setIndex) {
+            std::array<VkWriteDescriptorSet, kMaterialTextureCount + kSharedTextureCount + 2>& setWrites = writes[setIndex];
+            setWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            setWrites[0].dstSet = descriptorSets_[setIndex];
+            setWrites[0].dstBinding = 0;
+            setWrites[0].descriptorCount = 1;
+            setWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            setWrites[0].pBufferInfo = &bufferInfo;
+
+            for (std::uint32_t i = 0; i < kMaterialTextureCount; ++i) {
+                imageInfos[setIndex][i].imageView = materialTextures_[setIndex].textures[i].view;
+                imageInfos[setIndex][i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                setWrites[1 + i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                setWrites[1 + i].dstSet = descriptorSets_[setIndex];
+                setWrites[1 + i].dstBinding = 1 + i;
+                setWrites[1 + i].descriptorCount = 1;
+                setWrites[1 + i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+                setWrites[1 + i].pImageInfo = &imageInfos[setIndex][i];
+            }
+
+            setWrites[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            setWrites[5].dstSet = descriptorSets_[setIndex];
+            setWrites[5].dstBinding = 5;
+            setWrites[5].descriptorCount = 1;
+            setWrites[5].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+            setWrites[5].pImageInfo = &samplerInfo;
+
+            for (std::uint32_t i = 0; i < kSharedTextureCount; ++i) {
+                const std::uint32_t infoIndex = kMaterialTextureCount + i;
+                imageInfos[setIndex][infoIndex].imageView = sharedTextures_[i].view;
+                imageInfos[setIndex][infoIndex].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                setWrites[6 + i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                setWrites[6 + i].dstSet = descriptorSets_[setIndex];
+                setWrites[6 + i].dstBinding = 6 + i;
+                setWrites[6 + i].descriptorCount = 1;
+                setWrites[6 + i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+                setWrites[6 + i].pImageInfo = &imageInfos[setIndex][infoIndex];
+            }
+            vkUpdateDescriptorSets(device_, static_cast<std::uint32_t>(setWrites.size()), setWrites.data(), 0, nullptr);
         }
-        writes[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[5].dstSet = descriptorSet_;
-        writes[5].dstBinding = 5;
-        writes[5].descriptorCount = 1;
-        writes[5].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-        writes[5].pImageInfo = &samplerInfo;
-        for (std::uint32_t i = kMaterialTextureCount; i < kTextureCount; ++i) {
-            imageInfos[i].imageView = textures_[i].view;
-            imageInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            writes[2 + i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[2 + i].dstSet = descriptorSet_;
-            writes[2 + i].dstBinding = 2 + i;
-            writes[2 + i].descriptorCount = 1;
-            writes[2 + i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-            writes[2 + i].pImageInfo = &imageInfos[i];
-        }
-        vkUpdateDescriptorSets(device_, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
     }
 
     VkShaderModule createShader(const std::filesystem::path& path) {
@@ -1878,15 +1918,28 @@ private:
         scissor.extent = swapchainExtent_;
         vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
         vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+        const VkDescriptorSet fallbackDescriptorSet = descriptorSets_.empty() ? VK_NULL_HANDLE : descriptorSets_.front();
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, skyPipeline_);
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &descriptorSet_, 0, nullptr);
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &fallbackDescriptorSet, 0, nullptr);
         vkCmdDraw(commandBuffer, 3, 1, 0, 0);
 
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &descriptorSet_, 0, nullptr);
         VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer_, &offset);
-        vkCmdDraw(commandBuffer, vertexCount_, 1, 0, 0);
+        if (geometry_.batches.empty()) {
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &fallbackDescriptorSet, 0, nullptr);
+            vkCmdDraw(commandBuffer, vertexCount_, 1, 0, 0);
+        } else {
+            for (const GpuPreviewGeometry::Batch& batch : geometry_.batches) {
+                if (batch.vertexCount == 0) {
+                    continue;
+                }
+                const std::uint32_t materialIndex = batch.materialIndex < descriptorSets_.size() ? batch.materialIndex : 0u;
+                const VkDescriptorSet descriptorSet = descriptorSets_[materialIndex];
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &descriptorSet, 0, nullptr);
+                vkCmdDraw(commandBuffer, batch.vertexCount, 1, batch.firstVertex, 0);
+            }
+        }
         vkCmdEndRenderPass(commandBuffer);
         require(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer");
     }
@@ -1924,14 +1977,15 @@ private:
     std::uint32_t vertexCount_ = 0;
     VkBuffer uniformBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory uniformMemory_ = VK_NULL_HANDLE;
-    std::array<TextureResource, kTextureCount> textures_{};
+    std::vector<MaterialTextureResources> materialTextures_;
+    std::array<TextureResource, kSharedTextureCount> sharedTextures_{};
     VkSampler textureSampler_ = VK_NULL_HANDLE;
     bool samplerAnisotropy_ = false;
     float maxSamplerAnisotropy_ = 1.0f;
     std::uint32_t maxTextureMipLevels_ = 1;
     VkDescriptorSetLayout descriptorSetLayout_ = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool_ = VK_NULL_HANDLE;
-    VkDescriptorSet descriptorSet_ = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> descriptorSets_;
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     VkPipeline skyPipeline_ = VK_NULL_HANDLE;

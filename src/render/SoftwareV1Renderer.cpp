@@ -86,6 +86,8 @@ struct Triangle3 {
     float metalness = 0.0f;
     MaterialKind materialKind = MaterialKind::Simple;
     bool hasAlbedoTexture = false;
+    std::filesystem::path albedoTexturePath;
+    std::filesystem::path roughnessTexturePath;
 };
 
 struct Mat4 {
@@ -1140,6 +1142,8 @@ void appendMeshTriangles(
         tri.metalness = material.metalness;
         tri.materialKind = material.kind;
         tri.hasAlbedoTexture = !material.albedoTexture.empty();
+        tri.albedoTexturePath = material.albedoTexture;
+        tri.roughnessTexturePath = material.roughnessTexture;
         triangles.push_back(tri);
     }
 }
@@ -1956,6 +1960,7 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
     camera = cameraFromSettings(settings.camera, camera);
 
     GpuPreviewGeometry geometry;
+    GpuPreviewGeometry::MaterialTextures fallbackMaterial;
     if (settings.enableV2Shading) {
         const std::filesystem::path sceneAssetRoot = settings.scenePath.parent_path();
         const std::filesystem::path envBackground = sceneAssetRoot / "ox_bridge_morning.png";
@@ -1977,23 +1982,52 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
         const std::filesystem::path pbrDemo = thirdPartyRoot / "ambientcg/Rock064_1K-JPG";
         const std::filesystem::path rockAlbedo = pbrDemo / "Rock064_1K-JPG_Color.jpg";
         if (std::filesystem::exists(rockAlbedo)) {
-            geometry.albedoTexturePath = rockAlbedo;
-            geometry.normalTexturePath = pbrDemo / "Rock064_1K-JPG_NormalGL.jpg";
-            geometry.roughnessTexturePath = pbrDemo / "Rock064_1K-JPG_Roughness.jpg";
-            geometry.displacementTexturePath = pbrDemo / "Rock064_1K-JPG_Displacement.jpg";
+            fallbackMaterial.albedoTexturePath = rockAlbedo;
+            fallbackMaterial.normalTexturePath = pbrDemo / "Rock064_1K-JPG_NormalGL.jpg";
+            fallbackMaterial.roughnessTexturePath = pbrDemo / "Rock064_1K-JPG_Roughness.jpg";
+            fallbackMaterial.displacementTexturePath = pbrDemo / "Rock064_1K-JPG_Displacement.jpg";
         } else {
             const std::filesystem::path woodAlbedo = settings.scenePath.parent_path() / "wood_floor_deck_diff_1k.png";
             const std::filesystem::path woodRoughness = settings.scenePath.parent_path() / "wood_floor_deck_rough_1k.png";
             if (std::filesystem::exists(woodAlbedo)) {
-                geometry.albedoTexturePath = woodAlbedo;
+                fallbackMaterial.albedoTexturePath = woodAlbedo;
             }
             if (std::filesystem::exists(woodRoughness)) {
-                geometry.roughnessTexturePath = woodRoughness;
+                fallbackMaterial.roughnessTexturePath = woodRoughness;
             }
         }
     }
+    if (geometry.materials.empty()) {
+        geometry.materials.push_back(fallbackMaterial);
+    }
+
+    auto materialIndexFor = [&](const Triangle3& tri) -> std::uint32_t {
+        GpuPreviewGeometry::MaterialTextures material = fallbackMaterial;
+        if (!tri.albedoTexturePath.empty()) {
+            material.albedoTexturePath = settings.scenePath.parent_path() / tri.albedoTexturePath;
+        }
+        if (!tri.roughnessTexturePath.empty()) {
+            material.roughnessTexturePath = settings.scenePath.parent_path() / tri.roughnessTexturePath;
+        }
+        for (std::uint32_t i = 0; i < geometry.materials.size(); ++i) {
+            const GpuPreviewGeometry::MaterialTextures& existing = geometry.materials[i];
+            if (
+                existing.albedoTexturePath == material.albedoTexturePath
+                && existing.normalTexturePath == material.normalTexturePath
+                && existing.roughnessTexturePath == material.roughnessTexturePath
+                && existing.displacementTexturePath == material.displacementTexturePath
+            ) {
+                return i;
+            }
+        }
+        geometry.materials.push_back(material);
+        return static_cast<std::uint32_t>(geometry.materials.size() - 1);
+    };
+
     geometry.vertices.reserve(triangles->size() * 3u);
     for (const Triangle3& tri : *triangles) {
+        const std::uint32_t materialIndex = settings.enableV2Shading ? materialIndexFor(tri) : 0u;
+        const std::uint32_t firstVertex = static_cast<std::uint32_t>(geometry.vertices.size());
         const Vec3 color = settings.enableV2Shading ? clamp01(tri.baseColor) : colorToVec(tri.color);
         const Vec3 fallbackNormal = length(tri.normal) > 0.00001f
             ? normalize(tri.normal)
@@ -2017,6 +2051,14 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
         geometry.vertices.push_back({tri.a.x, tri.a.y, tri.a.z, normalA.x, normalA.y, normalA.z, color.x, color.y, color.z, tri.uvA.x, tri.uvA.y, textured, roughness, metalness, kind});
         geometry.vertices.push_back({tri.b.x, tri.b.y, tri.b.z, normalB.x, normalB.y, normalB.z, color.x, color.y, color.z, tri.uvB.x, tri.uvB.y, textured, roughness, metalness, kind});
         geometry.vertices.push_back({tri.c.x, tri.c.y, tri.c.z, normalC.x, normalC.y, normalC.z, color.x, color.y, color.z, tri.uvC.x, tri.uvC.y, textured, roughness, metalness, kind});
+        if (!geometry.batches.empty() && geometry.batches.back().materialIndex == materialIndex) {
+            geometry.batches.back().vertexCount += 3;
+        } else {
+            geometry.batches.push_back({firstVertex, 3, materialIndex});
+        }
+    }
+    if (geometry.batches.empty() && !geometry.vertices.empty()) {
+        geometry.batches.push_back({0, static_cast<std::uint32_t>(geometry.vertices.size()), 0});
     }
     geometry.camera = toCameraSettings(camera);
     return geometry;
