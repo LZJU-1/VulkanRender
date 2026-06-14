@@ -64,6 +64,10 @@ struct GpuPreviewVertex {
     float roughness = 0.7f;
     float metalness = 0.0f;
     float kind = 0.0f;
+    float tx = 1.0f;
+    float ty = 0.0f;
+    float tz = 0.0f;
+    float tw = 1.0f;
 };
 
 struct GpuPreviewGeometry {

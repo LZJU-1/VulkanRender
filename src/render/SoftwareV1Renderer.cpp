@@ -38,6 +38,13 @@ struct Vec2 {
     float y = 0.0f;
 };
 
+struct Vec4 {
+    float x = 1.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    float w = 1.0f;
+};
+
 enum class MaterialKind {
     Simple,
     Environment,
@@ -77,6 +84,9 @@ struct Triangle3 {
     Vec3 normalA{0.0f, 0.0f, 1.0f};
     Vec3 normalB{0.0f, 0.0f, 1.0f};
     Vec3 normalC{0.0f, 0.0f, 1.0f};
+    Vec4 tangentA{};
+    Vec4 tangentB{};
+    Vec4 tangentC{};
     Vec2 uv{};
     Vec2 uvA{};
     Vec2 uvB{};
@@ -152,6 +162,30 @@ Vec3 normalize(Vec3 v) {
         return {};
     }
     return v * (1.0f / len);
+}
+
+Vec4 makeTangent(Vec3 tangent, float handedness = 1.0f) {
+    tangent = normalize(tangent);
+    if (length(tangent) <= 0.00001f) {
+        tangent = {1.0f, 0.0f, 0.0f};
+    }
+    return {tangent.x, tangent.y, tangent.z, handedness < 0.0f ? -1.0f : 1.0f};
+}
+
+Vec4 triangleTangent(Vec3 a, Vec3 b, Vec3 c, Vec2 uvA, Vec2 uvB, Vec2 uvC, Vec3 normal) {
+    const Vec3 edge1 = b - a;
+    const Vec3 edge2 = c - a;
+    const Vec2 dUv1{uvB.x - uvA.x, uvB.y - uvA.y};
+    const Vec2 dUv2{uvC.x - uvA.x, uvC.y - uvA.y};
+    const float det = dUv1.x * dUv2.y - dUv1.y * dUv2.x;
+    if (std::abs(det) > 1e-7f) {
+        Vec3 tangent = (edge1 * dUv2.y - edge2 * dUv1.y) * (1.0f / det);
+        tangent = tangent - normal * dot(normal, tangent);
+        return makeTangent(tangent, det < 0.0f ? -1.0f : 1.0f);
+    }
+
+    Vec3 tangent = std::abs(normal.z) < 0.9f ? cross({0.0f, 0.0f, 1.0f}, normal) : cross({0.0f, 1.0f, 0.0f}, normal);
+    return makeTangent(tangent, 1.0f);
 }
 
 Vec3 lerp(Vec3 a, Vec3 b, float t) {
@@ -1051,6 +1085,9 @@ void appendMeshTriangles(
     if (!mesh.normal.src.empty() && mesh.normal.format != "R32G32B32_SFLOAT") {
         throw std::runtime_error("Scene'72 loader currently supports NORMAL float3 only");
     }
+    if (!mesh.tangent.src.empty() && mesh.tangent.format != "R32G32B32A32_SFLOAT") {
+        throw std::runtime_error("Scene'72 loader currently supports TANGENT float4 only");
+    }
     if (!mesh.texcoord.src.empty() && mesh.texcoord.format != "R32G32_SFLOAT") {
         throw std::runtime_error("Scene'72 loader currently supports TEXCOORD float2 only");
     }
@@ -1060,6 +1097,7 @@ void appendMeshTriangles(
 
     const std::filesystem::path colorPath = basePath / mesh.color.src;
     const std::filesystem::path normalPath = basePath / mesh.normal.src;
+    const std::filesystem::path tangentPath = basePath / mesh.tangent.src;
     const std::filesystem::path texcoordPath = basePath / mesh.texcoord.src;
     const std::vector<std::uint8_t> colorBytes = mesh.color.src.empty()
         ? std::vector<std::uint8_t>{}
@@ -1067,6 +1105,9 @@ void appendMeshTriangles(
     const std::vector<std::uint8_t> normalBytes = mesh.normal.src.empty()
         ? std::vector<std::uint8_t>{}
         : (normalPath == positionPath ? positionBytes : readBinaryFile(normalPath));
+    const std::vector<std::uint8_t> tangentBytes = mesh.tangent.src.empty()
+        ? std::vector<std::uint8_t>{}
+        : (tangentPath == positionPath ? positionBytes : readBinaryFile(tangentPath));
     const std::vector<std::uint8_t> texcoordBytes = mesh.texcoord.src.empty()
         ? std::vector<std::uint8_t>{}
         : (texcoordPath == positionPath ? positionBytes : readBinaryFile(texcoordPath));
@@ -1074,6 +1115,7 @@ void appendMeshTriangles(
     std::vector<Vec3> positions(mesh.count);
     std::vector<Color> colors(mesh.count);
     std::vector<Vec3> normals(mesh.count);
+    std::vector<Vec4> tangents(mesh.count);
     std::vector<Vec2> uvs(mesh.count);
     for (std::uint32_t i = 0; i < mesh.count; ++i) {
         const std::size_t p = static_cast<std::size_t>(mesh.position.offset) + static_cast<std::size_t>(i) * mesh.position.stride;
@@ -1092,6 +1134,15 @@ void appendMeshTriangles(
         if (!mesh.normal.src.empty()) {
             const std::size_t n = static_cast<std::size_t>(mesh.normal.offset) + static_cast<std::size_t>(i) * mesh.normal.stride;
             normals[i] = normalize(transformVector(transform, {readF32(normalBytes, n + 0), readF32(normalBytes, n + 4), readF32(normalBytes, n + 8)}));
+        }
+
+        tangents[i] = {};
+        if (!mesh.tangent.src.empty()) {
+            const std::size_t t = static_cast<std::size_t>(mesh.tangent.offset) + static_cast<std::size_t>(i) * mesh.tangent.stride;
+            tangents[i] = makeTangent(
+                transformVector(transform, {readF32(tangentBytes, t + 0), readF32(tangentBytes, t + 4), readF32(tangentBytes, t + 8)}),
+                readF32(tangentBytes, t + 12)
+            );
         }
 
         if (!mesh.texcoord.src.empty()) {
@@ -1137,6 +1188,10 @@ void appendMeshTriangles(
         tri.uvA = uvs[i];
         tri.uvB = uvs[i + 1];
         tri.uvC = uvs[i + 2];
+        const Vec4 fallbackTangent = triangleTangent(tri.a, tri.b, tri.c, tri.uvA, tri.uvB, tri.uvC, tri.normal);
+        tri.tangentA = !mesh.tangent.src.empty() ? tangents[i] : fallbackTangent;
+        tri.tangentB = !mesh.tangent.src.empty() ? tangents[i + 1] : fallbackTangent;
+        tri.tangentC = !mesh.tangent.src.empty() ? tangents[i + 2] : fallbackTangent;
         tri.baseColor = baseColor;
         tri.roughness = roughness;
         tri.metalness = material.metalness;
@@ -1314,6 +1369,17 @@ Vec3 readAccessorVec3(const cgltf_accessor* accessor, cgltf_size index, Vec3 fal
     return {value[0], value[1], value[2]};
 }
 
+Vec4 readAccessorVec4(const cgltf_accessor* accessor, cgltf_size index, Vec4 fallback = {}) {
+    if (!accessor) {
+        return fallback;
+    }
+    float value[4] = {fallback.x, fallback.y, fallback.z, fallback.w};
+    if (!cgltf_accessor_read_float(accessor, index, value, 4)) {
+        return fallback;
+    }
+    return {value[0], value[1], value[2], value[3]};
+}
+
 Color readAccessorColor(const cgltf_accessor* accessor, cgltf_size index, Color fallback) {
     if (!accessor) {
         return fallback;
@@ -1371,6 +1437,7 @@ void appendGltfPrimitive(const cgltf_node& node, const cgltf_primitive& primitiv
     }
     const cgltf_accessor* colors = findAttribute(primitive, cgltf_attribute_type_color);
     const cgltf_accessor* normals = findAttribute(primitive, cgltf_attribute_type_normal);
+    const cgltf_accessor* tangents = findAttribute(primitive, cgltf_attribute_type_tangent);
     const Color materialColor = colorFromFactor(primitive);
     float world[16]{};
     cgltf_node_transform_world(&node, world);
@@ -1399,6 +1466,19 @@ void appendGltfPrimitive(const cgltf_node& node, const cgltf_primitive& primitiv
         tri.normalA = normals ? normalize(transformGltfVector(world, readAccessorVec3(normals, ia))) : tri.normal;
         tri.normalB = normals ? normalize(transformGltfVector(world, readAccessorVec3(normals, ib))) : tri.normal;
         tri.normalC = normals ? normalize(transformGltfVector(world, readAccessorVec3(normals, ic))) : tri.normal;
+        const Vec4 fallbackTangent = triangleTangent(tri.a, tri.b, tri.c, tri.uvA, tri.uvB, tri.uvC, tri.normal);
+        if (tangents) {
+            const Vec4 tangentA = readAccessorVec4(tangents, ia, fallbackTangent);
+            const Vec4 tangentB = readAccessorVec4(tangents, ib, fallbackTangent);
+            const Vec4 tangentC = readAccessorVec4(tangents, ic, fallbackTangent);
+            tri.tangentA = makeTangent(transformGltfVector(world, {tangentA.x, tangentA.y, tangentA.z}), tangentA.w);
+            tri.tangentB = makeTangent(transformGltfVector(world, {tangentB.x, tangentB.y, tangentB.z}), tangentB.w);
+            tri.tangentC = makeTangent(transformGltfVector(world, {tangentC.x, tangentC.y, tangentC.z}), tangentC.w);
+        } else {
+            tri.tangentA = fallbackTangent;
+            tri.tangentB = fallbackTangent;
+            tri.tangentC = fallbackTangent;
+        }
         tri.baseColor = colorToVec(color);
         triangles.push_back(tri);
     }
@@ -2048,9 +2128,9 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
         const float metalness = settings.enableV2Shading ? std::clamp(tri.metalness, 0.0f, 1.0f) : 0.0f;
         const float kind = settings.enableV2Shading ? gpuMaterialKind(tri.materialKind) : 0.0f;
         const float textured = tri.hasAlbedoTexture ? 1.0f : 0.0f;
-        geometry.vertices.push_back({tri.a.x, tri.a.y, tri.a.z, normalA.x, normalA.y, normalA.z, color.x, color.y, color.z, tri.uvA.x, tri.uvA.y, textured, roughness, metalness, kind});
-        geometry.vertices.push_back({tri.b.x, tri.b.y, tri.b.z, normalB.x, normalB.y, normalB.z, color.x, color.y, color.z, tri.uvB.x, tri.uvB.y, textured, roughness, metalness, kind});
-        geometry.vertices.push_back({tri.c.x, tri.c.y, tri.c.z, normalC.x, normalC.y, normalC.z, color.x, color.y, color.z, tri.uvC.x, tri.uvC.y, textured, roughness, metalness, kind});
+        geometry.vertices.push_back({tri.a.x, tri.a.y, tri.a.z, normalA.x, normalA.y, normalA.z, color.x, color.y, color.z, tri.uvA.x, tri.uvA.y, textured, roughness, metalness, kind, tri.tangentA.x, tri.tangentA.y, tri.tangentA.z, tri.tangentA.w});
+        geometry.vertices.push_back({tri.b.x, tri.b.y, tri.b.z, normalB.x, normalB.y, normalB.z, color.x, color.y, color.z, tri.uvB.x, tri.uvB.y, textured, roughness, metalness, kind, tri.tangentB.x, tri.tangentB.y, tri.tangentB.z, tri.tangentB.w});
+        geometry.vertices.push_back({tri.c.x, tri.c.y, tri.c.z, normalC.x, normalC.y, normalC.z, color.x, color.y, color.z, tri.uvC.x, tri.uvC.y, textured, roughness, metalness, kind, tri.tangentC.x, tri.tangentC.y, tri.tangentC.z, tri.tangentC.w});
         if (!geometry.batches.empty() && geometry.batches.back().materialIndex == materialIndex) {
             geometry.batches.back().vertexCount += 3;
         } else {

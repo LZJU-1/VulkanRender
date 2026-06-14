@@ -7,6 +7,7 @@ struct FragmentIn {
     [[vk::location(5)]] float roughness : TEXCOORD3;
     [[vk::location(6)]] float metalness : TEXCOORD4;
     [[vk::location(7)]] float materialKind : TEXCOORD5;
+    [[vk::location(8)]] float4 tangent : TEXCOORD6;
 };
 
 cbuffer Camera : register(b0) {
@@ -122,14 +123,11 @@ float4 main(FragmentIn input) : SV_Target0 {
 
     float2 uv = input.uv;
     if (input.textured > 0.5) {
-        float3 dpdx = ddx(input.worldPos);
-        float3 dpdy = ddy(input.worldPos);
         float2 duvdx = ddx(input.uv);
         float2 duvdy = ddy(input.uv);
-        float det = duvdx.x * duvdy.y - duvdx.y * duvdy.x;
-        float invDet = abs(det) > 1e-5 ? rcp(det) : 1.0;
-        float3 tangent = normalize((dpdx * duvdy.y - dpdy * duvdx.y) * invDet);
-        float3 bitangent = normalize((-dpdx * duvdy.x + dpdy * duvdx.x) * invDet);
+        float3 tangent = normalize(input.tangent.xyz);
+        tangent = normalize(tangent - normal * dot(normal, tangent));
+        float3 bitangent = normalize(cross(normal, tangent)) * (input.tangent.w < 0.0 ? -1.0 : 1.0);
 
         uint displacementWidth = 1;
         uint displacementHeight = 1;

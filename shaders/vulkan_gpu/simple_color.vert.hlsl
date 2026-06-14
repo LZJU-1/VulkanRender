@@ -7,6 +7,7 @@ struct VertexIn {
     [[vk::location(5)]] float roughness : TEXCOORD2;
     [[vk::location(6)]] float metalness : TEXCOORD3;
     [[vk::location(7)]] float materialKind : TEXCOORD4;
+    [[vk::location(8)]] float4 tangent : TANGENT;
 };
 
 struct VertexOut {
@@ -19,6 +20,7 @@ struct VertexOut {
     [[vk::location(5)]] float roughness : TEXCOORD3;
     [[vk::location(6)]] float metalness : TEXCOORD4;
     [[vk::location(7)]] float materialKind : TEXCOORD5;
+    [[vk::location(8)]] float4 tangent : TEXCOORD6;
 };
 
 cbuffer Camera : register(b0) {
@@ -52,5 +54,6 @@ VertexOut main(VertexIn input) {
     output.roughness = input.roughness;
     output.metalness = input.metalness;
     output.materialKind = input.materialKind;
+    output.tangent = input.tangent;
     return output;
 }

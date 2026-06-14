@@ -1702,7 +1702,7 @@ private:
         binding.binding = 0;
         binding.stride = sizeof(GpuPreviewVertex);
         binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-        std::array<VkVertexInputAttributeDescription, 8> attributes{};
+        std::array<VkVertexInputAttributeDescription, 9> attributes{};
         attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuPreviewVertex, px)};
         attributes[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuPreviewVertex, nx)};
         attributes[2] = {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuPreviewVertex, r)};
@@ -1711,6 +1711,7 @@ private:
         attributes[5] = {5, 0, VK_FORMAT_R32_SFLOAT, offsetof(GpuPreviewVertex, roughness)};
         attributes[6] = {6, 0, VK_FORMAT_R32_SFLOAT, offsetof(GpuPreviewVertex, metalness)};
         attributes[7] = {7, 0, VK_FORMAT_R32_SFLOAT, offsetof(GpuPreviewVertex, kind)};
+        attributes[8] = {8, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(GpuPreviewVertex, tx)};
 
         VkPipelineVertexInputStateCreateInfo vertexInput{};
         vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;

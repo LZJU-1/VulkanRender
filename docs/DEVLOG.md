@@ -168,6 +168,20 @@ scripts\build_msvc.bat
 C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
 ```
 
+## 2026-06-14 - V2 Stable Mesh Tangents
+
+- Added mesh-provided tangent support to the Scene'72 loader and Vulkan preview vertex layout.
+- Added glTF/GLB tangent attribute support with a UV-based fallback tangent for meshes that do not provide one.
+- Updated the v2 material shader to build its TBN basis from interpolated mesh tangents instead of screen-space derivatives.
+- This fixes the textured rock material shimmer/pop where normal/displacement detail appeared to spread and regroup during camera distance changes.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
+```
+
 ## 2026-06-14 - V2 Image-Based Lighting Preview
 
 - Added official Scene'72 Ox Bridge Morning IBL textures to the Vulkan v2 preview path:
