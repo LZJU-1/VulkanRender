@@ -1443,7 +1443,7 @@ void appendQuad(std::vector<Triangle3>& triangles, Vec3 a, Vec3 b, Vec3 c, Vec3 
     triangles.push_back(makeProceduralTriangle(a, c, d, color, kind));
 }
 
-void appendBox(std::vector<Triangle3>& triangles, Vec3 center, Vec3 half, Vec3 color, MaterialKind kind = MaterialKind::Lambertian) {
+void appendBox(std::vector<Triangle3>& triangles, Vec3 center, Vec3 half, Vec3 color, MaterialKind kind = MaterialKind::Lambertian, bool includeBottom = true) {
     const Vec3 p000 = center + Vec3{-half.x, -half.y, -half.z};
     const Vec3 p100 = center + Vec3{ half.x, -half.y, -half.z};
     const Vec3 p110 = center + Vec3{ half.x,  half.y, -half.z};
@@ -1452,7 +1452,9 @@ void appendBox(std::vector<Triangle3>& triangles, Vec3 center, Vec3 half, Vec3 c
     const Vec3 p101 = center + Vec3{ half.x, -half.y,  half.z};
     const Vec3 p111 = center + Vec3{ half.x,  half.y,  half.z};
     const Vec3 p011 = center + Vec3{-half.x,  half.y,  half.z};
-    appendQuad(triangles, p000, p100, p110, p010, color, kind);
+    if (includeBottom) {
+        appendQuad(triangles, p000, p100, p110, p010, color, kind);
+    }
     appendQuad(triangles, p001, p011, p111, p101, color, kind);
     appendQuad(triangles, p000, p001, p101, p100, color, kind);
     appendQuad(triangles, p100, p101, p111, p110, color, kind);
@@ -1464,13 +1466,13 @@ ProceduralScene makeV3ShadowDemoScene() {
     ProceduralScene scene;
     std::vector<Triangle3>& tris = scene.triangles;
     appendQuad(tris, {-7.5f, -5.5f, 0.0f}, {7.5f, -5.5f, 0.0f}, {7.5f, 5.5f, 0.0f}, {-7.5f, 5.5f, 0.0f}, {0.62f, 0.66f, 0.62f});
-    appendBox(tris, {-3.2f, -1.4f, 1.6f}, {0.55f, 0.55f, 1.6f}, {0.72f, 0.28f, 0.22f}, MaterialKind::Pbr);
-    appendBox(tris, {-1.2f, 0.9f, 2.25f}, {0.45f, 0.45f, 2.25f}, {0.25f, 0.46f, 0.78f}, MaterialKind::Pbr);
-    appendBox(tris, {1.3f, -0.9f, 1.05f}, {0.85f, 0.55f, 1.05f}, {0.38f, 0.62f, 0.36f}, MaterialKind::Pbr);
-    appendBox(tris, {3.4f, 1.25f, 1.8f}, {0.5f, 1.2f, 1.8f}, {0.84f, 0.64f, 0.32f}, MaterialKind::Pbr);
-    appendBox(tris, {0.5f, 2.75f, 0.85f}, {2.9f, 0.22f, 0.85f}, {0.52f, 0.50f, 0.56f});
-    appendBox(tris, {-4.8f, 2.2f, 0.55f}, {0.75f, 1.15f, 0.55f}, {0.55f, 0.42f, 0.36f});
-    appendBox(tris, {2.3f, -3.1f, 0.28f}, {2.1f, 0.55f, 0.28f}, {0.50f, 0.45f, 0.38f});
+    appendBox(tris, {-3.2f, -1.4f, 1.6f}, {0.55f, 0.55f, 1.6f}, {0.72f, 0.28f, 0.22f}, MaterialKind::Pbr, false);
+    appendBox(tris, {-1.2f, 0.9f, 2.25f}, {0.45f, 0.45f, 2.25f}, {0.25f, 0.46f, 0.78f}, MaterialKind::Pbr, false);
+    appendBox(tris, {1.3f, -0.9f, 1.05f}, {0.85f, 0.55f, 1.05f}, {0.38f, 0.62f, 0.36f}, MaterialKind::Pbr, false);
+    appendBox(tris, {3.4f, 1.25f, 1.8f}, {0.5f, 1.2f, 1.8f}, {0.84f, 0.64f, 0.32f}, MaterialKind::Pbr, false);
+    appendBox(tris, {0.5f, 2.75f, 0.85f}, {2.9f, 0.22f, 0.85f}, {0.52f, 0.50f, 0.56f}, MaterialKind::Lambertian, false);
+    appendBox(tris, {-4.8f, 2.2f, 0.55f}, {0.75f, 1.15f, 0.55f}, {0.55f, 0.42f, 0.36f}, MaterialKind::Lambertian, false);
+    appendBox(tris, {2.3f, -3.1f, 0.28f}, {2.1f, 0.55f, 0.28f}, {0.50f, 0.45f, 0.38f}, MaterialKind::Lambertian, false);
     appendBox(tris, {2.9f, -3.1f, 0.92f}, {1.3f, 0.55f, 0.28f}, {0.56f, 0.50f, 0.42f});
     appendBox(tris, {3.5f, -3.1f, 1.55f}, {0.55f, 0.55f, 0.32f}, {0.62f, 0.55f, 0.46f});
     appendBox(tris, {-0.1f, -2.65f, 3.35f}, {2.15f, 0.28f, 0.28f}, {0.78f, 0.74f, 0.68f}, MaterialKind::Pbr);
