@@ -5,6 +5,7 @@
 - Added `assets/third_party/s72_examples/v3_shadow_demo.shadowdemo` as the default v3 realtime preview scene.
 - The `.shadowdemo` marker triggers a procedural scene with a large shadow receiver, tall blockers, wall geometry, steps, and an overhead beam.
 - Removed coplanar bottom faces from ground-contact demo boxes so they do not z-fight with the floor while roaming the camera.
+- Retuned the default v3 demo lights so the directional light is the primary visible shadow source, while spot and point lights remain present but less visually intrusive.
 - Changed v3 preview defaults so `--profile v3 --preview` opens the shadow-focused scene instead of the v2 material sphere scene.
 - Kept `materials.s72` available for v2 material/IBL regression, but no longer use it as the primary shadow-map demo because its geometry does not show strong projection relationships.
 - Updated the v3 feature guide and render commands around the new shadow validation scene.
