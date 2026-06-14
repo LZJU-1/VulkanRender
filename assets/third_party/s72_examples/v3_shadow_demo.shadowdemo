@@ -1,0 +1,10 @@
+# VulkanRender v3 procedural shadow-map demo marker.
+#
+# The renderer recognizes this extension and builds a procedural scene with:
+# - a large receiving floor
+# - tall blockers for directional cascaded shadows
+# - walls and steps for spot shadows
+# - nearby occluders for point/sphere omni shadows
+#
+# It intentionally lives beside the Scene'72 example textures so the v3 preview
+# can reuse the Ox Bridge IBL and ambientCG fallback texture paths.

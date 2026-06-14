@@ -1,5 +1,20 @@
 # Development Log
 
+## 2026-06-15 - V3 Dedicated Shadow Demo Scene
+
+- Added `assets/third_party/s72_examples/v3_shadow_demo.shadowdemo` as the default v3 realtime preview scene.
+- The `.shadowdemo` marker triggers a procedural scene with a large shadow receiver, tall blockers, wall geometry, steps, and an overhead beam.
+- Changed v3 preview defaults so `--profile v3 --preview` opens the shadow-focused scene instead of the v2 material sphere scene.
+- Kept `materials.s72` available for v2 material/IBL regression, but no longer use it as the primary shadow-map demo because its geometry does not show strong projection relationships.
+- Updated the v3 feature guide and render commands around the new shadow validation scene.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v3 --preview --width 1280 --height 720
+```
+
 ## 2026-06-13 - v1.0 Headless Render Milestone
 
 - Confirmed the NTC project does not expose a standard `VULKAN_SDK`; it uses Donut/NVRHI and bundled compiler/runtime dependencies instead.

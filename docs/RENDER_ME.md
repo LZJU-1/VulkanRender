@@ -70,8 +70,10 @@ Current implementation: see `docs/V3_FEATURES.md`. The GPU preview uses a depth 
 Realtime preview:
 
 ```powershell
-build\nmake-debug\src\vulkan_render.exe --profile v3 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
+build\nmake-debug\src\vulkan_render.exe --profile v3 --preview --width 1280 --height 720
 ```
+
+This opens the dedicated v3 shadow demo scene by default. To be explicit, pass `--scene assets\third_party\s72_examples\v3_shadow_demo.shadowdemo`. The old `materials.s72` scene is still useful for v2 material/IBL regression, but it is not the clearest shadow-map demonstration.
 
 ## v4 Deferred And SSAO
 

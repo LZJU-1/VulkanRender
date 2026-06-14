@@ -86,6 +86,8 @@ int RendererApp::run() {
 
     const RenderGraph graph = RenderGraph::build(*profile);
     graph.describe(std::cout);
+    const std::filesystem::path defaultV2Scene = "assets/third_party/s72_examples/materials.s72";
+    const std::filesystem::path defaultV3Scene = "assets/third_party/s72_examples/v3_shadow_demo.shadowdemo";
 
     if (!config_.scenePath.empty()) {
         config_.scenePath = resolveInputPath(config_.scenePath).string();
@@ -116,7 +118,7 @@ int RendererApp::run() {
         settings.frameIndex = config_.frames - 1u;
         settings.enableV2Shading = profile->id == ProfileId::V2PbrIbl;
         settings.scenePath = config_.scenePath.empty()
-            ? (settings.enableV2Shading ? "assets/third_party/s72_examples/materials.s72" : "assets/scenes/v1.scene")
+            ? (settings.enableV2Shading ? defaultV2Scene : "assets/scenes/v1.scene")
             : config_.scenePath;
         settings.scenePath = resolveInputPath(settings.scenePath);
         settings.outputPath = config_.outputPath;
@@ -142,7 +144,7 @@ int RendererApp::run() {
         settings.enableV2Shading = profile->id == ProfileId::V2PbrIbl || profile->id == ProfileId::V3LightsShadows;
         settings.enableV3Shadows = profile->id == ProfileId::V3LightsShadows;
         settings.scenePath = config_.scenePath.empty()
-            ? (settings.enableV2Shading ? "assets/third_party/s72_examples/materials.s72" : "assets/scenes/v1.scene")
+            ? (profile->id == ProfileId::V3LightsShadows ? defaultV3Scene : (settings.enableV2Shading ? defaultV2Scene : "assets/scenes/v1.scene"))
             : config_.scenePath;
         settings.scenePath = resolveInputPath(settings.scenePath);
         settings.outputPath = config_.outputPath;

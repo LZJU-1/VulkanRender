@@ -1405,6 +1405,85 @@ struct GltfScene {
     Camera camera;
 };
 
+struct ProceduralScene {
+    std::vector<Triangle3> triangles;
+    Camera camera;
+};
+
+Triangle3 makeProceduralTriangle(Vec3 a, Vec3 b, Vec3 c, Vec3 baseColor, MaterialKind kind = MaterialKind::Lambertian) {
+    Triangle3 tri;
+    tri.a = a;
+    tri.b = b;
+    tri.c = c;
+    tri.color = vecToColor(baseColor);
+    tri.normal = normalize(cross(b - a, c - a));
+    if (length(tri.normal) <= 0.00001f) {
+        tri.normal = {0.0f, 0.0f, 1.0f};
+    }
+    tri.normalA = tri.normal;
+    tri.normalB = tri.normal;
+    tri.normalC = tri.normal;
+    tri.uvA = {0.0f, 0.0f};
+    tri.uvB = {1.0f, 0.0f};
+    tri.uvC = {1.0f, 1.0f};
+    tri.uv = {(tri.uvA.x + tri.uvB.x + tri.uvC.x) / 3.0f, (tri.uvA.y + tri.uvB.y + tri.uvC.y) / 3.0f};
+    const Vec4 tangent = triangleTangent(a, b, c, tri.uvA, tri.uvB, tri.uvC, tri.normal);
+    tri.tangentA = tangent;
+    tri.tangentB = tangent;
+    tri.tangentC = tangent;
+    tri.baseColor = baseColor;
+    tri.roughness = 0.78f;
+    tri.metalness = 0.0f;
+    tri.materialKind = kind;
+    return tri;
+}
+
+void appendQuad(std::vector<Triangle3>& triangles, Vec3 a, Vec3 b, Vec3 c, Vec3 d, Vec3 color, MaterialKind kind = MaterialKind::Lambertian) {
+    triangles.push_back(makeProceduralTriangle(a, b, c, color, kind));
+    triangles.push_back(makeProceduralTriangle(a, c, d, color, kind));
+}
+
+void appendBox(std::vector<Triangle3>& triangles, Vec3 center, Vec3 half, Vec3 color, MaterialKind kind = MaterialKind::Lambertian) {
+    const Vec3 p000 = center + Vec3{-half.x, -half.y, -half.z};
+    const Vec3 p100 = center + Vec3{ half.x, -half.y, -half.z};
+    const Vec3 p110 = center + Vec3{ half.x,  half.y, -half.z};
+    const Vec3 p010 = center + Vec3{-half.x,  half.y, -half.z};
+    const Vec3 p001 = center + Vec3{-half.x, -half.y,  half.z};
+    const Vec3 p101 = center + Vec3{ half.x, -half.y,  half.z};
+    const Vec3 p111 = center + Vec3{ half.x,  half.y,  half.z};
+    const Vec3 p011 = center + Vec3{-half.x,  half.y,  half.z};
+    appendQuad(triangles, p000, p100, p110, p010, color, kind);
+    appendQuad(triangles, p001, p011, p111, p101, color, kind);
+    appendQuad(triangles, p000, p001, p101, p100, color, kind);
+    appendQuad(triangles, p100, p101, p111, p110, color, kind);
+    appendQuad(triangles, p110, p111, p011, p010, color, kind);
+    appendQuad(triangles, p010, p011, p001, p000, color, kind);
+}
+
+ProceduralScene makeV3ShadowDemoScene() {
+    ProceduralScene scene;
+    std::vector<Triangle3>& tris = scene.triangles;
+    appendQuad(tris, {-7.5f, -5.5f, 0.0f}, {7.5f, -5.5f, 0.0f}, {7.5f, 5.5f, 0.0f}, {-7.5f, 5.5f, 0.0f}, {0.62f, 0.66f, 0.62f});
+    appendBox(tris, {-3.2f, -1.4f, 1.6f}, {0.55f, 0.55f, 1.6f}, {0.72f, 0.28f, 0.22f}, MaterialKind::Pbr);
+    appendBox(tris, {-1.2f, 0.9f, 2.25f}, {0.45f, 0.45f, 2.25f}, {0.25f, 0.46f, 0.78f}, MaterialKind::Pbr);
+    appendBox(tris, {1.3f, -0.9f, 1.05f}, {0.85f, 0.55f, 1.05f}, {0.38f, 0.62f, 0.36f}, MaterialKind::Pbr);
+    appendBox(tris, {3.4f, 1.25f, 1.8f}, {0.5f, 1.2f, 1.8f}, {0.84f, 0.64f, 0.32f}, MaterialKind::Pbr);
+    appendBox(tris, {0.5f, 2.75f, 0.85f}, {2.9f, 0.22f, 0.85f}, {0.52f, 0.50f, 0.56f});
+    appendBox(tris, {-4.8f, 2.2f, 0.55f}, {0.75f, 1.15f, 0.55f}, {0.55f, 0.42f, 0.36f});
+    appendBox(tris, {2.3f, -3.1f, 0.28f}, {2.1f, 0.55f, 0.28f}, {0.50f, 0.45f, 0.38f});
+    appendBox(tris, {2.9f, -3.1f, 0.92f}, {1.3f, 0.55f, 0.28f}, {0.56f, 0.50f, 0.42f});
+    appendBox(tris, {3.5f, -3.1f, 1.55f}, {0.55f, 0.55f, 0.32f}, {0.62f, 0.55f, 0.46f});
+    appendBox(tris, {-0.1f, -2.65f, 3.35f}, {2.15f, 0.28f, 0.28f}, {0.78f, 0.74f, 0.68f}, MaterialKind::Pbr);
+
+    scene.camera.eye = {6.8f, -8.2f, 5.2f};
+    scene.camera.target = {0.0f, 0.0f, 1.15f};
+    scene.camera.up = {0.0f, 0.0f, 1.0f};
+    scene.camera.fovY = 48.0f * kPi / 180.0f;
+    scene.camera.nearPlane = 0.05f;
+    scene.camera.farPlane = 60.0f;
+    return scene;
+}
+
 struct CachedS72Scene {
     std::vector<Triangle3> triangles;
     Camera camera;
@@ -2019,7 +2098,11 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
     const std::vector<Triangle3>* triangles = &ownedTriangles;
     Camera camera;
 
-    if (extension == ".s72") {
+    if (extension == ".shadowdemo") {
+        ProceduralScene scene = makeV3ShadowDemoScene();
+        ownedTriangles = std::move(scene.triangles);
+        camera = scene.camera;
+    } else if (extension == ".s72") {
         if (settings.enableV2Shading) {
             const CachedS72Scene& scene = cachedStaticS72Scene(settings.scenePath);
             triangles = &scene.triangles;
