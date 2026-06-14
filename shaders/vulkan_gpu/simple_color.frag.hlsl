@@ -74,13 +74,21 @@ float2 environmentBrdf(float ndotv, float roughness) {
     return environmentBrdfTexture.SampleLevel(materialSampler, float2(saturate(ndotv), saturate(roughness)), 0.0);
 }
 
-float albedoHeight(float2 uv) {
-    float3 color = displacementTexture.Sample(materialSampler, uv).rgb;
+float albedoHeight(float2 uv, float lod) {
+    float3 color = displacementTexture.SampleLevel(materialSampler, uv, lod).rgb;
     return dot(color, float3(0.2126, 0.7152, 0.0722));
 }
 
-float2 parallaxOcclusionMapping(float2 uv, float3 tangentViewDir) {
-    const float heightScale = 0.05;
+float mipLevelFromDerivatives(float2 uvDx, float2 uvDy, uint width, uint height) {
+    float2 size = float2(max(width, 1), max(height, 1));
+    float2 dx = uvDx * size;
+    float2 dy = uvDy * size;
+    float rho2 = max(dot(dx, dx), dot(dy, dy));
+    return max(0.0, 0.5 * log2(max(rho2, 1.0)));
+}
+
+float2 parallaxOcclusionMapping(float2 uv, float3 tangentViewDir, float displacementLod) {
+    const float heightScale = 0.035;
     const float minLayers = 32.0;
     const float maxLayers = 128.0;
     float numLayers = lerp(maxLayers, minLayers, abs(tangentViewDir.z));
@@ -90,17 +98,17 @@ float2 parallaxOcclusionMapping(float2 uv, float3 tangentViewDir) {
     deltaUv.y = -deltaUv.y;
 
     float2 currentUv = uv;
-    float currentDepth = displacementTexture.Sample(materialSampler, currentUv).r;
+    float currentDepth = displacementTexture.SampleLevel(materialSampler, currentUv, displacementLod).r;
     [loop]
     while (currentDepth > currentLayerDepth && currentLayerDepth < 1.0) {
         currentLayerDepth += layerDepth;
         currentUv -= deltaUv;
-        currentDepth = displacementTexture.Sample(materialSampler, currentUv).r;
+        currentDepth = displacementTexture.SampleLevel(materialSampler, currentUv, displacementLod).r;
     }
 
     float2 previousUv = currentUv + deltaUv;
     float nextDepth = currentDepth - currentLayerDepth;
-    float previousDepth = displacementTexture.Sample(materialSampler, previousUv).r - currentLayerDepth + layerDepth;
+    float previousDepth = displacementTexture.SampleLevel(materialSampler, previousUv, displacementLod).r - currentLayerDepth + layerDepth;
     float weight = nextDepth / max(1e-5, nextDepth - previousDepth);
     return lerp(currentUv, previousUv, saturate(weight));
 }
@@ -123,8 +131,14 @@ float4 main(FragmentIn input) : SV_Target0 {
         float3 tangent = normalize((dpdx * duvdy.y - dpdy * duvdx.y) * invDet);
         float3 bitangent = normalize((-dpdx * duvdy.x + dpdy * duvdx.x) * invDet);
 
+        uint displacementWidth = 1;
+        uint displacementHeight = 1;
+        displacementTexture.GetDimensions(displacementWidth, displacementHeight);
+        float displacementLod = mipLevelFromDerivatives(duvdx, duvdy, displacementWidth, displacementHeight);
+        float pomFade = saturate(1.0 - displacementLod * 0.28);
         float3 viewTangent = float3(dot(view, tangent), dot(view, bitangent), max(0.22, dot(view, normal)));
-        uv = parallaxOcclusionMapping(uv, normalize(viewTangent));
+        float2 pomUv = parallaxOcclusionMapping(uv, normalize(viewTangent), displacementLod);
+        uv = lerp(input.uv, pomUv, pomFade);
         if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
             discard;
         }
@@ -133,13 +147,13 @@ float4 main(FragmentIn input) : SV_Target0 {
         uint texHeight = 1;
         albedoTexture.GetDimensions(texWidth, texHeight);
         float2 texel = 1.0 / float2(max(texWidth, 1), max(texHeight, 1));
-        float hL = albedoHeight(uv - float2(texel.x, 0.0));
-        float hR = albedoHeight(uv + float2(texel.x, 0.0));
-        float hD = albedoHeight(uv - float2(0.0, texel.y));
-        float hU = albedoHeight(uv + float2(0.0, texel.y));
-        float dHdu = (hR - hL) * 3.0;
-        float dHdv = (hU - hD) * 3.0;
-        float3 tangentNormal = normalTexture.Sample(materialSampler, uv).xyz * 2.0 - 1.0;
+        float hL = albedoHeight(uv - float2(texel.x, 0.0), displacementLod);
+        float hR = albedoHeight(uv + float2(texel.x, 0.0), displacementLod);
+        float hD = albedoHeight(uv - float2(0.0, texel.y), displacementLod);
+        float hU = albedoHeight(uv + float2(0.0, texel.y), displacementLod);
+        float dHdu = (hR - hL) * 3.0 * pomFade;
+        float dHdv = (hU - hD) * 3.0 * pomFade;
+        float3 tangentNormal = normalTexture.SampleGrad(materialSampler, uv, duvdx, duvdy).xyz * 2.0 - 1.0;
         tangentNormal.y = -tangentNormal.y;
         float3 normalMapped = normalize(tangent * tangentNormal.x + bitangent * tangentNormal.y + normal * tangentNormal.z);
         float3 heightNormal = normalize(normal - tangent * dHdu - bitangent * dHdv);
@@ -150,12 +164,14 @@ float4 main(FragmentIn input) : SV_Target0 {
     float ndotl = saturate(dot(normal, lightDir));
     float3 halfVector = normalize(lightDir + view);
     float ndotv = max(0.04, saturate(dot(normal, view)));
-    float roughnessMap = roughnessTexture.Sample(materialSampler, uv).r;
+    float2 materialUvDx = ddx(input.uv);
+    float2 materialUvDy = ddy(input.uv);
+    float roughnessMap = roughnessTexture.SampleGrad(materialSampler, uv, materialUvDx, materialUvDy).r;
     float roughness = clamp(lerp(input.roughness, roughnessMap, saturate(input.textured)), 0.03, 1.0);
     float metalness = saturate(input.metalness);
     float materialKind = input.materialKind;
 
-    float3 texel = albedoTexture.Sample(materialSampler, uv).rgb;
+    float3 texel = albedoTexture.SampleGrad(materialSampler, uv, materialUvDx, materialUvDy).rgb;
     float3 base = lerp(saturate(input.color), texel, saturate(input.textured));
     float3 reflected = reflect(-view, normal);
     float3 env = samplePrefilteredSpecular(reflected, roughness);

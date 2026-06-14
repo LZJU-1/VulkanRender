@@ -189,6 +189,10 @@ C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --pro
   - The Vulkan path creates one descriptor set per material texture set.
   - Mesh rendering binds the material descriptor set per batch before issuing `vkCmdDraw`.
   - Shared environment cubemaps and BRDF LUT remain common across material sets.
+- Stabilized POM texture sampling while roaming the camera:
+  - Displacement height lookup now uses an explicit mip level derived from the original UV derivatives.
+  - POM fades out smoothly as the texture footprint grows at distance.
+  - Albedo, normal, and roughness sampling use stable gradients after parallax UV adjustment.
 
 Validation commands:
 
