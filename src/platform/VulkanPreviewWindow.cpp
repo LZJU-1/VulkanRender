@@ -2264,6 +2264,9 @@ struct PreviewState {
     std::array<bool, 256> keys{};
     V1CameraSettings camera;
     bool roaming = false;
+    bool mouseLook = false;
+    int lastMouseX = 0;
+    int lastMouseY = 0;
     float yaw = 0.0f;
     float pitch = 0.0f;
     std::uint32_t frameIndex = 0;
@@ -2298,6 +2301,21 @@ void writeCameraPose(PreviewState& state, Vec3 eye) {
 
 bool keyDown(const PreviewState& state, int key) {
     return key >= 0 && key < static_cast<int>(state.keys.size()) && state.keys[static_cast<std::size_t>(key)];
+}
+
+int mouseXFrom(LPARAM lParam) {
+    return static_cast<int>(static_cast<short>(LOWORD(lParam)));
+}
+
+int mouseYFrom(LPARAM lParam) {
+    return static_cast<int>(static_cast<short>(HIWORD(lParam)));
+}
+
+void rotateCamera(PreviewState& state, float deltaX, float deltaY) {
+    const float mouseSensitivity = 0.0045f;
+    state.yaw -= deltaX * mouseSensitivity;
+    state.pitch = std::clamp(state.pitch - deltaY * mouseSensitivity, -1.45f, 1.45f);
+    writeCameraPose(state, eyeOf(state.camera));
 }
 
 void updateCamera(PreviewState& state, float dt) {
@@ -2379,13 +2397,42 @@ LRESULT CALLBACK vulkanPreviewProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
                         deriveAnglesFromCamera(*state);
                         writeCameraPose(*state, eyeOf(state->camera));
                         SetWindowTextW(hwnd, L"VulkanRender GPU preview - roaming camera");
-                        std::cout << "GPU camera roaming enabled. WASD move, Q/E vertical, arrows/IJKL look, Shift fast.\n";
+                        std::cout << "GPU camera roaming enabled. WASD move, Q/E vertical, arrows/IJKL or right-drag look, Shift fast.\n";
                     } else {
+                        state->mouseLook = false;
+                        ReleaseCapture();
                         state->camera = state->geometry.camera;
                         SetWindowTextW(hwnd, L"VulkanRender GPU preview - press R for roaming");
                         std::cout << "GPU camera roaming disabled.\n";
                     }
                 }
+            }
+        }
+        return 0;
+    case WM_RBUTTONDOWN:
+        if (PreviewState* state = stateFrom(hwnd)) {
+            if (state->roaming) {
+                state->mouseLook = true;
+                state->lastMouseX = mouseXFrom(lParam);
+                state->lastMouseY = mouseYFrom(lParam);
+                SetCapture(hwnd);
+            }
+        }
+        return 0;
+    case WM_RBUTTONUP:
+        if (PreviewState* state = stateFrom(hwnd)) {
+            state->mouseLook = false;
+            ReleaseCapture();
+        }
+        return 0;
+    case WM_MOUSEMOVE:
+        if (PreviewState* state = stateFrom(hwnd)) {
+            if (state->roaming && state->mouseLook) {
+                const int x = mouseXFrom(lParam);
+                const int y = mouseYFrom(lParam);
+                rotateCamera(*state, static_cast<float>(x - state->lastMouseX), static_cast<float>(y - state->lastMouseY));
+                state->lastMouseX = x;
+                state->lastMouseY = y;
             }
         }
         return 0;
@@ -2398,6 +2445,10 @@ LRESULT CALLBACK vulkanPreviewProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
         return 0;
     case WM_DESTROY:
         KillTimer(hwnd, kWindowTimer);
+        if (PreviewState* state = stateFrom(hwnd)) {
+            state->mouseLook = false;
+        }
+        ReleaseCapture();
         PostQuitMessage(0);
         return 0;
     default:
@@ -2434,7 +2485,7 @@ int runVulkanPreviewWindow(V1RenderSettings settings) {
     HWND hwnd = CreateWindowExW(
         0,
         className,
-        L"VulkanRender GPU preview - press R for roaming",
+        L"VulkanRender GPU preview - R roaming, RMB drag look",
         WS_OVERLAPPEDWINDOW | WS_VISIBLE,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
@@ -2464,7 +2515,7 @@ int runVulkanPreviewWindow(V1RenderSettings settings) {
     SetTimer(hwnd, kWindowTimer, 16, nullptr);
 
     std::cout << "Opened Vulkan GPU preview window. vertices=" << state.geometry.vertices.size()
-              << ". Press R for roaming, Esc to exit.\n";
+              << ". Press R for roaming, hold right mouse to look, Esc to exit.\n";
 
     MSG message{};
     while (GetMessageW(&message, nullptr, 0, 0) > 0) {

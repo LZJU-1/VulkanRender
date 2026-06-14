@@ -1,5 +1,18 @@
 # Development Log
 
+## 2026-06-15 - GPU Preview Mouse Look
+
+- Added right-mouse drag look to the Vulkan GPU preview roaming camera.
+- Kept the existing `R` toggle, `WASD`, `Q/E`, arrow-key, and `IJKL` controls.
+- Updated render docs so v2/v3 realtime preview controls include mouse look before starting v4 work.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v3 --preview --width 1280 --height 720
+```
+
 ## 2026-06-15 - V3 Dedicated Shadow Demo Scene
 
 - Added `assets/third_party/s72_examples/v3_shadow_demo.shadowdemo` as the default v3 realtime preview scene.

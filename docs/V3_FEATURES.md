@@ -169,6 +169,7 @@ build\nmake-debug\src\vulkan_render.exe --profile v3 --preview --width 1280 --he
 - `WASD`：水平移动。
 - `Q/E` 或 `Ctrl/Space`：垂直移动。
 - 方向键或 `IJKL`：转向。
+- 鼠标右键拖拽：转向。
 - `Shift`：加速。
 - `Esc`：退出。
 

@@ -57,7 +57,7 @@ build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\th
 
 Preview path: this command opens the native Vulkan GPU preview window. Scene data is loaded on the CPU, uploaded to Vulkan buffers/textures, and rasterized by the GPU through the swapchain graphics pipeline. The legacy CPU preview remains only as a fallback for the old `.scene` cube smoke format.
 
-Preview controls: press `R` to toggle free camera roaming, `WASD` to move, `Q/E` or `Ctrl/Space` for vertical movement, arrow keys or `IJKL` to look, `Shift` to move faster, and `Esc` to close the window.
+Preview controls: press `R` to toggle free camera roaming, `WASD` to move, `Q/E` or `Ctrl/Space` for vertical movement, arrow keys or `IJKL` to look, hold right mouse and drag to look, `Shift` to move faster, and `Esc` to close the window.
 
 Implementation note: headless `--render` remains a software validation path for BMP output. Realtime v2 material validation should use `--preview`.
 
