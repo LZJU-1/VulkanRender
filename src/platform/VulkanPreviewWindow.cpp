@@ -38,7 +38,12 @@ constexpr std::uint32_t kEnvironmentBackgroundTexture = 0;
 constexpr std::uint32_t kEnvironmentDiffuseTexture = 1;
 constexpr std::uint32_t kEnvironmentSpecularTextureBase = 2;
 constexpr std::uint32_t kEnvironmentBrdfTextureIndex = kSharedTextureCount - 1;
-constexpr std::uint32_t kShadowMapSize = 2048;
+constexpr std::uint32_t kShadowTileSize = 1024;
+constexpr std::uint32_t kShadowAtlasColumns = 4;
+constexpr std::uint32_t kShadowAtlasRows = 3;
+constexpr std::uint32_t kShadowAtlasWidth = kShadowTileSize * kShadowAtlasColumns;
+constexpr std::uint32_t kShadowAtlasHeight = kShadowTileSize * kShadowAtlasRows;
+constexpr std::uint32_t kShadowMapCount = 10;
 constexpr std::uint32_t kDirectionalShadowTextureBinding = 14;
 
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
@@ -1072,7 +1077,7 @@ private:
         VkImageCreateInfo image{};
         image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         image.imageType = VK_IMAGE_TYPE_2D;
-        image.extent = {kShadowMapSize, kShadowMapSize, 1};
+        image.extent = {kShadowAtlasWidth, kShadowAtlasHeight, 1};
         image.mipLevels = 1;
         image.arrayLayers = 1;
         image.format = VK_FORMAT_D32_SFLOAT;
@@ -1098,8 +1103,8 @@ private:
         framebuffer.renderPass = shadowRenderPass_;
         framebuffer.attachmentCount = 1;
         framebuffer.pAttachments = &shadowDepthView_;
-        framebuffer.width = kShadowMapSize;
-        framebuffer.height = kShadowMapSize;
+        framebuffer.width = kShadowAtlasWidth;
+        framebuffer.height = kShadowAtlasHeight;
         framebuffer.layers = 1;
         require(vkCreateFramebuffer(device_, &framebuffer, nullptr, &shadowFramebuffer_), "vkCreateFramebuffer(shadow)");
 
@@ -2090,6 +2095,9 @@ private:
         uniform.spotColorIntensity[2] = 1.0f;
         uniform.spotColorIntensity[3] = 2.2f;
         uniform.v3Flags[0] = enableV3Shadows_ ? 1.0f : 0.0f;
+        uniform.v3Flags[1] = 2.4f;
+        uniform.v3Flags[2] = 4.5f;
+        uniform.v3Flags[3] = 7.2f;
 
         void* mapped = nullptr;
         require(vkMapMemory(device_, uniformMemory_, 0, sizeof(uniform), 0, &mapped), "vkMapMemory(uniform)");
@@ -2110,26 +2118,33 @@ private:
             shadowPass.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
             shadowPass.renderPass = shadowRenderPass_;
             shadowPass.framebuffer = shadowFramebuffer_;
-            shadowPass.renderArea.extent = {kShadowMapSize, kShadowMapSize};
+            shadowPass.renderArea.extent = {kShadowAtlasWidth, kShadowAtlasHeight};
             shadowPass.clearValueCount = 1;
             shadowPass.pClearValues = &shadowClear;
             vkCmdBeginRenderPass(commandBuffer, &shadowPass, VK_SUBPASS_CONTENTS_INLINE);
 
-            VkViewport shadowViewport{};
-            shadowViewport.width = static_cast<float>(kShadowMapSize);
-            shadowViewport.height = static_cast<float>(kShadowMapSize);
-            shadowViewport.minDepth = 0.0f;
-            shadowViewport.maxDepth = 1.0f;
-            VkRect2D shadowScissor{};
-            shadowScissor.extent = {kShadowMapSize, kShadowMapSize};
-            vkCmdSetViewport(commandBuffer, 0, 1, &shadowViewport);
-            vkCmdSetScissor(commandBuffer, 0, 1, &shadowScissor);
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline_);
             const VkDescriptorSet shadowDescriptorSet = descriptorSets_.empty() ? VK_NULL_HANDLE : descriptorSets_.front();
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &shadowDescriptorSet, 0, nullptr);
             VkDeviceSize shadowOffset = 0;
             vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer_, &shadowOffset);
-            vkCmdDraw(commandBuffer, vertexCount_, 1, 0, 0);
+            for (std::uint32_t shadowIndex = 0; shadowIndex < kShadowMapCount; ++shadowIndex) {
+                const std::uint32_t col = shadowIndex % kShadowAtlasColumns;
+                const std::uint32_t row = shadowIndex / kShadowAtlasColumns;
+                VkViewport shadowViewport{};
+                shadowViewport.x = static_cast<float>(col * kShadowTileSize);
+                shadowViewport.y = static_cast<float>(row * kShadowTileSize);
+                shadowViewport.width = static_cast<float>(kShadowTileSize);
+                shadowViewport.height = static_cast<float>(kShadowTileSize);
+                shadowViewport.minDepth = 0.0f;
+                shadowViewport.maxDepth = 1.0f;
+                VkRect2D shadowScissor{};
+                shadowScissor.offset = {static_cast<std::int32_t>(col * kShadowTileSize), static_cast<std::int32_t>(row * kShadowTileSize)};
+                shadowScissor.extent = {kShadowTileSize, kShadowTileSize};
+                vkCmdSetViewport(commandBuffer, 0, 1, &shadowViewport);
+                vkCmdSetScissor(commandBuffer, 0, 1, &shadowScissor);
+                vkCmdDraw(commandBuffer, vertexCount_, 1, 0, shadowIndex);
+            }
             vkCmdEndRenderPass(commandBuffer);
         }
 

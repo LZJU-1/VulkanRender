@@ -65,7 +65,7 @@ Implementation note: headless `--render` remains a software validation path for 
 
 Target behavior: support spot lights with perspective shadow maps, sphere lights with omnidirectional shadow maps, and directional lights with cascaded shadow maps.
 
-Current implementation: see `docs/V3_FEATURES.md`. The current GPU preview has a real directional shadow-map pass plus point/sphere-style and spot local lights. Spot shadow maps, point omni shadows, and directional cascades remain the next v3 alignment steps.
+Current implementation: see `docs/V3_FEATURES.md`. The GPU preview uses a depth shadow atlas with directional cascades, a spot light shadow map, and six point/sphere omni shadow faces, then applies those shadows in the PBR material shader.
 
 Realtime preview:
 

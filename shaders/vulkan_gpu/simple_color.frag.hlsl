@@ -86,39 +86,130 @@ float2 environmentBrdf(float ndotv, float roughness) {
     return environmentBrdfTexture.SampleLevel(materialSampler, float2(saturate(ndotv), saturate(roughness)), 0.0);
 }
 
-float directionalShadow(float3 worldPos, float3 normal) {
+float sampleShadowTile(uint tileIndex, float2 uv, float depth, float bias, float minVisibility) {
     if (v3Flags.x < 0.5) {
         return 1.0;
     }
-
-    float3 offset = worldPos - shadowCenterBias.xyz;
-    float extent = max(0.01, shadowRightExtent.w);
-    float nearPlane = shadowUpNear.w;
-    float farPlane = shadowForwardFar.w;
-    float2 uv;
-    uv.x = dot(offset, shadowRightExtent.xyz) / extent * 0.5 + 0.5;
-    uv.y = -dot(offset, shadowUpNear.xyz) / extent * 0.5 + 0.5;
-    float depth = (dot(offset, shadowForwardFar.xyz) - nearPlane) / max(0.01, farPlane - nearPlane);
     if (uv.x <= 0.0 || uv.x >= 1.0 || uv.y <= 0.0 || uv.y >= 1.0 || depth <= 0.0 || depth >= 1.0) {
         return 1.0;
     }
 
-    uint shadowWidth = 1;
-    uint shadowHeight = 1;
-    directionalShadowTexture.GetDimensions(shadowWidth, shadowHeight);
-    float2 texel = 1.0 / float2(max(shadowWidth, 1), max(shadowHeight, 1));
-    float3 lightDir = normalize(-shadowForwardFar.xyz);
-    float bias = shadowCenterBias.w + max(0.0007, (1.0 - saturate(dot(normal, lightDir))) * 0.0035);
+    uint atlasWidth = 1;
+    uint atlasHeight = 1;
+    directionalShadowTexture.GetDimensions(atlasWidth, atlasHeight);
+    const float2 grid = float2(4.0, 3.0);
+    float2 tile = float2((float)(tileIndex % 4), (float)(tileIndex / 4));
+    float2 atlasUv = (tile + uv) / grid;
+    float2 texel = 1.0 / float2(max(atlasWidth, 1), max(atlasHeight, 1));
     float visible = 0.0;
     [unroll]
     for (int y = -1; y <= 1; ++y) {
         [unroll]
         for (int x = -1; x <= 1; ++x) {
-            float closest = directionalShadowTexture.SampleLevel(materialSampler, uv + float2(x, y) * texel, 0.0);
+            float closest = directionalShadowTexture.SampleLevel(materialSampler, atlasUv + float2(x, y) * texel, 0.0);
             visible += (depth - bias) <= closest ? 1.0 : 0.0;
         }
     }
-    return lerp(0.34, 1.0, visible / 9.0);
+    return lerp(minVisibility, 1.0, visible / 9.0);
+}
+
+float directionalShadow(float3 worldPos, float3 normal) {
+    float3 offset = worldPos - shadowCenterBias.xyz;
+    float xLight = dot(offset, shadowRightExtent.xyz);
+    float yLight = dot(offset, shadowUpNear.xyz);
+    float axisDistance = max(abs(xLight), abs(yLight));
+    uint cascadeIndex = axisDistance <= v3Flags.y ? 0 : (axisDistance <= v3Flags.z ? 1 : 2);
+    float extent = cascadeIndex == 0 ? v3Flags.y : (cascadeIndex == 1 ? v3Flags.z : v3Flags.w);
+    extent = max(0.01, extent);
+    float nearPlane = shadowUpNear.w;
+    float farPlane = shadowForwardFar.w;
+    float2 uv;
+    uv.x = xLight / extent * 0.5 + 0.5;
+    uv.y = -yLight / extent * 0.5 + 0.5;
+    float depth = (dot(offset, shadowForwardFar.xyz) - nearPlane) / max(0.01, farPlane - nearPlane);
+    float3 lightDir = normalize(-shadowForwardFar.xyz);
+    float bias = shadowCenterBias.w + max(0.0007, (1.0 - saturate(dot(normal, lightDir))) * 0.0035);
+    return sampleShadowTile(cascadeIndex, uv, depth, bias, 0.34);
+}
+
+void pointFaceBasis(uint face, out float3 forward, out float3 right, out float3 up) {
+    if (face == 0) {
+        forward = float3(1.0, 0.0, 0.0);
+        right = float3(0.0, 1.0, 0.0);
+        up = float3(0.0, 0.0, 1.0);
+    } else if (face == 1) {
+        forward = float3(-1.0, 0.0, 0.0);
+        right = float3(0.0, -1.0, 0.0);
+        up = float3(0.0, 0.0, 1.0);
+    } else if (face == 2) {
+        forward = float3(0.0, 1.0, 0.0);
+        right = float3(-1.0, 0.0, 0.0);
+        up = float3(0.0, 0.0, 1.0);
+    } else if (face == 3) {
+        forward = float3(0.0, -1.0, 0.0);
+        right = float3(1.0, 0.0, 0.0);
+        up = float3(0.0, 0.0, 1.0);
+    } else if (face == 4) {
+        forward = float3(0.0, 0.0, 1.0);
+        right = float3(1.0, 0.0, 0.0);
+        up = float3(0.0, -1.0, 0.0);
+    } else {
+        forward = float3(0.0, 0.0, -1.0);
+        right = float3(1.0, 0.0, 0.0);
+        up = float3(0.0, 1.0, 0.0);
+    }
+}
+
+uint pointFaceFor(float3 direction) {
+    float3 ad = abs(direction);
+    if (ad.x >= ad.y && ad.x >= ad.z) {
+        return direction.x >= 0.0 ? 0 : 1;
+    }
+    if (ad.y >= ad.z) {
+        return direction.y >= 0.0 ? 2 : 3;
+    }
+    return direction.z >= 0.0 ? 4 : 5;
+}
+
+float pointShadow(float3 worldPos, float3 normal, float3 lightDir) {
+    if (v3Flags.x < 0.5) {
+        return 1.0;
+    }
+    float3 toPoint = worldPos - pointPosRadius.xyz;
+    float distanceToPoint = length(toPoint);
+    if (distanceToPoint >= pointPosRadius.w) {
+        return 1.0;
+    }
+    uint face = pointFaceFor(toPoint);
+    float3 forward;
+    float3 right;
+    float3 up;
+    pointFaceBasis(face, forward, right, up);
+    float forwardDistance = dot(toPoint, forward);
+    float2 uv;
+    uv.x = dot(toPoint, right) / max(0.05, forwardDistance) * 0.5 + 0.5;
+    uv.y = -dot(toPoint, up) / max(0.05, forwardDistance) * 0.5 + 0.5;
+    float depth = distanceToPoint / max(0.05, pointPosRadius.w);
+    float bias = 0.012 + max(0.002, (1.0 - saturate(dot(normal, lightDir))) * 0.012);
+    return sampleShadowTile(4 + face, uv, depth, bias, 0.28);
+}
+
+float spotShadow(float3 worldPos, float3 normal, float3 lightDir) {
+    if (v3Flags.x < 0.5) {
+        return 1.0;
+    }
+    float3 forward = normalize(spotDirOuter.xyz);
+    float3 right = normalize(cross(float3(0.0, 0.0, 1.0), forward));
+    float3 up = normalize(cross(forward, right));
+    float3 toPoint = worldPos - spotPosInner.xyz;
+    float forwardDistance = dot(toPoint, forward);
+    float coneTan = tan(34.0 * PI / 180.0);
+    float2 uv;
+    uv.x = dot(toPoint, right) / max(0.05, forwardDistance * coneTan) * 0.5 + 0.5;
+    uv.y = -dot(toPoint, up) / max(0.05, forwardDistance * coneTan) * 0.5 + 0.5;
+    float depth = (forwardDistance - 0.05) / 6.5;
+    float bias = 0.004 + max(0.001, (1.0 - saturate(dot(normal, lightDir))) * 0.006);
+    return sampleShadowTile(3, uv, depth, bias, 0.30);
 }
 
 float3 pointLightRadiance(float3 worldPos, float3 normal, float3 view, float roughness, float3 f0) {
@@ -128,6 +219,7 @@ float3 pointLightRadiance(float3 worldPos, float3 normal, float3 view, float rou
     float3 toLight = pointPosRadius.xyz - worldPos;
     float distanceToLight = length(toLight);
     float3 lightDir = toLight / max(distanceToLight, 0.001);
+    float shadow = pointShadow(worldPos, normal, lightDir);
     float attenuation = saturate(1.0 - distanceToLight / max(pointPosRadius.w, 0.001));
     attenuation *= attenuation;
     float ndotl = saturate(dot(normal, lightDir));
@@ -135,7 +227,7 @@ float3 pointLightRadiance(float3 worldPos, float3 normal, float3 view, float rou
     float specPower = max(4.0, (1.0 - roughness) * 96.0);
     float specular = pow(saturate(dot(normal, halfVector)), specPower) * (1.0 - roughness * 0.65);
     float3 fresnel = fresnelSchlick(max(0.04, dot(normal, view)), f0);
-    return pointColorIntensity.rgb * pointColorIntensity.w * attenuation * (ndotl.xxx + fresnel * specular);
+    return pointColorIntensity.rgb * pointColorIntensity.w * attenuation * shadow * (ndotl.xxx + fresnel * specular);
 }
 
 float3 spotLightRadiance(float3 worldPos, float3 normal, float3 view, float roughness, float3 f0) {
@@ -145,6 +237,7 @@ float3 spotLightRadiance(float3 worldPos, float3 normal, float3 view, float roug
     float3 toLight = spotPosInner.xyz - worldPos;
     float distanceToLight = length(toLight);
     float3 lightDir = toLight / max(distanceToLight, 0.001);
+    float shadow = spotShadow(worldPos, normal, lightDir);
     float cone = dot(-lightDir, normalize(spotDirOuter.xyz));
     float coneFade = saturate((cone - spotDirOuter.w) / max(0.001, spotPosInner.w - spotDirOuter.w));
     coneFade *= coneFade;
@@ -155,7 +248,7 @@ float3 spotLightRadiance(float3 worldPos, float3 normal, float3 view, float roug
     float specPower = max(4.0, (1.0 - roughness) * 128.0);
     float specular = pow(saturate(dot(normal, halfVector)), specPower) * (1.0 - roughness * 0.55);
     float3 fresnel = fresnelSchlick(max(0.04, dot(normal, view)), f0);
-    return spotColorIntensity.rgb * spotColorIntensity.w * coneFade * attenuation * (ndotl.xxx + fresnel * specular);
+    return spotColorIntensity.rgb * spotColorIntensity.w * coneFade * attenuation * shadow * (ndotl.xxx + fresnel * specular);
 }
 
 float albedoHeight(float2 uv, float lod) {

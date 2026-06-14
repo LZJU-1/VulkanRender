@@ -13,11 +13,10 @@
 - Static glTF/GLB mesh import.
 - v2 GPU material path for the official `materials.s72` demo, including material families, texture descriptors, normal/POM detail, IBL, MSAA, mipmaps, anisotropic filtering, mesh tangents, and tone mapping.
 - Native Vulkan GPU preview window for mesh scenes: Win32 surface, swapchain, graphics pipeline, depth buffer, vertex buffer upload, uniform camera, and roaming controls.
-- v3 first GPU shadow/light path: directional shadow map, point/sphere-style local light, and spot light in the realtime preview.
+- v3 GPU shadow/light path: depth shadow atlas with directional cascades, spot shadow map, point/sphere omni shadow faces, and realtime PBR lighting.
 
 ## Next Engineering Steps
 
-1. Complete v3 spot shadow maps, point/sphere omni shadow maps, and directional cascades.
-2. Add G-buffer image resources and deferred composition for v4.
-3. Implement RT resources: BLAS/TLAS build inputs, scratch buffers, shader binding table, and ray tracing dispatch.
-4. Port selected offline path tracing material/sampling ideas into realtime-friendly shader code.
+1. Add G-buffer image resources and deferred composition for v4.
+2. Implement RT resources: BLAS/TLAS build inputs, scratch buffers, shader binding table, and ray tracing dispatch.
+3. Port selected offline path tracing material/sampling ideas into realtime-friendly shader code.

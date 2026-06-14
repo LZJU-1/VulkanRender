@@ -160,7 +160,27 @@ C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --pro
   - `shadow_depth.vert.hlsl` shadow projection shader
   - 3x3 PCF filtering and slope-style bias in the material shader
 - Added point/sphere-style local light contribution and spot light contribution to the v3 material shader.
-- Added `docs/V3_FEATURES.md` with implementation notes, asset requirements, demo command, and current v3 alignment limits.
+- Added `docs/V3_FEATURES.md` with implementation notes, asset requirements, demo command, and current v3 status.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v3 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
+```
+
+## 2026-06-14 - V3 Shadow Atlas Alignment
+
+- Replaced the single directional shadow map with a unified v3 shadow atlas:
+  - 4x3 atlas layout
+  - 1024x1024 per shadow tile
+  - 3 directional cascade tiles
+  - 1 spot light shadow tile
+  - 6 point/sphere omni shadow face tiles
+- Updated the shadow pass to render each tile with its own viewport/scissor while sharing the same depth-only render pass and pipeline.
+- Updated `shadow_depth.vert.hlsl` to select directional cascade, spot, or point face projection through `SV_InstanceID`.
+- Updated the v3 material shader to sample the shadow atlas for directional cascades, spot shadows, and point/sphere omni shadows.
+- Updated `docs/V3_FEATURES.md`, `docs/RENDER_ME.md`, and `docs/ROADMAP.md` to reflect v3 shadow-map feature alignment.
 
 Validation commands:
 
