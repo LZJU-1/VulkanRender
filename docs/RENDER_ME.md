@@ -6,7 +6,7 @@ This is the project-facing version map for testing and demos.
 
 Target behavior: load a scene, advance animation time, cull objects against the camera frustum, and draw simple forward materials.
 
-Current implementation: profile and pass graph are wired; scene loading is represented as a deterministic pass boundary.
+Current implementation: see `docs/V1_FEATURES.md` for the feature-by-feature implementation, asset requirements, and demo commands.
 
 Smoke render:
 
@@ -41,7 +41,7 @@ build\nmake-debug\src\vulkan_render.exe --profile v1 --render --scene path\to\mo
 
 Target behavior: add skybox rendering, tone mapping, normal mapping, displacement mapping, PBR material parameters, and environment map precomputation.
 
-Current implementation: `--profile v2` has a software validation path that loads the official Scene'72 `materials.s72` demo, reads `MATERIAL` and `ENVIRONMENT` records, consumes `NORMAL` and `TEXCOORD` attributes, samples PNG textures through `stb_image`, draws an environment-map skybox approximation, applies tone mapping, and shades simple/environment/mirror/lambertian/PBR material families. This is intentionally CPU-backed for quick visual regression before the real Vulkan PBR pipeline is filled in.
+Current implementation: see `docs/V2_FEATURES.md` for the feature-by-feature implementation, asset requirements, and demo commands.
 
 Official materials render:
 
@@ -55,11 +55,11 @@ Realtime preview:
 build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
 ```
 
-Preview path: this command now opens the native Vulkan GPU preview window. Scene data is loaded on the CPU once, uploaded to a Vulkan vertex buffer, and rasterized by the GPU through a swapchain graphics pipeline. The legacy CPU preview remains only as a fallback for the old `.scene` cube smoke format.
+Preview path: this command opens the native Vulkan GPU preview window. Scene data is loaded on the CPU, uploaded to Vulkan buffers/textures, and rasterized by the GPU through the swapchain graphics pipeline. The legacy CPU preview remains only as a fallback for the old `.scene` cube smoke format.
 
 Preview controls: press `R` to toggle free camera roaming, `WASD` to move, `Q/E` or `Ctrl/Space` for vertical movement, arrow keys or `IJKL` to look, `Shift` to move faster, and `Esc` to close the window.
 
-Known v2 GPU limits: the first Vulkan path draws vertex/material colors and depth-tested mesh geometry. Texture descriptors, skybox cubemap sampling, normal/displacement evaluation, and full PBR fragment shading remain the next GPU migration steps.
+Implementation note: headless `--render` remains a software validation path for BMP output. Realtime v2 material validation should use `--preview`.
 
 ## v3 Lights And Shadows
 

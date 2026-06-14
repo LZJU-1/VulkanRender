@@ -40,11 +40,11 @@ flowchart TD
 
 ## v2 Validation Path
 
-The v2 profile now has a concrete software path for the official Scene'72 `materials.s72` asset. It parses material families, normal and UV attributes, PNG albedo/roughness textures, and the Scene'72 environment texture. The render graph still describes the intended Vulkan shape (`environment.ibl-precompute`, `forward.pbr-material`, `skybox.draw`, `post.tone-map`), while the CPU path provides stable output for testing loader semantics and material interpretation.
+The v2 profile uses the official Scene'72 `materials.s72` asset as its primary material validation scene. It parses material families, normal/UV/tangent attributes, PNG texture references, and the Scene'72 environment texture. The render graph shape is `environment.ibl-precompute`, `forward.pbr-material`, `skybox.draw`, and `post.tone-map`.
 
-The realtime preview now uses a Vulkan GPU path: geometry is imported once, uploaded to a vertex buffer, and drawn through a swapchain graphics pipeline. The CPU renderer remains useful for BMP regression output and debugging, but it is no longer the intended realtime path.
+The realtime preview uses a Vulkan GPU path: geometry is imported on the CPU, uploaded to vertex buffers and sampled images, then drawn through a swapchain graphics pipeline with depth, MSAA, material descriptor sets, skybox cubemap sampling, PBR/IBL shading, normal mapping, and POM displacement. The CPU renderer remains useful for BMP regression output and debugging, but it is no longer the intended realtime path.
 
-Current v2 gaps are deliberately documented: texture descriptor sampling, true cubemap IBL, normal/displacement mapping, and full glTF PBR texture support are still being migrated onto GPU shaders.
+Current v2 limits are documented in `docs/V2_FEATURES.md`: full glTF PBR texture workflow, glTF animation/skinning, and advanced temporal antialiasing are not part of the v2 alignment target yet.
 
 ## Realtime Ray Tracing Plan
 
