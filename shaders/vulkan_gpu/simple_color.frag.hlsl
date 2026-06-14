@@ -21,12 +21,13 @@ cbuffer Camera : register(b0) {
 [[vk::binding(3, 0)]] Texture2D<float4> roughnessTexture;
 [[vk::binding(4, 0)]] Texture2D<float4> displacementTexture;
 [[vk::binding(5, 0)]] SamplerState materialSampler;
-[[vk::binding(7, 0)]] Texture2D<float4> environmentDiffuseTexture;
-[[vk::binding(8, 0)]] Texture2D<float4> environmentSpecularR0Texture;
-[[vk::binding(9, 0)]] Texture2D<float4> environmentSpecularR1Texture;
-[[vk::binding(10, 0)]] Texture2D<float4> environmentSpecularR2Texture;
-[[vk::binding(11, 0)]] Texture2D<float4> environmentSpecularR3Texture;
-[[vk::binding(12, 0)]] Texture2D<float4> environmentSpecularR4Texture;
+[[vk::binding(7, 0)]] TextureCube<float4> environmentDiffuseTexture;
+[[vk::binding(8, 0)]] TextureCube<float4> environmentSpecularR0Texture;
+[[vk::binding(9, 0)]] TextureCube<float4> environmentSpecularR1Texture;
+[[vk::binding(10, 0)]] TextureCube<float4> environmentSpecularR2Texture;
+[[vk::binding(11, 0)]] TextureCube<float4> environmentSpecularR3Texture;
+[[vk::binding(12, 0)]] TextureCube<float4> environmentSpecularR4Texture;
+[[vk::binding(13, 0)]] Texture2D<float2> environmentBrdfTexture;
 
 static const float PI = 3.14159265;
 
@@ -50,64 +51,16 @@ float3 fresnelSchlick(float cosTheta, float3 f0) {
     return f0 + (1.0.xxx - f0) * pow(1.0 - saturate(cosTheta), 5.0);
 }
 
-float3 unpackRgbe(float4 rgbe) {
-    float exponent = rgbe.a * 255.0 - 128.0;
-    return exp2(exponent) * (rgbe.rgb * 255.0 + 0.5) / 256.0;
-}
-
-float2 cubeStripUv(float3 dir) {
-    dir = normalize(dir);
-    float3 absDir = abs(dir);
-    float face = 0.0;
-    float2 uv = 0.5.xx;
-
-    if (absDir.x >= absDir.y && absDir.x >= absDir.z) {
-        float ma = absDir.x;
-        if (dir.x >= 0.0) {
-            face = 0.0;
-            uv = float2(-dir.z, -dir.y) / ma;
-        } else {
-            face = 1.0;
-            uv = float2(dir.z, -dir.y) / ma;
-        }
-    } else if (absDir.y >= absDir.z) {
-        float ma = absDir.y;
-        if (dir.y >= 0.0) {
-            face = 2.0;
-            uv = float2(dir.x, dir.z) / ma;
-        } else {
-            face = 3.0;
-            uv = float2(dir.x, -dir.z) / ma;
-        }
-    } else {
-        float ma = absDir.z;
-        if (dir.z >= 0.0) {
-            face = 4.0;
-            uv = float2(dir.x, -dir.y) / ma;
-        } else {
-            face = 5.0;
-            uv = float2(-dir.x, -dir.y) / ma;
-        }
-    }
-
-    uv = uv * 0.5 + 0.5;
-    return float2(uv.x, (face + uv.y) / 6.0);
-}
-
-float3 sampleEnvironmentCubeStrip(Texture2D<float4> textureMap, float3 dir) {
-    return unpackRgbe(textureMap.SampleLevel(materialSampler, cubeStripUv(dir), 0.0));
-}
-
 float3 sampleDiffuseIrradiance(float3 normal) {
-    return sampleEnvironmentCubeStrip(environmentDiffuseTexture, normal);
+    return environmentDiffuseTexture.SampleLevel(materialSampler, normal, 0.0).rgb;
 }
 
 float3 sampleSpecularLevel(float3 reflected, uint level) {
-    if (level == 0) return sampleEnvironmentCubeStrip(environmentSpecularR0Texture, reflected);
-    if (level == 1) return sampleEnvironmentCubeStrip(environmentSpecularR1Texture, reflected);
-    if (level == 2) return sampleEnvironmentCubeStrip(environmentSpecularR2Texture, reflected);
-    if (level == 3) return sampleEnvironmentCubeStrip(environmentSpecularR3Texture, reflected);
-    return sampleEnvironmentCubeStrip(environmentSpecularR4Texture, reflected);
+    if (level == 0) return environmentSpecularR0Texture.SampleLevel(materialSampler, reflected, 0.0).rgb;
+    if (level == 1) return environmentSpecularR1Texture.SampleLevel(materialSampler, reflected, 0.0).rgb;
+    if (level == 2) return environmentSpecularR2Texture.SampleLevel(materialSampler, reflected, 0.0).rgb;
+    if (level == 3) return environmentSpecularR3Texture.SampleLevel(materialSampler, reflected, 0.0).rgb;
+    return environmentSpecularR4Texture.SampleLevel(materialSampler, reflected, 0.0).rgb;
 }
 
 float3 samplePrefilteredSpecular(float3 reflected, float roughness) {
@@ -118,16 +71,38 @@ float3 samplePrefilteredSpecular(float3 reflected, float roughness) {
 }
 
 float2 environmentBrdf(float ndotv, float roughness) {
-    float4 c0 = float4(-1.0, -0.0275, -0.572, 0.022);
-    float4 c1 = float4(1.0, 0.0425, 1.04, -0.04);
-    float4 r = roughness * c0 + c1;
-    float a004 = min(r.x * r.x, exp2(-9.28 * ndotv)) * r.x + r.y;
-    return float2(-1.04, 1.04) * a004 + r.zw;
+    return environmentBrdfTexture.SampleLevel(materialSampler, float2(saturate(ndotv), saturate(roughness)), 0.0);
 }
 
 float albedoHeight(float2 uv) {
     float3 color = displacementTexture.Sample(materialSampler, uv).rgb;
     return dot(color, float3(0.2126, 0.7152, 0.0722));
+}
+
+float2 parallaxOcclusionMapping(float2 uv, float3 tangentViewDir) {
+    const float heightScale = 0.05;
+    const float minLayers = 32.0;
+    const float maxLayers = 128.0;
+    float numLayers = lerp(maxLayers, minLayers, abs(tangentViewDir.z));
+    float layerDepth = 1.0 / numLayers;
+    float currentLayerDepth = 0.0;
+    float2 deltaUv = tangentViewDir.xy * heightScale / max(0.08, tangentViewDir.z * numLayers);
+    deltaUv.y = -deltaUv.y;
+
+    float2 currentUv = uv;
+    float currentDepth = displacementTexture.Sample(materialSampler, currentUv).r;
+    [loop]
+    while (currentDepth > currentLayerDepth && currentLayerDepth < 1.0) {
+        currentLayerDepth += layerDepth;
+        currentUv -= deltaUv;
+        currentDepth = displacementTexture.Sample(materialSampler, currentUv).r;
+    }
+
+    float2 previousUv = currentUv + deltaUv;
+    float nextDepth = currentDepth - currentLayerDepth;
+    float previousDepth = displacementTexture.Sample(materialSampler, previousUv).r - currentLayerDepth + layerDepth;
+    float weight = nextDepth / max(1e-5, nextDepth - previousDepth);
+    return lerp(currentUv, previousUv, saturate(weight));
 }
 
 float4 main(FragmentIn input) : SV_Target0 {
@@ -148,9 +123,11 @@ float4 main(FragmentIn input) : SV_Target0 {
         float3 tangent = normalize((dpdx * duvdy.y - dpdy * duvdx.y) * invDet);
         float3 bitangent = normalize((-dpdx * duvdy.x + dpdy * duvdx.x) * invDet);
 
-        float height = albedoHeight(uv);
         float3 viewTangent = float3(dot(view, tangent), dot(view, bitangent), max(0.22, dot(view, normal)));
-        uv += viewTangent.xy * ((height - 0.5) * 0.035 / viewTangent.z);
+        uv = parallaxOcclusionMapping(uv, normalize(viewTangent));
+        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+            discard;
+        }
 
         uint texWidth = 1;
         uint texHeight = 1;

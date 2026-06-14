@@ -178,6 +178,12 @@ C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --pro
 - Updated the PBR fragment shader to use diffuse irradiance, roughness-blended prefiltered specular radiance, and an environment BRDF approximation.
 - Updated the sky pass to sample the full-resolution background environment rather than a prefiltered GGX map.
 - Fixed Scene'72 cube/RGBE environment sampling in the Vulkan preview shaders; the Ox Bridge images are vertical cubemap strips, not lat-long panoramas.
+- Reworked the environment path to match Renderer72 more closely:
+  - Scene'72 RGBE cube strips are unpacked on the CPU to `R32G32B32A32_SFLOAT`.
+  - Background, diffuse irradiance, and roughness-prefiltered specular maps are uploaded as `VK_IMAGE_VIEW_TYPE_CUBE`.
+  - Sky and PBR shaders now sample `TextureCube` resources instead of manually sampling a 2D strip.
+  - The PBR shader now samples a generated split-sum environment BRDF LUT.
+  - Displacement mapping now uses parallax occlusion mapping with iterative layer stepping and UV discard.
 
 Validation commands:
 

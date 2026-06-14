@@ -33,7 +33,8 @@ constexpr float kPi = 3.14159265358979323846f;
 constexpr int kWindowTimer = 1;
 constexpr std::uint32_t kMaterialTextureCount = 4;
 constexpr std::uint32_t kEnvironmentSpecularTextureCount = 5;
-constexpr std::uint32_t kTextureCount = kMaterialTextureCount + 2 + kEnvironmentSpecularTextureCount;
+constexpr std::uint32_t kTextureCount = kMaterialTextureCount + 2 + kEnvironmentSpecularTextureCount + 1;
+constexpr std::uint32_t kEnvironmentBrdfTextureIndex = kTextureCount - 1;
 
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
 PFN_vkCreateInstance vkCreateInstance = nullptr;
@@ -158,6 +159,18 @@ struct TextureResource {
     std::uint32_t mipLevels = 1;
 };
 
+struct RgbaFloat {
+    float r = 0.0f;
+    float g = 0.0f;
+    float b = 0.0f;
+    float a = 1.0f;
+};
+
+struct RgFloat {
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
 Vec3 operator+(Vec3 a, Vec3 b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
 Vec3 operator-(Vec3 a, Vec3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
 Vec3 operator*(Vec3 a, float s) { return {a.x * s, a.y * s, a.z * s}; }
@@ -180,6 +193,32 @@ std::uint32_t sampleCountValue(VkSampleCountFlagBits samples) {
     }
 }
 
+RgbaFloat unpackRgbe(const stbi_uc* rgbe) {
+    if (rgbe[3] == 0) {
+        return {};
+    }
+    const float scale = std::ldexp(1.0f, static_cast<int>(rgbe[3]) - 128) / 256.0f;
+    return {
+        (static_cast<float>(rgbe[0]) + 0.5f) * scale,
+        (static_cast<float>(rgbe[1]) + 0.5f) * scale,
+        (static_cast<float>(rgbe[2]) + 0.5f) * scale,
+        1.0f,
+    };
+}
+
+float radicalInverseVdc(std::uint32_t bits) {
+    bits = (bits << 16u) | (bits >> 16u);
+    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+    return static_cast<float>(bits) * 2.3283064365386963e-10f;
+}
+
+std::array<float, 2> hammersley(std::uint32_t i, std::uint32_t count) {
+    return {static_cast<float>(i) / static_cast<float>(count), radicalInverseVdc(i)};
+}
+
 float dot(Vec3 a, Vec3 b) {
     return a.x * b.x + a.y * b.y + a.z * b.z;
 }
@@ -198,6 +237,48 @@ Vec3 normalize(Vec3 v) {
         return {};
     }
     return v * (1.0f / len);
+}
+
+Vec3 importanceSampleGgx(float u1, float u2, float roughness) {
+    const float a = roughness * roughness;
+    const float phi = 2.0f * kPi * u1;
+    const float cosTheta = std::sqrt((1.0f - u2) / (1.0f + (a * a - 1.0f) * u2));
+    const float sinTheta = std::sqrt(std::max(0.0f, 1.0f - cosTheta * cosTheta));
+    return normalize({std::cos(phi) * sinTheta, std::sin(phi) * sinTheta, cosTheta});
+}
+
+float geometrySchlickGgx(float ndotv, float roughness) {
+    const float a = roughness;
+    const float k = (a * a) * 0.5f;
+    return ndotv / (ndotv * (1.0f - k) + k);
+}
+
+float geometrySmith(float ndotv, float ndotl, float roughness) {
+    return geometrySchlickGgx(ndotv, roughness) * geometrySchlickGgx(ndotl, roughness);
+}
+
+RgFloat integrateEnvironmentBrdf(float ndotv, float roughness) {
+    const Vec3 view{std::sqrt(std::max(0.0f, 1.0f - ndotv * ndotv)), 0.0f, ndotv};
+    float scale = 0.0f;
+    float bias = 0.0f;
+    constexpr std::uint32_t kSamples = 512;
+
+    for (std::uint32_t i = 0; i < kSamples; ++i) {
+        const auto xi = hammersley(i, kSamples);
+        const Vec3 halfVector = importanceSampleGgx(xi[0], xi[1], roughness);
+        const Vec3 light = normalize(halfVector * (2.0f * dot(view, halfVector)) - view);
+        const float ndotl = std::max(light.z, 0.0f);
+        const float ndoth = std::max(halfVector.z, 0.0f);
+        const float vdoth = std::max(dot(view, halfVector), 0.0f);
+        if (ndotl > 0.0f) {
+            const float g = geometrySmith(ndotv, ndotl, roughness);
+            const float gVis = (g * vdoth) / std::max(0.0001f, ndoth * ndotv);
+            const float fc = std::pow(1.0f - vdoth, 5.0f);
+            scale += (1.0f - fc) * gVis;
+            bias += fc * gVis;
+        }
+    }
+    return {scale / static_cast<float>(kSamples), bias / static_cast<float>(kSamples)};
 }
 
 Vec3 eyeOf(const V1CameraSettings& camera) {
@@ -790,17 +871,24 @@ private:
         }
     }
 
-    VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspect, std::uint32_t mipLevels = 1) {
+    VkImageView createImageView(
+        VkImage image,
+        VkFormat format,
+        VkImageAspectFlags aspect,
+        std::uint32_t mipLevels = 1,
+        VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D,
+        std::uint32_t layers = 1
+    ) {
         VkImageViewCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         createInfo.image = image;
-        createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        createInfo.viewType = viewType;
         createInfo.format = format;
         createInfo.subresourceRange.aspectMask = aspect;
         createInfo.subresourceRange.baseMipLevel = 0;
         createInfo.subresourceRange.levelCount = mipLevels;
         createInfo.subresourceRange.baseArrayLayer = 0;
-        createInfo.subresourceRange.layerCount = 1;
+        createInfo.subresourceRange.layerCount = layers;
         VkImageView view = VK_NULL_HANDLE;
         require(vkCreateImageView(device_, &createInfo, nullptr, &view), "vkCreateImageView");
         return view;
@@ -1242,16 +1330,191 @@ private:
         texture.view = createImageView(texture.image, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, texture.mipLevels);
     }
 
+    void createRgbeCubeTexture(const std::filesystem::path& path, const RgbaFloat& fallback, TextureResource& texture) {
+        int width = 1;
+        int height = 6;
+        int channels = 4;
+        stbi_uc* loaded = nullptr;
+        std::vector<RgbaFloat> pixels;
+
+        if (!path.empty()) {
+            loaded = stbi_load(path.string().c_str(), &width, &height, &channels, 4);
+            if (!loaded) {
+                previewLog("createTextureResources: failed to load cube " + path.string());
+            }
+        }
+
+        if (loaded && width > 0 && height == width * 6) {
+            pixels.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height));
+            for (std::size_t i = 0; i < pixels.size(); ++i) {
+                pixels[i] = unpackRgbe(loaded + i * 4u);
+            }
+        } else {
+            if (loaded) {
+                previewLog("createTextureResources: cube texture must be a vertical 6-face strip: " + path.string());
+                stbi_image_free(loaded);
+                loaded = nullptr;
+            }
+            width = 1;
+            height = 6;
+            pixels.assign(6, fallback);
+        }
+        if (loaded) {
+            stbi_image_free(loaded);
+        }
+
+        const std::uint32_t faceSize = static_cast<std::uint32_t>(width);
+        const VkDeviceSize imageBytes = static_cast<VkDeviceSize>(pixels.size()) * sizeof(RgbaFloat);
+        VkBuffer stagingBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+        createBuffer(imageBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, stagingBuffer, stagingMemory);
+        void* mapped = nullptr;
+        require(vkMapMemory(device_, stagingMemory, 0, imageBytes, 0, &mapped), "vkMapMemory(cube staging)");
+        std::memcpy(mapped, pixels.data(), static_cast<std::size_t>(imageBytes));
+        vkUnmapMemory(device_, stagingMemory);
+
+        VkImageCreateInfo image{};
+        image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        image.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+        image.imageType = VK_IMAGE_TYPE_2D;
+        image.extent = {faceSize, faceSize, 1};
+        image.mipLevels = 1;
+        image.arrayLayers = 6;
+        image.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+        image.tiling = VK_IMAGE_TILING_OPTIMAL;
+        image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        image.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        image.samples = VK_SAMPLE_COUNT_1_BIT;
+        image.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        require(vkCreateImage(device_, &image, nullptr, &texture.image), "vkCreateImage(cube texture)");
+
+        VkMemoryRequirements requirements{};
+        vkGetImageMemoryRequirements(device_, texture.image, &requirements);
+        VkMemoryAllocateInfo allocate{};
+        allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocate.allocationSize = requirements.size;
+        allocate.memoryTypeIndex = findMemoryType(physicalDevice_, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        require(vkAllocateMemory(device_, &allocate, nullptr, &texture.memory), "vkAllocateMemory(cube texture)");
+        require(vkBindImageMemory(device_, texture.image, texture.memory, 0), "vkBindImageMemory(cube texture)");
+
+        VkCommandBuffer commandBuffer = beginOneTimeCommands();
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = texture.image;
+        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrier.subresourceRange.baseMipLevel = 0;
+        barrier.subresourceRange.levelCount = 1;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount = 6;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+        VkBufferImageCopy copy{};
+        copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        copy.imageSubresource.mipLevel = 0;
+        copy.imageSubresource.baseArrayLayer = 0;
+        copy.imageSubresource.layerCount = 6;
+        copy.imageExtent = {faceSize, faceSize, 1};
+        vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+        endOneTimeCommands(commandBuffer);
+
+        vkDestroyBuffer(device_, stagingBuffer, nullptr);
+        vkFreeMemory(device_, stagingMemory, nullptr);
+
+        texture.mipLevels = 1;
+        texture.view = createImageView(
+            texture.image,
+            VK_FORMAT_R32G32B32A32_SFLOAT,
+            VK_IMAGE_ASPECT_COLOR_BIT,
+            1,
+            VK_IMAGE_VIEW_TYPE_CUBE,
+            6
+        );
+    }
+
+    void createEnvironmentBrdfTexture(TextureResource& texture) {
+        constexpr std::uint32_t size = 128;
+        std::vector<RgFloat> pixels(static_cast<std::size_t>(size) * static_cast<std::size_t>(size));
+        for (std::uint32_t y = 0; y < size; ++y) {
+            for (std::uint32_t x = 0; x < size; ++x) {
+                const float ndotv = (static_cast<float>(x) + 0.5f) / static_cast<float>(size);
+                const float roughness = (static_cast<float>(y) + 0.5f) / static_cast<float>(size);
+                pixels[static_cast<std::size_t>(y) * size + x] = integrateEnvironmentBrdf(ndotv, roughness);
+            }
+        }
+
+        const VkDeviceSize imageBytes = static_cast<VkDeviceSize>(pixels.size()) * sizeof(RgFloat);
+        VkBuffer stagingBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+        createBuffer(imageBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, stagingBuffer, stagingMemory);
+        void* mapped = nullptr;
+        require(vkMapMemory(device_, stagingMemory, 0, imageBytes, 0, &mapped), "vkMapMemory(brdf staging)");
+        std::memcpy(mapped, pixels.data(), static_cast<std::size_t>(imageBytes));
+        vkUnmapMemory(device_, stagingMemory);
+
+        VkImageCreateInfo image{};
+        image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        image.imageType = VK_IMAGE_TYPE_2D;
+        image.extent = {size, size, 1};
+        image.mipLevels = 1;
+        image.arrayLayers = 1;
+        image.format = VK_FORMAT_R32G32_SFLOAT;
+        image.tiling = VK_IMAGE_TILING_OPTIMAL;
+        image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        image.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        image.samples = VK_SAMPLE_COUNT_1_BIT;
+        image.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        require(vkCreateImage(device_, &image, nullptr, &texture.image), "vkCreateImage(environment brdf)");
+
+        VkMemoryRequirements requirements{};
+        vkGetImageMemoryRequirements(device_, texture.image, &requirements);
+        VkMemoryAllocateInfo allocate{};
+        allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocate.allocationSize = requirements.size;
+        allocate.memoryTypeIndex = findMemoryType(physicalDevice_, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        require(vkAllocateMemory(device_, &allocate, nullptr, &texture.memory), "vkAllocateMemory(environment brdf)");
+        require(vkBindImageMemory(device_, texture.image, texture.memory, 0), "vkBindImageMemory(environment brdf)");
+
+        VkCommandBuffer commandBuffer = beginOneTimeCommands();
+        transitionImage(commandBuffer, texture.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        copy.imageSubresource.mipLevel = 0;
+        copy.imageSubresource.baseArrayLayer = 0;
+        copy.imageSubresource.layerCount = 1;
+        copy.imageExtent = {size, size, 1};
+        vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        transitionImage(commandBuffer, texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        endOneTimeCommands(commandBuffer);
+
+        vkDestroyBuffer(device_, stagingBuffer, nullptr);
+        vkFreeMemory(device_, stagingMemory, nullptr);
+
+        texture.mipLevels = 1;
+        texture.view = createImageView(texture.image, VK_FORMAT_R32G32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT);
+    }
+
     void createTextureResources() {
         createSampledTexture(geometry_.albedoTexturePath, {255, 255, 255, 255}, textures_[0]);
         createSampledTexture(geometry_.normalTexturePath, {128, 128, 255, 255}, textures_[1]);
         createSampledTexture(geometry_.roughnessTexturePath, {178, 178, 178, 255}, textures_[2]);
         createSampledTexture(geometry_.displacementTexturePath, {128, 128, 128, 255}, textures_[3]);
-        createSampledTexture(geometry_.environmentBackgroundTexturePath, {90, 120, 180, 255}, textures_[4]);
-        createSampledTexture(geometry_.environmentDiffuseTexturePath, {90, 120, 180, 255}, textures_[5]);
+        createRgbeCubeTexture(geometry_.environmentBackgroundTexturePath, {0.22f, 0.34f, 0.55f, 1.0f}, textures_[4]);
+        createRgbeCubeTexture(geometry_.environmentDiffuseTexturePath, {0.22f, 0.34f, 0.55f, 1.0f}, textures_[5]);
         for (std::uint32_t i = 0; i < kEnvironmentSpecularTextureCount; ++i) {
-            createSampledTexture(geometry_.environmentSpecularTexturePaths[i], {90, 120, 180, 255}, textures_[6 + i]);
+            createRgbeCubeTexture(geometry_.environmentSpecularTexturePaths[i], {0.22f, 0.34f, 0.55f, 1.0f}, textures_[6 + i]);
         }
+        createEnvironmentBrdfTexture(textures_[kEnvironmentBrdfTextureIndex]);
         maxTextureMipLevels_ = 1;
         for (const TextureResource& texture : textures_) {
             maxTextureMipLevels_ = std::max(maxTextureMipLevels_, texture.mipLevels);
@@ -1279,7 +1542,7 @@ private:
         cameraBinding.descriptorCount = 1;
         cameraBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        std::array<VkDescriptorSetLayoutBinding, 13> bindings{};
+        std::array<VkDescriptorSetLayoutBinding, kTextureCount + 2> bindings{};
         bindings[0] = cameraBinding;
         for (std::uint32_t i = 0; i < kMaterialTextureCount; ++i) {
             bindings[1 + i].binding = 1 + i;
@@ -1333,7 +1596,7 @@ private:
         VkDescriptorImageInfo samplerInfo{};
         samplerInfo.sampler = textureSampler_;
 
-        std::array<VkWriteDescriptorSet, 13> writes{};
+        std::array<VkWriteDescriptorSet, kTextureCount + 2> writes{};
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet = descriptorSet_;
         writes[0].dstBinding = 0;
