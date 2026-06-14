@@ -28,6 +28,16 @@ cbuffer Camera : register(b0) {
     float4 rightFar;
     float4 upTanHalf;
     float4 forwardAspect;
+    float4 shadowRightExtent;
+    float4 shadowUpNear;
+    float4 shadowForwardFar;
+    float4 shadowCenterBias;
+    float4 pointPosRadius;
+    float4 pointColorIntensity;
+    float4 spotPosInner;
+    float4 spotDirOuter;
+    float4 spotColorIntensity;
+    float4 v3Flags;
 };
 
 VertexOut main(VertexIn input) {

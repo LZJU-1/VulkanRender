@@ -65,7 +65,13 @@ Implementation note: headless `--render` remains a software validation path for 
 
 Target behavior: support spot lights with perspective shadow maps, sphere lights with omnidirectional shadow maps, and directional lights with cascaded shadow maps.
 
-Current implementation: shadow and light pass slots are present.
+Current implementation: see `docs/V3_FEATURES.md`. The current GPU preview has a real directional shadow-map pass plus point/sphere-style and spot local lights. Spot shadow maps, point omni shadows, and directional cascades remain the next v3 alignment steps.
+
+Realtime preview:
+
+```powershell
+build\nmake-debug\src\vulkan_render.exe --profile v3 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
+```
 
 ## v4 Deferred And SSAO
 

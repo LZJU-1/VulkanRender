@@ -150,6 +150,25 @@ scripts\build_msvc.bat
 C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
 ```
 
+## 2026-06-14 - V3 Directional Shadow And Local Lights
+
+- Enabled `--profile v3` for the Vulkan GPU preview path, reusing the official Scene'72 `materials.s72` material scene.
+- Added a v3 settings flag so v3 can keep the v2 PBR/IBL material path while enabling shadow/light shader work.
+- Added a 2048x2048 directional shadow map:
+  - depth-only Vulkan render pass
+  - depth texture sampled by the main material shader
+  - `shadow_depth.vert.hlsl` shadow projection shader
+  - 3x3 PCF filtering and slope-style bias in the material shader
+- Added point/sphere-style local light contribution and spot light contribution to the v3 material shader.
+- Added `docs/V3_FEATURES.md` with implementation notes, asset requirements, demo command, and current v3 alignment limits.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v3 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
+```
+
 ## 2026-06-14 - V2 MSAA And Texture Filtering
 
 - Added GPU MSAA to the Vulkan preview path.

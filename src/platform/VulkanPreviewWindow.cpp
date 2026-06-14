@@ -38,6 +38,8 @@ constexpr std::uint32_t kEnvironmentBackgroundTexture = 0;
 constexpr std::uint32_t kEnvironmentDiffuseTexture = 1;
 constexpr std::uint32_t kEnvironmentSpecularTextureBase = 2;
 constexpr std::uint32_t kEnvironmentBrdfTextureIndex = kSharedTextureCount - 1;
+constexpr std::uint32_t kShadowMapSize = 2048;
+constexpr std::uint32_t kDirectionalShadowTextureBinding = 14;
 
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
 PFN_vkCreateInstance vkCreateInstance = nullptr;
@@ -146,6 +148,16 @@ struct CameraUniform {
     float rightFar[4]{};
     float upTanHalf[4]{};
     float forwardAspect[4]{};
+    float shadowRightExtent[4]{};
+    float shadowUpNear[4]{};
+    float shadowForwardFar[4]{};
+    float shadowCenterBias[4]{};
+    float pointPosRadius[4]{};
+    float pointColorIntensity[4]{};
+    float spotPosInner[4]{};
+    float spotDirOuter[4]{};
+    float spotColorIntensity[4]{};
+    float v3Flags[4]{};
 };
 
 struct QueueFamilies {
@@ -443,8 +455,8 @@ std::uint32_t findMemoryType(VkPhysicalDevice physicalDevice, std::uint32_t bits
 
 class VulkanGpuRenderer {
 public:
-    VulkanGpuRenderer(HWND hwnd, std::uint32_t width, std::uint32_t height, const GpuPreviewGeometry& geometry)
-        : hwnd_(hwnd), width_(width), height_(height), geometry_(geometry) {
+    VulkanGpuRenderer(HWND hwnd, std::uint32_t width, std::uint32_t height, const GpuPreviewGeometry& geometry, bool enableV3Shadows)
+        : hwnd_(hwnd), width_(width), height_(height), geometry_(geometry), enableV3Shadows_(enableV3Shadows) {
         previewLog("VulkanGpuRenderer: loadVulkanLibrary");
         loadVulkanLibrary();
         previewLog("VulkanGpuRenderer: createInstance");
@@ -465,8 +477,12 @@ public:
         createSwapchain();
         previewLog("VulkanGpuRenderer: createRenderPass");
         createRenderPass();
+        previewLog("VulkanGpuRenderer: createShadowRenderPass");
+        createShadowRenderPass();
         previewLog("VulkanGpuRenderer: createDepthResources");
         createDepthResources();
+        previewLog("VulkanGpuRenderer: createShadowResources");
+        createShadowResources();
         previewLog("VulkanGpuRenderer: createMsaaColorResources");
         createMsaaColorResources();
         previewLog("VulkanGpuRenderer: createFramebuffers");
@@ -498,6 +514,8 @@ public:
         if (device_ != VK_NULL_HANDLE && renderFinished_ != VK_NULL_HANDLE) vkDestroySemaphore(device_, renderFinished_, nullptr);
         if (device_ != VK_NULL_HANDLE && inFlight_ != VK_NULL_HANDLE) vkDestroyFence(device_, inFlight_, nullptr);
         if (device_ != VK_NULL_HANDLE && commandPool_ != VK_NULL_HANDLE) vkDestroyCommandPool(device_, commandPool_, nullptr);
+        if (device_ != VK_NULL_HANDLE && shadowFramebuffer_ != VK_NULL_HANDLE) vkDestroyFramebuffer(device_, shadowFramebuffer_, nullptr);
+        if (device_ != VK_NULL_HANDLE && shadowPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, shadowPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && skyPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, skyPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && pipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, pipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && pipelineLayout_ != VK_NULL_HANDLE) vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr);
@@ -527,6 +545,10 @@ public:
         if (device_ != VK_NULL_HANDLE && depthView_ != VK_NULL_HANDLE) vkDestroyImageView(device_, depthView_, nullptr);
         if (device_ != VK_NULL_HANDLE && depthImage_ != VK_NULL_HANDLE) vkDestroyImage(device_, depthImage_, nullptr);
         if (device_ != VK_NULL_HANDLE && depthMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, depthMemory_, nullptr);
+        if (device_ != VK_NULL_HANDLE && shadowDepthView_ != VK_NULL_HANDLE) vkDestroyImageView(device_, shadowDepthView_, nullptr);
+        if (device_ != VK_NULL_HANDLE && shadowDepthImage_ != VK_NULL_HANDLE) vkDestroyImage(device_, shadowDepthImage_, nullptr);
+        if (device_ != VK_NULL_HANDLE && shadowDepthMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, shadowDepthMemory_, nullptr);
+        if (device_ != VK_NULL_HANDLE && shadowRenderPass_ != VK_NULL_HANDLE) vkDestroyRenderPass(device_, shadowRenderPass_, nullptr);
         if (device_ != VK_NULL_HANDLE && renderPass_ != VK_NULL_HANDLE) vkDestroyRenderPass(device_, renderPass_, nullptr);
         for (VkImageView view : swapchainImageViews_) vkDestroyImageView(device_, view, nullptr);
         if (device_ != VK_NULL_HANDLE && swapchain_ != VK_NULL_HANDLE) vkDestroySwapchainKHR(device_, swapchain_, nullptr);
@@ -974,6 +996,52 @@ private:
         require(vkCreateRenderPass(device_, &createInfo, nullptr, &renderPass_), "vkCreateRenderPass");
     }
 
+    void createShadowRenderPass() {
+        VkAttachmentDescription depth{};
+        depth.format = VK_FORMAT_D32_SFLOAT;
+        depth.samples = VK_SAMPLE_COUNT_1_BIT;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        depth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        depth.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        depth.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkAttachmentReference depthRef{};
+        depthRef.attachment = 0;
+        depthRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.pDepthStencilAttachment = &depthRef;
+
+        std::array<VkSubpassDependency, 2> dependencies{};
+        dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+        dependencies[0].dstSubpass = 0;
+        dependencies[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        dependencies[0].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+        dependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        dependencies[0].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+        dependencies[1].srcSubpass = 0;
+        dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+        dependencies[1].srcStageMask = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        dependencies[1].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+        VkRenderPassCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        createInfo.attachmentCount = 1;
+        createInfo.pAttachments = &depth;
+        createInfo.subpassCount = 1;
+        createInfo.pSubpasses = &subpass;
+        createInfo.dependencyCount = static_cast<std::uint32_t>(dependencies.size());
+        createInfo.pDependencies = dependencies.data();
+        require(vkCreateRenderPass(device_, &createInfo, nullptr, &shadowRenderPass_), "vkCreateRenderPass(shadow)");
+    }
+
     void createDepthResources() {
         VkImageCreateInfo image{};
         image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -998,6 +1066,43 @@ private:
         require(vkAllocateMemory(device_, &allocate, nullptr, &depthMemory_), "vkAllocateMemory(depth)");
         require(vkBindImageMemory(device_, depthImage_, depthMemory_, 0), "vkBindImageMemory(depth)");
         depthView_ = createImageView(depthImage_, VK_FORMAT_D32_SFLOAT, VK_IMAGE_ASPECT_DEPTH_BIT);
+    }
+
+    void createShadowResources() {
+        VkImageCreateInfo image{};
+        image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        image.imageType = VK_IMAGE_TYPE_2D;
+        image.extent = {kShadowMapSize, kShadowMapSize, 1};
+        image.mipLevels = 1;
+        image.arrayLayers = 1;
+        image.format = VK_FORMAT_D32_SFLOAT;
+        image.tiling = VK_IMAGE_TILING_OPTIMAL;
+        image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        image.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        image.samples = VK_SAMPLE_COUNT_1_BIT;
+        image.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        require(vkCreateImage(device_, &image, nullptr, &shadowDepthImage_), "vkCreateImage(shadow depth)");
+
+        VkMemoryRequirements requirements{};
+        vkGetImageMemoryRequirements(device_, shadowDepthImage_, &requirements);
+        VkMemoryAllocateInfo allocate{};
+        allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocate.allocationSize = requirements.size;
+        allocate.memoryTypeIndex = findMemoryType(physicalDevice_, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        require(vkAllocateMemory(device_, &allocate, nullptr, &shadowDepthMemory_), "vkAllocateMemory(shadow depth)");
+        require(vkBindImageMemory(device_, shadowDepthImage_, shadowDepthMemory_, 0), "vkBindImageMemory(shadow depth)");
+        shadowDepthView_ = createImageView(shadowDepthImage_, VK_FORMAT_D32_SFLOAT, VK_IMAGE_ASPECT_DEPTH_BIT);
+
+        VkFramebufferCreateInfo framebuffer{};
+        framebuffer.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebuffer.renderPass = shadowRenderPass_;
+        framebuffer.attachmentCount = 1;
+        framebuffer.pAttachments = &shadowDepthView_;
+        framebuffer.width = kShadowMapSize;
+        framebuffer.height = kShadowMapSize;
+        framebuffer.layers = 1;
+        require(vkCreateFramebuffer(device_, &framebuffer, nullptr, &shadowFramebuffer_), "vkCreateFramebuffer(shadow)");
+
     }
 
     void createMsaaColorResources() {
@@ -1573,7 +1678,7 @@ private:
         cameraBinding.descriptorCount = 1;
         cameraBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        std::array<VkDescriptorSetLayoutBinding, kMaterialTextureCount + kSharedTextureCount + 2> bindings{};
+        std::array<VkDescriptorSetLayoutBinding, kMaterialTextureCount + kSharedTextureCount + 3> bindings{};
         bindings[0] = cameraBinding;
         for (std::uint32_t i = 0; i < kMaterialTextureCount; ++i) {
             bindings[1 + i].binding = 1 + i;
@@ -1593,6 +1698,10 @@ private:
             bindings[6 + i].descriptorCount = 1;
             bindings[6 + i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         }
+        bindings[kMaterialTextureCount + kSharedTextureCount + 2].binding = kDirectionalShadowTextureBinding;
+        bindings[kMaterialTextureCount + kSharedTextureCount + 2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        bindings[kMaterialTextureCount + kSharedTextureCount + 2].descriptorCount = 1;
+        bindings[kMaterialTextureCount + kSharedTextureCount + 2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         VkDescriptorSetLayoutCreateInfo layout{};
         layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
         layout.bindingCount = static_cast<std::uint32_t>(bindings.size());
@@ -1604,7 +1713,7 @@ private:
         poolSizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
         poolSizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLER;
         poolSizes[0].descriptorCount = static_cast<std::uint32_t>(materialTextures_.size());
-        poolSizes[1].descriptorCount = static_cast<std::uint32_t>((kMaterialTextureCount + kSharedTextureCount) * materialTextures_.size());
+        poolSizes[1].descriptorCount = static_cast<std::uint32_t>((kMaterialTextureCount + kSharedTextureCount + 1u) * materialTextures_.size());
         poolSizes[2].descriptorCount = static_cast<std::uint32_t>(materialTextures_.size());
         VkDescriptorPoolCreateInfo pool{};
         pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -1629,10 +1738,10 @@ private:
         VkDescriptorImageInfo samplerInfo{};
         samplerInfo.sampler = textureSampler_;
 
-        std::vector<std::array<VkDescriptorImageInfo, kMaterialTextureCount + kSharedTextureCount>> imageInfos(descriptorSets_.size());
-        std::vector<std::array<VkWriteDescriptorSet, kMaterialTextureCount + kSharedTextureCount + 2>> writes(descriptorSets_.size());
+        std::vector<std::array<VkDescriptorImageInfo, kMaterialTextureCount + kSharedTextureCount + 1>> imageInfos(descriptorSets_.size());
+        std::vector<std::array<VkWriteDescriptorSet, kMaterialTextureCount + kSharedTextureCount + 3>> writes(descriptorSets_.size());
         for (std::size_t setIndex = 0; setIndex < descriptorSets_.size(); ++setIndex) {
-            std::array<VkWriteDescriptorSet, kMaterialTextureCount + kSharedTextureCount + 2>& setWrites = writes[setIndex];
+            std::array<VkWriteDescriptorSet, kMaterialTextureCount + kSharedTextureCount + 3>& setWrites = writes[setIndex];
             setWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             setWrites[0].dstSet = descriptorSets_[setIndex];
             setWrites[0].dstBinding = 0;
@@ -1669,6 +1778,15 @@ private:
                 setWrites[6 + i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
                 setWrites[6 + i].pImageInfo = &imageInfos[setIndex][infoIndex];
             }
+            const std::uint32_t shadowInfoIndex = kMaterialTextureCount + kSharedTextureCount;
+            imageInfos[setIndex][shadowInfoIndex].imageView = shadowDepthView_;
+            imageInfos[setIndex][shadowInfoIndex].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            setWrites[kMaterialTextureCount + kSharedTextureCount + 2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            setWrites[kMaterialTextureCount + kSharedTextureCount + 2].dstSet = descriptorSets_[setIndex];
+            setWrites[kMaterialTextureCount + kSharedTextureCount + 2].dstBinding = kDirectionalShadowTextureBinding;
+            setWrites[kMaterialTextureCount + kSharedTextureCount + 2].descriptorCount = 1;
+            setWrites[kMaterialTextureCount + kSharedTextureCount + 2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            setWrites[kMaterialTextureCount + kSharedTextureCount + 2].pImageInfo = &imageInfos[setIndex][shadowInfoIndex];
             vkUpdateDescriptorSets(device_, static_cast<std::uint32_t>(setWrites.size()), setWrites.data(), 0, nullptr);
         }
     }
@@ -1782,6 +1900,48 @@ private:
         createInfo.subpass = 0;
         require(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &createInfo, nullptr, &pipeline_), "vkCreateGraphicsPipelines");
 
+        const VkShaderModule shadowVertexShader = createShader("shaders/vulkan_gpu/shadow_depth.vert.spv");
+        VkPipelineShaderStageCreateInfo shadowStage{};
+        shadowStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        shadowStage.stage = VK_SHADER_STAGE_VERTEX_BIT;
+        shadowStage.module = shadowVertexShader;
+        shadowStage.pName = "main";
+
+        VkPipelineRasterizationStateCreateInfo shadowRaster{};
+        shadowRaster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        shadowRaster.polygonMode = VK_POLYGON_MODE_FILL;
+        shadowRaster.cullMode = VK_CULL_MODE_BACK_BIT;
+        shadowRaster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        shadowRaster.depthBiasEnable = VK_TRUE;
+        shadowRaster.depthBiasConstantFactor = 1.4f;
+        shadowRaster.depthBiasSlopeFactor = 1.8f;
+        shadowRaster.lineWidth = 1.0f;
+
+        VkPipelineMultisampleStateCreateInfo shadowMultisample{};
+        shadowMultisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        shadowMultisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+        VkPipelineColorBlendStateCreateInfo shadowBlend{};
+        shadowBlend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+
+        VkGraphicsPipelineCreateInfo shadowCreateInfo{};
+        shadowCreateInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        shadowCreateInfo.stageCount = 1;
+        shadowCreateInfo.pStages = &shadowStage;
+        shadowCreateInfo.pVertexInputState = &vertexInput;
+        shadowCreateInfo.pInputAssemblyState = &inputAssembly;
+        shadowCreateInfo.pViewportState = &viewportState;
+        shadowCreateInfo.pRasterizationState = &shadowRaster;
+        shadowCreateInfo.pMultisampleState = &shadowMultisample;
+        shadowCreateInfo.pDepthStencilState = &depth;
+        shadowCreateInfo.pColorBlendState = &shadowBlend;
+        shadowCreateInfo.pDynamicState = &dynamic;
+        shadowCreateInfo.layout = pipelineLayout_;
+        shadowCreateInfo.renderPass = shadowRenderPass_;
+        shadowCreateInfo.subpass = 0;
+        require(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &shadowCreateInfo, nullptr, &shadowPipeline_), "vkCreateGraphicsPipelines(shadow)");
+        vkDestroyShaderModule(device_, shadowVertexShader, nullptr);
+
         vkDestroyShaderModule(device_, fragmentShader, nullptr);
         vkDestroyShaderModule(device_, vertexShader, nullptr);
 
@@ -1885,6 +2045,52 @@ private:
         uniform.forwardAspect[2] = forward.z;
         uniform.forwardAspect[3] = aspect;
 
+        const Vec3 sunToScene = normalize({0.35f, 0.55f, -0.76f});
+        Vec3 shadowRight = normalize(cross({0.0f, 0.0f, 1.0f}, sunToScene));
+        if (dot(shadowRight, shadowRight) <= 0.00001f) {
+            shadowRight = {1.0f, 0.0f, 0.0f};
+        }
+        const Vec3 shadowUp = normalize(cross(sunToScene, shadowRight));
+        const Vec3 shadowCenter{0.0f, 0.0f, 0.65f};
+        uniform.shadowRightExtent[0] = shadowRight.x;
+        uniform.shadowRightExtent[1] = shadowRight.y;
+        uniform.shadowRightExtent[2] = shadowRight.z;
+        uniform.shadowRightExtent[3] = 5.6f;
+        uniform.shadowUpNear[0] = shadowUp.x;
+        uniform.shadowUpNear[1] = shadowUp.y;
+        uniform.shadowUpNear[2] = shadowUp.z;
+        uniform.shadowUpNear[3] = -4.8f;
+        uniform.shadowForwardFar[0] = sunToScene.x;
+        uniform.shadowForwardFar[1] = sunToScene.y;
+        uniform.shadowForwardFar[2] = sunToScene.z;
+        uniform.shadowForwardFar[3] = 6.8f;
+        uniform.shadowCenterBias[0] = shadowCenter.x;
+        uniform.shadowCenterBias[1] = shadowCenter.y;
+        uniform.shadowCenterBias[2] = shadowCenter.z;
+        uniform.shadowCenterBias[3] = 0.0025f;
+        uniform.pointPosRadius[0] = -2.2f;
+        uniform.pointPosRadius[1] = -1.7f;
+        uniform.pointPosRadius[2] = 2.4f;
+        uniform.pointPosRadius[3] = 5.2f;
+        uniform.pointColorIntensity[0] = 1.0f;
+        uniform.pointColorIntensity[1] = 0.62f;
+        uniform.pointColorIntensity[2] = 0.30f;
+        uniform.pointColorIntensity[3] = 2.8f;
+        const Vec3 spotDir = normalize({-0.62f, 0.58f, -0.52f});
+        uniform.spotPosInner[0] = 2.5f;
+        uniform.spotPosInner[1] = -2.1f;
+        uniform.spotPosInner[2] = 3.0f;
+        uniform.spotPosInner[3] = std::cos(18.0f * kPi / 180.0f);
+        uniform.spotDirOuter[0] = spotDir.x;
+        uniform.spotDirOuter[1] = spotDir.y;
+        uniform.spotDirOuter[2] = spotDir.z;
+        uniform.spotDirOuter[3] = std::cos(33.0f * kPi / 180.0f);
+        uniform.spotColorIntensity[0] = 0.45f;
+        uniform.spotColorIntensity[1] = 0.68f;
+        uniform.spotColorIntensity[2] = 1.0f;
+        uniform.spotColorIntensity[3] = 2.2f;
+        uniform.v3Flags[0] = enableV3Shadows_ ? 1.0f : 0.0f;
+
         void* mapped = nullptr;
         require(vkMapMemory(device_, uniformMemory_, 0, sizeof(uniform), 0, &mapped), "vkMapMemory(uniform)");
         std::memcpy(mapped, &uniform, sizeof(uniform));
@@ -1896,6 +2102,36 @@ private:
         VkCommandBufferBeginInfo begin{};
         begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         require(vkBeginCommandBuffer(commandBuffer, &begin), "vkBeginCommandBuffer");
+
+        if (enableV3Shadows_) {
+            VkClearValue shadowClear{};
+            shadowClear.depthStencil = {1.0f, 0};
+            VkRenderPassBeginInfo shadowPass{};
+            shadowPass.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            shadowPass.renderPass = shadowRenderPass_;
+            shadowPass.framebuffer = shadowFramebuffer_;
+            shadowPass.renderArea.extent = {kShadowMapSize, kShadowMapSize};
+            shadowPass.clearValueCount = 1;
+            shadowPass.pClearValues = &shadowClear;
+            vkCmdBeginRenderPass(commandBuffer, &shadowPass, VK_SUBPASS_CONTENTS_INLINE);
+
+            VkViewport shadowViewport{};
+            shadowViewport.width = static_cast<float>(kShadowMapSize);
+            shadowViewport.height = static_cast<float>(kShadowMapSize);
+            shadowViewport.minDepth = 0.0f;
+            shadowViewport.maxDepth = 1.0f;
+            VkRect2D shadowScissor{};
+            shadowScissor.extent = {kShadowMapSize, kShadowMapSize};
+            vkCmdSetViewport(commandBuffer, 0, 1, &shadowViewport);
+            vkCmdSetScissor(commandBuffer, 0, 1, &shadowScissor);
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline_);
+            const VkDescriptorSet shadowDescriptorSet = descriptorSets_.empty() ? VK_NULL_HANDLE : descriptorSets_.front();
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &shadowDescriptorSet, 0, nullptr);
+            VkDeviceSize shadowOffset = 0;
+            vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer_, &shadowOffset);
+            vkCmdDraw(commandBuffer, vertexCount_, 1, 0, 0);
+            vkCmdEndRenderPass(commandBuffer);
+        }
 
         std::array<VkClearValue, 2> clears{};
         clears[0].color = {{0.58f, 0.62f, 0.68f, 1.0f}};
@@ -1949,6 +2185,7 @@ private:
     std::uint32_t width_ = 0;
     std::uint32_t height_ = 0;
     const GpuPreviewGeometry& geometry_;
+    bool enableV3Shadows_ = false;
     std::string gpuName_;
 
     VkInstance instance_ = VK_NULL_HANDLE;
@@ -1964,6 +2201,7 @@ private:
     std::vector<VkImage> swapchainImages_;
     std::vector<VkImageView> swapchainImageViews_;
     VkRenderPass renderPass_ = VK_NULL_HANDLE;
+    VkRenderPass shadowRenderPass_ = VK_NULL_HANDLE;
     VkSampleCountFlagBits msaaSamples_ = VK_SAMPLE_COUNT_1_BIT;
     VkImage msaaColorImage_ = VK_NULL_HANDLE;
     VkDeviceMemory msaaColorMemory_ = VK_NULL_HANDLE;
@@ -1971,6 +2209,10 @@ private:
     VkImage depthImage_ = VK_NULL_HANDLE;
     VkDeviceMemory depthMemory_ = VK_NULL_HANDLE;
     VkImageView depthView_ = VK_NULL_HANDLE;
+    VkImage shadowDepthImage_ = VK_NULL_HANDLE;
+    VkDeviceMemory shadowDepthMemory_ = VK_NULL_HANDLE;
+    VkImageView shadowDepthView_ = VK_NULL_HANDLE;
+    VkFramebuffer shadowFramebuffer_ = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> framebuffers_;
     VkBuffer vertexBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory vertexMemory_ = VK_NULL_HANDLE;
@@ -1990,6 +2232,7 @@ private:
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     VkPipeline skyPipeline_ = VK_NULL_HANDLE;
+    VkPipeline shadowPipeline_ = VK_NULL_HANDLE;
     VkCommandPool uploadCommandPool_ = VK_NULL_HANDLE;
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     VkCommandBuffer commandBuffer_ = VK_NULL_HANDLE;
@@ -2195,7 +2438,7 @@ int runVulkanPreviewWindow(V1RenderSettings settings) {
 
     try {
         previewLog("runVulkanPreviewWindow: create renderer");
-        state.renderer = std::make_unique<VulkanGpuRenderer>(hwnd, state.settings.width, state.settings.height, state.geometry);
+        state.renderer = std::make_unique<VulkanGpuRenderer>(hwnd, state.settings.width, state.settings.height, state.geometry, state.settings.enableV3Shadows);
     } catch (const std::exception& error) {
         std::cerr << "Could not initialize Vulkan GPU preview: " << error.what() << '\n';
         previewLog(std::string("runVulkanPreviewWindow: renderer init failed: ") + error.what());

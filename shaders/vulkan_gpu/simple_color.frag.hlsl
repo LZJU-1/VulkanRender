@@ -15,6 +15,16 @@ cbuffer Camera : register(b0) {
     float4 rightFar;
     float4 upTanHalf;
     float4 forwardAspect;
+    float4 shadowRightExtent;
+    float4 shadowUpNear;
+    float4 shadowForwardFar;
+    float4 shadowCenterBias;
+    float4 pointPosRadius;
+    float4 pointColorIntensity;
+    float4 spotPosInner;
+    float4 spotDirOuter;
+    float4 spotColorIntensity;
+    float4 v3Flags;
 };
 
 [[vk::binding(1, 0)]] Texture2D<float4> albedoTexture;
@@ -29,6 +39,7 @@ cbuffer Camera : register(b0) {
 [[vk::binding(11, 0)]] TextureCube<float4> environmentSpecularR3Texture;
 [[vk::binding(12, 0)]] TextureCube<float4> environmentSpecularR4Texture;
 [[vk::binding(13, 0)]] Texture2D<float2> environmentBrdfTexture;
+[[vk::binding(14, 0)]] Texture2D<float> directionalShadowTexture;
 
 static const float PI = 3.14159265;
 
@@ -73,6 +84,78 @@ float3 samplePrefilteredSpecular(float3 reflected, float roughness) {
 
 float2 environmentBrdf(float ndotv, float roughness) {
     return environmentBrdfTexture.SampleLevel(materialSampler, float2(saturate(ndotv), saturate(roughness)), 0.0);
+}
+
+float directionalShadow(float3 worldPos, float3 normal) {
+    if (v3Flags.x < 0.5) {
+        return 1.0;
+    }
+
+    float3 offset = worldPos - shadowCenterBias.xyz;
+    float extent = max(0.01, shadowRightExtent.w);
+    float nearPlane = shadowUpNear.w;
+    float farPlane = shadowForwardFar.w;
+    float2 uv;
+    uv.x = dot(offset, shadowRightExtent.xyz) / extent * 0.5 + 0.5;
+    uv.y = -dot(offset, shadowUpNear.xyz) / extent * 0.5 + 0.5;
+    float depth = (dot(offset, shadowForwardFar.xyz) - nearPlane) / max(0.01, farPlane - nearPlane);
+    if (uv.x <= 0.0 || uv.x >= 1.0 || uv.y <= 0.0 || uv.y >= 1.0 || depth <= 0.0 || depth >= 1.0) {
+        return 1.0;
+    }
+
+    uint shadowWidth = 1;
+    uint shadowHeight = 1;
+    directionalShadowTexture.GetDimensions(shadowWidth, shadowHeight);
+    float2 texel = 1.0 / float2(max(shadowWidth, 1), max(shadowHeight, 1));
+    float3 lightDir = normalize(-shadowForwardFar.xyz);
+    float bias = shadowCenterBias.w + max(0.0007, (1.0 - saturate(dot(normal, lightDir))) * 0.0035);
+    float visible = 0.0;
+    [unroll]
+    for (int y = -1; y <= 1; ++y) {
+        [unroll]
+        for (int x = -1; x <= 1; ++x) {
+            float closest = directionalShadowTexture.SampleLevel(materialSampler, uv + float2(x, y) * texel, 0.0);
+            visible += (depth - bias) <= closest ? 1.0 : 0.0;
+        }
+    }
+    return lerp(0.34, 1.0, visible / 9.0);
+}
+
+float3 pointLightRadiance(float3 worldPos, float3 normal, float3 view, float roughness, float3 f0) {
+    if (v3Flags.x < 0.5) {
+        return 0.0.xxx;
+    }
+    float3 toLight = pointPosRadius.xyz - worldPos;
+    float distanceToLight = length(toLight);
+    float3 lightDir = toLight / max(distanceToLight, 0.001);
+    float attenuation = saturate(1.0 - distanceToLight / max(pointPosRadius.w, 0.001));
+    attenuation *= attenuation;
+    float ndotl = saturate(dot(normal, lightDir));
+    float3 halfVector = normalize(lightDir + view);
+    float specPower = max(4.0, (1.0 - roughness) * 96.0);
+    float specular = pow(saturate(dot(normal, halfVector)), specPower) * (1.0 - roughness * 0.65);
+    float3 fresnel = fresnelSchlick(max(0.04, dot(normal, view)), f0);
+    return pointColorIntensity.rgb * pointColorIntensity.w * attenuation * (ndotl.xxx + fresnel * specular);
+}
+
+float3 spotLightRadiance(float3 worldPos, float3 normal, float3 view, float roughness, float3 f0) {
+    if (v3Flags.x < 0.5) {
+        return 0.0.xxx;
+    }
+    float3 toLight = spotPosInner.xyz - worldPos;
+    float distanceToLight = length(toLight);
+    float3 lightDir = toLight / max(distanceToLight, 0.001);
+    float cone = dot(-lightDir, normalize(spotDirOuter.xyz));
+    float coneFade = saturate((cone - spotDirOuter.w) / max(0.001, spotPosInner.w - spotDirOuter.w));
+    coneFade *= coneFade;
+    float attenuation = saturate(1.0 - distanceToLight / 6.5);
+    attenuation *= attenuation;
+    float ndotl = saturate(dot(normal, lightDir));
+    float3 halfVector = normalize(lightDir + view);
+    float specPower = max(4.0, (1.0 - roughness) * 128.0);
+    float specular = pow(saturate(dot(normal, halfVector)), specPower) * (1.0 - roughness * 0.55);
+    float3 fresnel = fresnelSchlick(max(0.04, dot(normal, view)), f0);
+    return spotColorIntensity.rgb * spotColorIntensity.w * coneFade * attenuation * (ndotl.xxx + fresnel * specular);
 }
 
 float albedoHeight(float2 uv, float lod) {
@@ -158,7 +241,7 @@ float4 main(FragmentIn input) : SV_Target0 {
         normal = normalize(lerp(heightNormal, normalMapped, 0.82));
     }
 
-    float3 lightDir = normalize(float3(-0.35, -0.55, 0.76));
+    float3 lightDir = v3Flags.x > 0.5 ? normalize(-shadowForwardFar.xyz) : normalize(float3(-0.35, -0.55, 0.76));
     float ndotl = saturate(dot(normal, lightDir));
     float3 halfVector = normalize(lightDir + view);
     float ndotv = max(0.04, saturate(dot(normal, view)));
@@ -182,22 +265,24 @@ float4 main(FragmentIn input) : SV_Target0 {
     float3 fresnel = fresnelSchlick(ndotv, f0);
     float2 brdf = environmentBrdf(ndotv, roughness);
     float rim = pow(1.0 - ndotv, 3.0) * 0.15;
-    float3 direct = float3(1.15, 1.05, 0.92) * ndotl;
+    float shadow = directionalShadow(input.worldPos, normal);
+    float3 direct = float3(1.15, 1.05, 0.92) * ndotl * shadow;
     float3 diffuse = base * (1.0 - metalness) * (diffuseIbl + direct);
     float3 specularIbl = env * (fresnel * brdf.x + brdf.y);
-    float3 directSpecular = fresnel * specTerm * 0.65;
+    float3 directSpecular = fresnel * specTerm * 0.65 * shadow;
+    float3 localLights = (pointLightRadiance(input.worldPos, normal, view, roughness, f0) + spotLightRadiance(input.worldPos, normal, view, roughness, f0)) * base;
 
     float3 hdr;
     if (materialKind > 1.5 && materialKind < 2.5) {
         hdr = mirrorEnv * 1.20;
     } else if (materialKind > 3.5) {
-        hdr = diffuse + specularIbl + directSpecular + rim.xxx * float3(0.35, 0.45, 0.70);
+        hdr = diffuse + specularIbl + directSpecular + localLights + rim.xxx * float3(0.35, 0.45, 0.70);
     } else if (materialKind > 2.5) {
-        hdr = base * (diffuseIbl + direct);
+        hdr = base * (diffuseIbl + direct) + localLights;
     } else if (materialKind > 0.5) {
         hdr = mirrorEnv;
     } else {
-        hdr = base * (0.24 + 0.80 * ndotl) + specTerm.xxx * 0.18;
+        hdr = base * (0.24 + 0.80 * ndotl * shadow) + specTerm.xxx * 0.18 * shadow + localLights;
     }
 
     return float4(toneMap(hdr), 1.0);
