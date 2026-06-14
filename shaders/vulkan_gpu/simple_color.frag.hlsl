@@ -50,24 +50,64 @@ float3 fresnelSchlick(float cosTheta, float3 f0) {
     return f0 + (1.0.xxx - f0) * pow(1.0 - saturate(cosTheta), 5.0);
 }
 
-float2 environmentUv(float3 dir) {
+float3 unpackRgbe(float4 rgbe) {
+    float exponent = rgbe.a * 255.0 - 128.0;
+    return exp2(exponent) * (rgbe.rgb * 255.0 + 0.5) / 256.0;
+}
+
+float2 cubeStripUv(float3 dir) {
     dir = normalize(dir);
-    float u = atan2(dir.y, dir.x) / (2.0 * PI) + 0.5;
-    float v = 1.0 - acos(clamp(dir.z, -1.0, 1.0)) / PI;
-    return float2(u, v);
+    float3 absDir = abs(dir);
+    float face = 0.0;
+    float2 uv = 0.5.xx;
+
+    if (absDir.x >= absDir.y && absDir.x >= absDir.z) {
+        float ma = absDir.x;
+        if (dir.x >= 0.0) {
+            face = 0.0;
+            uv = float2(-dir.z, -dir.y) / ma;
+        } else {
+            face = 1.0;
+            uv = float2(dir.z, -dir.y) / ma;
+        }
+    } else if (absDir.y >= absDir.z) {
+        float ma = absDir.y;
+        if (dir.y >= 0.0) {
+            face = 2.0;
+            uv = float2(dir.x, dir.z) / ma;
+        } else {
+            face = 3.0;
+            uv = float2(dir.x, -dir.z) / ma;
+        }
+    } else {
+        float ma = absDir.z;
+        if (dir.z >= 0.0) {
+            face = 4.0;
+            uv = float2(dir.x, -dir.y) / ma;
+        } else {
+            face = 5.0;
+            uv = float2(-dir.x, -dir.y) / ma;
+        }
+    }
+
+    uv = uv * 0.5 + 0.5;
+    return float2(uv.x, (face + uv.y) / 6.0);
+}
+
+float3 sampleEnvironmentCubeStrip(Texture2D<float4> textureMap, float3 dir) {
+    return unpackRgbe(textureMap.SampleLevel(materialSampler, cubeStripUv(dir), 0.0));
 }
 
 float3 sampleDiffuseIrradiance(float3 normal) {
-    return environmentDiffuseTexture.Sample(materialSampler, environmentUv(normal)).rgb * 2.2;
+    return sampleEnvironmentCubeStrip(environmentDiffuseTexture, normal);
 }
 
 float3 sampleSpecularLevel(float3 reflected, uint level) {
-    float2 uv = environmentUv(reflected);
-    if (level == 0) return environmentSpecularR0Texture.Sample(materialSampler, uv).rgb * 2.2;
-    if (level == 1) return environmentSpecularR1Texture.Sample(materialSampler, uv).rgb * 2.2;
-    if (level == 2) return environmentSpecularR2Texture.Sample(materialSampler, uv).rgb * 2.2;
-    if (level == 3) return environmentSpecularR3Texture.Sample(materialSampler, uv).rgb * 2.2;
-    return environmentSpecularR4Texture.Sample(materialSampler, uv).rgb * 2.2;
+    if (level == 0) return sampleEnvironmentCubeStrip(environmentSpecularR0Texture, reflected);
+    if (level == 1) return sampleEnvironmentCubeStrip(environmentSpecularR1Texture, reflected);
+    if (level == 2) return sampleEnvironmentCubeStrip(environmentSpecularR2Texture, reflected);
+    if (level == 3) return sampleEnvironmentCubeStrip(environmentSpecularR3Texture, reflected);
+    return sampleEnvironmentCubeStrip(environmentSpecularR4Texture, reflected);
 }
 
 float3 samplePrefilteredSpecular(float3 reflected, float roughness) {

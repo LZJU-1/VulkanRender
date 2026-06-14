@@ -177,6 +177,7 @@ C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --pro
 - Expanded the Vulkan descriptor layout from material textures only to material textures plus IBL environment textures.
 - Updated the PBR fragment shader to use diffuse irradiance, roughness-blended prefiltered specular radiance, and an environment BRDF approximation.
 - Updated the sky pass to sample the full-resolution background environment rather than a prefiltered GGX map.
+- Fixed Scene'72 cube/RGBE environment sampling in the Vulkan preview shaders; the Ox Bridge images are vertical cubemap strips, not lat-long panoramas.
 
 Validation commands:
 
