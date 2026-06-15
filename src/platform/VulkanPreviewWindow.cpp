@@ -274,7 +274,7 @@ Vec3 normalize(Vec3 v) {
     return v * (1.0f / len);
 }
 
-std::vector<GpuPreviewVertex> makeUnitSphereVertices(std::uint32_t rings = 8, std::uint32_t segments = 12) {
+std::vector<GpuPreviewVertex> makeUnitSphereVertices(std::uint32_t rings = 16, std::uint32_t segments = 24) {
     const auto spherePoint = [&](std::uint32_t ring, std::uint32_t segment) {
         const float v = static_cast<float>(ring) / static_cast<float>(rings);
         const float u = static_cast<float>(segment) / static_cast<float>(segments);
@@ -1536,7 +1536,7 @@ private:
 
         sphereInstanceCount_ = static_cast<std::uint32_t>(geometry_.sphereInstances.size());
         if (!geometry_.sphereInstances.empty()) {
-            const std::vector<GpuPreviewVertex> unitSphere = makeUnitSphereVertices(8, 12);
+            const std::vector<GpuPreviewVertex> unitSphere = makeUnitSphereVertices(16, 24);
             sphereVertexCount_ = static_cast<std::uint32_t>(unitSphere.size());
             sphereVertexBytes_ = sizeof(GpuPreviewVertex) * unitSphere.size();
             createBuffer(sphereVertexBytes_, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sphereVertexBuffer_, sphereVertexMemory_);
@@ -2525,9 +2525,6 @@ private:
             gbufferBlend.attachmentCount = static_cast<std::uint32_t>(gbufferColorBlends.size());
             gbufferBlend.pAttachments = gbufferColorBlends.data();
 
-            VkPipelineRasterizationStateCreateInfo gbufferRaster = raster;
-            gbufferRaster.cullMode = VK_CULL_MODE_NONE;
-
             VkGraphicsPipelineCreateInfo gbufferCreateInfo{};
             gbufferCreateInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
             gbufferCreateInfo.stageCount = 2;
@@ -2535,7 +2532,7 @@ private:
             gbufferCreateInfo.pVertexInputState = &vertexInput;
             gbufferCreateInfo.pInputAssemblyState = &inputAssembly;
             gbufferCreateInfo.pViewportState = &viewportState;
-            gbufferCreateInfo.pRasterizationState = &gbufferRaster;
+            gbufferCreateInfo.pRasterizationState = &raster;
             gbufferCreateInfo.pMultisampleState = &gbufferMultisample;
             gbufferCreateInfo.pDepthStencilState = &depth;
             gbufferCreateInfo.pColorBlendState = &gbufferBlend;
@@ -2870,9 +2867,11 @@ private:
             vkCmdBeginRenderPass(commandBuffer, &ssaoPass, VK_SUBPASS_CONTENTS_INLINE);
             vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
             vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssaoPipeline_);
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, v4ComposePipelineLayout_, 0, 1, &v4DescriptorSet_, 0, nullptr);
-            vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+            if (!geometry_.manyLightDemo) {
+                vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssaoPipeline_);
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, v4ComposePipelineLayout_, 0, 1, &v4DescriptorSet_, 0, nullptr);
+                vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+            }
             vkCmdEndRenderPass(commandBuffer);
 
             VkClearValue blurClear{};
@@ -2887,9 +2886,11 @@ private:
             vkCmdBeginRenderPass(commandBuffer, &blurPass, VK_SUBPASS_CONTENTS_INLINE);
             vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
             vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssaoBlurPipeline_);
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, v4ComposePipelineLayout_, 0, 1, &v4DescriptorSet_, 0, nullptr);
-            vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+            if (!geometry_.manyLightDemo) {
+                vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssaoBlurPipeline_);
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, v4ComposePipelineLayout_, 0, 1, &v4DescriptorSet_, 0, nullptr);
+                vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+            }
             vkCmdEndRenderPass(commandBuffer);
 
             std::array<VkClearValue, 2> composeClears{};
