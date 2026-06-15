@@ -1,12 +1,11 @@
 #include "platform/VulkanPreviewWindow.hpp"
+#include "platform/VulkanTypes.hpp"
+#include "platform/VulkanLoader.hpp"
+#include "platform/VulkanRenderPassBuilder.hpp"
+#include "platform/VulkanPipelineBuilder.hpp"
+#include "platform/VulkanCommandRecorder.hpp"
 
 #include <stb_image.h>
-
-#define NOMINMAX
-#define VK_USE_PLATFORM_WIN32_KHR
-#define VK_NO_PROTOTYPES
-#include <windows.h>
-#include <vulkan/vulkan.h>
 
 #include <algorithm>
 #include <array>
@@ -29,530 +28,6 @@
 namespace vr {
 namespace {
 
-constexpr float kPi = 3.14159265358979323846f;
-constexpr int kWindowTimer = 1;
-constexpr std::uint32_t kMaterialTextureCount = 4;
-constexpr std::uint32_t kEnvironmentSpecularTextureCount = 5;
-constexpr std::uint32_t kSharedTextureCount = 2 + kEnvironmentSpecularTextureCount + 1;
-constexpr std::uint32_t kEnvironmentBackgroundTexture = 0;
-constexpr std::uint32_t kEnvironmentDiffuseTexture = 1;
-constexpr std::uint32_t kEnvironmentSpecularTextureBase = 2;
-constexpr std::uint32_t kEnvironmentBrdfTextureIndex = kSharedTextureCount - 1;
-constexpr std::uint32_t kShadowTileSize = 1024;
-constexpr std::uint32_t kShadowAtlasColumns = 4;
-constexpr std::uint32_t kShadowAtlasRows = 3;
-constexpr std::uint32_t kShadowAtlasWidth = kShadowTileSize * kShadowAtlasColumns;
-constexpr std::uint32_t kShadowAtlasHeight = kShadowTileSize * kShadowAtlasRows;
-constexpr std::uint32_t kShadowMapCount = 10;
-constexpr std::uint32_t kDirectionalShadowTextureBinding = 14;
-constexpr std::uint32_t kGBufferAlbedoBinding = 15;
-constexpr std::uint32_t kGBufferNormalBinding = 16;
-constexpr std::uint32_t kGBufferWorldBinding = 17;
-constexpr std::uint32_t kSsaoRawBinding = 18;
-constexpr std::uint32_t kSsaoBlurBinding = 19;
-constexpr std::uint32_t kV4ManyLightBufferBinding = 20;
-constexpr std::uint32_t kV5SceneTlasBinding = 21;
-constexpr std::uint32_t kV5HistoryInputBinding = 22;
-constexpr std::uint32_t kV5HistoryOutputBinding = 23;
-constexpr VkFormat kGBufferAlbedoFormat = VK_FORMAT_R8G8B8A8_UNORM;
-constexpr VkFormat kGBufferNormalFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
-constexpr VkFormat kGBufferWorldFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
-constexpr VkFormat kSsaoFormat = VK_FORMAT_R32_SFLOAT;
-constexpr VkFormat kV5HistoryFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
-
-PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
-PFN_vkCreateInstance vkCreateInstance = nullptr;
-PFN_vkDestroyInstance vkDestroyInstance = nullptr;
-PFN_vkCreateWin32SurfaceKHR vkCreateWin32SurfaceKHR = nullptr;
-PFN_vkDestroySurfaceKHR vkDestroySurfaceKHR = nullptr;
-PFN_vkEnumeratePhysicalDevices vkEnumeratePhysicalDevices = nullptr;
-PFN_vkGetPhysicalDeviceProperties vkGetPhysicalDeviceProperties = nullptr;
-PFN_vkGetPhysicalDeviceFeatures vkGetPhysicalDeviceFeatures = nullptr;
-PFN_vkGetPhysicalDeviceFeatures2 vkGetPhysicalDeviceFeatures2 = nullptr;
-PFN_vkGetPhysicalDeviceFormatProperties vkGetPhysicalDeviceFormatProperties = nullptr;
-PFN_vkGetPhysicalDeviceQueueFamilyProperties vkGetPhysicalDeviceQueueFamilyProperties = nullptr;
-PFN_vkGetPhysicalDeviceSurfaceSupportKHR vkGetPhysicalDeviceSurfaceSupportKHR = nullptr;
-PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR vkGetPhysicalDeviceSurfaceCapabilitiesKHR = nullptr;
-PFN_vkGetPhysicalDeviceSurfaceFormatsKHR vkGetPhysicalDeviceSurfaceFormatsKHR = nullptr;
-PFN_vkGetPhysicalDeviceSurfacePresentModesKHR vkGetPhysicalDeviceSurfacePresentModesKHR = nullptr;
-PFN_vkGetPhysicalDeviceMemoryProperties vkGetPhysicalDeviceMemoryProperties = nullptr;
-PFN_vkEnumerateDeviceExtensionProperties vkEnumerateDeviceExtensionProperties = nullptr;
-PFN_vkCreateDevice vkCreateDevice = nullptr;
-PFN_vkDestroyDevice vkDestroyDevice = nullptr;
-PFN_vkGetDeviceProcAddr vkGetDeviceProcAddr = nullptr;
-PFN_vkGetDeviceQueue vkGetDeviceQueue = nullptr;
-PFN_vkDeviceWaitIdle vkDeviceWaitIdle = nullptr;
-PFN_vkCreateSwapchainKHR vkCreateSwapchainKHR = nullptr;
-PFN_vkDestroySwapchainKHR vkDestroySwapchainKHR = nullptr;
-PFN_vkGetSwapchainImagesKHR vkGetSwapchainImagesKHR = nullptr;
-PFN_vkAcquireNextImageKHR vkAcquireNextImageKHR = nullptr;
-PFN_vkQueuePresentKHR vkQueuePresentKHR = nullptr;
-PFN_vkCreateImageView vkCreateImageView = nullptr;
-PFN_vkDestroyImageView vkDestroyImageView = nullptr;
-PFN_vkCreateRenderPass vkCreateRenderPass = nullptr;
-PFN_vkDestroyRenderPass vkDestroyRenderPass = nullptr;
-PFN_vkCreateFramebuffer vkCreateFramebuffer = nullptr;
-PFN_vkDestroyFramebuffer vkDestroyFramebuffer = nullptr;
-PFN_vkCreateShaderModule vkCreateShaderModule = nullptr;
-PFN_vkDestroyShaderModule vkDestroyShaderModule = nullptr;
-PFN_vkCreateDescriptorSetLayout vkCreateDescriptorSetLayout = nullptr;
-PFN_vkDestroyDescriptorSetLayout vkDestroyDescriptorSetLayout = nullptr;
-PFN_vkCreateDescriptorPool vkCreateDescriptorPool = nullptr;
-PFN_vkDestroyDescriptorPool vkDestroyDescriptorPool = nullptr;
-PFN_vkAllocateDescriptorSets vkAllocateDescriptorSets = nullptr;
-PFN_vkUpdateDescriptorSets vkUpdateDescriptorSets = nullptr;
-PFN_vkCreatePipelineLayout vkCreatePipelineLayout = nullptr;
-PFN_vkDestroyPipelineLayout vkDestroyPipelineLayout = nullptr;
-PFN_vkCreateGraphicsPipelines vkCreateGraphicsPipelines = nullptr;
-PFN_vkCreateComputePipelines vkCreateComputePipelines = nullptr;
-PFN_vkDestroyPipeline vkDestroyPipeline = nullptr;
-PFN_vkCreateBuffer vkCreateBuffer = nullptr;
-PFN_vkDestroyBuffer vkDestroyBuffer = nullptr;
-PFN_vkGetBufferMemoryRequirements vkGetBufferMemoryRequirements = nullptr;
-PFN_vkAllocateMemory vkAllocateMemory = nullptr;
-PFN_vkFreeMemory vkFreeMemory = nullptr;
-PFN_vkBindBufferMemory vkBindBufferMemory = nullptr;
-PFN_vkMapMemory vkMapMemory = nullptr;
-PFN_vkUnmapMemory vkUnmapMemory = nullptr;
-PFN_vkCreateImage vkCreateImage = nullptr;
-PFN_vkDestroyImage vkDestroyImage = nullptr;
-PFN_vkGetImageMemoryRequirements vkGetImageMemoryRequirements = nullptr;
-PFN_vkBindImageMemory vkBindImageMemory = nullptr;
-PFN_vkCreateSampler vkCreateSampler = nullptr;
-PFN_vkDestroySampler vkDestroySampler = nullptr;
-PFN_vkCreateCommandPool vkCreateCommandPool = nullptr;
-PFN_vkDestroyCommandPool vkDestroyCommandPool = nullptr;
-PFN_vkAllocateCommandBuffers vkAllocateCommandBuffers = nullptr;
-PFN_vkResetCommandBuffer vkResetCommandBuffer = nullptr;
-PFN_vkBeginCommandBuffer vkBeginCommandBuffer = nullptr;
-PFN_vkEndCommandBuffer vkEndCommandBuffer = nullptr;
-PFN_vkFreeCommandBuffers vkFreeCommandBuffers = nullptr;
-PFN_vkCmdBeginRenderPass vkCmdBeginRenderPass = nullptr;
-PFN_vkCmdEndRenderPass vkCmdEndRenderPass = nullptr;
-PFN_vkCmdBindPipeline vkCmdBindPipeline = nullptr;
-PFN_vkCmdBindDescriptorSets vkCmdBindDescriptorSets = nullptr;
-PFN_vkCmdBindVertexBuffers vkCmdBindVertexBuffers = nullptr;
-PFN_vkCmdSetViewport vkCmdSetViewport = nullptr;
-PFN_vkCmdSetScissor vkCmdSetScissor = nullptr;
-PFN_vkCmdPipelineBarrier vkCmdPipelineBarrier = nullptr;
-PFN_vkCmdDispatch vkCmdDispatch = nullptr;
-PFN_vkCmdCopyBufferToImage vkCmdCopyBufferToImage = nullptr;
-PFN_vkCmdBlitImage vkCmdBlitImage = nullptr;
-PFN_vkCmdDraw vkCmdDraw = nullptr;
-PFN_vkCreateSemaphore vkCreateSemaphore = nullptr;
-PFN_vkDestroySemaphore vkDestroySemaphore = nullptr;
-PFN_vkCreateFence vkCreateFence = nullptr;
-PFN_vkDestroyFence vkDestroyFence = nullptr;
-PFN_vkWaitForFences vkWaitForFences = nullptr;
-PFN_vkResetFences vkResetFences = nullptr;
-PFN_vkQueueSubmit vkQueueSubmit = nullptr;
-PFN_vkQueueWaitIdle vkQueueWaitIdle = nullptr;
-PFN_vkGetBufferDeviceAddressKHR vkGetBufferDeviceAddressKHR = nullptr;
-PFN_vkCreateAccelerationStructureKHR vkCreateAccelerationStructureKHR = nullptr;
-PFN_vkDestroyAccelerationStructureKHR vkDestroyAccelerationStructureKHR = nullptr;
-PFN_vkGetAccelerationStructureBuildSizesKHR vkGetAccelerationStructureBuildSizesKHR = nullptr;
-PFN_vkCmdBuildAccelerationStructuresKHR vkCmdBuildAccelerationStructuresKHR = nullptr;
-PFN_vkGetAccelerationStructureDeviceAddressKHR vkGetAccelerationStructureDeviceAddressKHR = nullptr;
-
-HMODULE vulkanLibraryHandle() {
-    static HMODULE library = nullptr;
-    if (!library) {
-        library = LoadLibraryW(L"vulkan-1.dll");
-        if (!library) {
-            throw std::runtime_error("Could not load vulkan-1.dll");
-        }
-    }
-    return library;
-}
-
-struct Vec3 {
-    float x = 0.0f;
-    float y = 0.0f;
-    float z = 0.0f;
-};
-
-struct CameraUniform {
-    float eyeNear[4]{};
-    float rightFar[4]{};
-    float upTanHalf[4]{};
-    float forwardAspect[4]{};
-    float shadowRightExtent[4]{};
-    float shadowUpNear[4]{};
-    float shadowForwardFar[4]{};
-    float shadowCenterBias[4]{};
-    float pointPosRadius[4]{};
-    float pointColorIntensity[4]{};
-    float spotPosInner[4]{};
-    float spotDirOuter[4]{};
-    float spotColorIntensity[4]{};
-    float v3Flags[4]{};
-    float v4Flags[4]{};
-};
-
-struct QueueFamilies {
-    std::uint32_t graphics = 0;
-    std::uint32_t present = 0;
-    bool hasGraphics = false;
-    bool hasPresent = false;
-};
-
-struct TextureResource {
-    VkImage image = VK_NULL_HANDLE;
-    VkDeviceMemory memory = VK_NULL_HANDLE;
-    VkImageView view = VK_NULL_HANDLE;
-    std::uint32_t mipLevels = 1;
-};
-
-struct AccelerationStructureResource {
-    VkAccelerationStructureKHR handle = VK_NULL_HANDLE;
-    VkBuffer buffer = VK_NULL_HANDLE;
-    VkDeviceMemory memory = VK_NULL_HANDLE;
-    VkDeviceAddress address = 0;
-};
-
-struct MaterialTextureResources {
-    std::array<TextureResource, kMaterialTextureCount> textures;
-};
-
-struct RgbaFloat {
-    float r = 0.0f;
-    float g = 0.0f;
-    float b = 0.0f;
-    float a = 1.0f;
-};
-
-struct RgFloat {
-    float x = 0.0f;
-    float y = 0.0f;
-};
-
-Vec3 operator+(Vec3 a, Vec3 b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
-Vec3 operator-(Vec3 a, Vec3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
-Vec3 operator*(Vec3 a, float s) { return {a.x * s, a.y * s, a.z * s}; }
-
-std::uint32_t mipLevelsFor(std::uint32_t width, std::uint32_t height) {
-    return static_cast<std::uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1u;
-}
-
-VkSampleCountFlagBits chooseSampleCount(VkSampleCountFlags counts) {
-    if (counts & VK_SAMPLE_COUNT_4_BIT) return VK_SAMPLE_COUNT_4_BIT;
-    if (counts & VK_SAMPLE_COUNT_2_BIT) return VK_SAMPLE_COUNT_2_BIT;
-    return VK_SAMPLE_COUNT_1_BIT;
-}
-
-std::uint32_t sampleCountValue(VkSampleCountFlagBits samples) {
-    switch (samples) {
-    case VK_SAMPLE_COUNT_4_BIT: return 4;
-    case VK_SAMPLE_COUNT_2_BIT: return 2;
-    default: return 1;
-    }
-}
-
-RgbaFloat unpackRgbe(const stbi_uc* rgbe) {
-    if (rgbe[3] == 0) {
-        return {};
-    }
-    const float scale = std::ldexp(1.0f, static_cast<int>(rgbe[3]) - 128) / 256.0f;
-    return {
-        (static_cast<float>(rgbe[0]) + 0.5f) * scale,
-        (static_cast<float>(rgbe[1]) + 0.5f) * scale,
-        (static_cast<float>(rgbe[2]) + 0.5f) * scale,
-        1.0f,
-    };
-}
-
-float radicalInverseVdc(std::uint32_t bits) {
-    bits = (bits << 16u) | (bits >> 16u);
-    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
-    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
-    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
-    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
-    return static_cast<float>(bits) * 2.3283064365386963e-10f;
-}
-
-std::array<float, 2> hammersley(std::uint32_t i, std::uint32_t count) {
-    return {static_cast<float>(i) / static_cast<float>(count), radicalInverseVdc(i)};
-}
-
-float dot(Vec3 a, Vec3 b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-Vec3 cross(Vec3 a, Vec3 b) {
-    return {
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x,
-    };
-}
-
-Vec3 normalize(Vec3 v) {
-    const float len = std::sqrt(dot(v, v));
-    if (len <= 0.00001f) {
-        return {};
-    }
-    return v * (1.0f / len);
-}
-
-std::vector<GpuPreviewVertex> makeUnitSphereVertices(std::uint32_t rings = 16, std::uint32_t segments = 24) {
-    const auto spherePoint = [&](std::uint32_t ring, std::uint32_t segment) {
-        const float v = static_cast<float>(ring) / static_cast<float>(rings);
-        const float u = static_cast<float>(segment) / static_cast<float>(segments);
-        const float theta = v * kPi;
-        const float phi = u * kPi * 2.0f;
-        const float sinTheta = std::sin(theta);
-        return Vec3{sinTheta * std::cos(phi), sinTheta * std::sin(phi), std::cos(theta)};
-    };
-    const auto pushVertex = [](std::vector<GpuPreviewVertex>& vertices, Vec3 p, RgFloat uv) {
-        Vec3 normal = normalize(p);
-        Vec3 tangent = normalize(std::abs(normal.z) < 0.9f ? cross({0.0f, 0.0f, 1.0f}, normal) : cross({0.0f, 1.0f, 0.0f}, normal));
-        vertices.push_back({
-            p.x, p.y, p.z,
-            normal.x, normal.y, normal.z,
-            1.0f, 1.0f, 1.0f,
-            uv.x, uv.y,
-            0.0f,
-            0.5f,
-            0.0f,
-            4.0f,
-            tangent.x, tangent.y, tangent.z, 1.0f,
-        });
-    };
-    const auto pushTriangle = [&](std::vector<GpuPreviewVertex>& vertices, Vec3 a, Vec3 b, Vec3 c, RgFloat uvA, RgFloat uvB, RgFloat uvC) {
-        pushVertex(vertices, a, uvA);
-        pushVertex(vertices, b, uvB);
-        pushVertex(vertices, c, uvC);
-    };
-
-    std::vector<GpuPreviewVertex> vertices;
-    vertices.reserve(static_cast<std::size_t>(rings) * segments * 6u);
-    for (std::uint32_t ring = 0; ring < rings; ++ring) {
-        for (std::uint32_t segment = 0; segment < segments; ++segment) {
-            const std::uint32_t nextSegment = (segment + 1u) % segments;
-            const Vec3 p00 = spherePoint(ring, segment);
-            const Vec3 p01 = spherePoint(ring, nextSegment);
-            const Vec3 p10 = spherePoint(ring + 1u, segment);
-            const Vec3 p11 = spherePoint(ring + 1u, nextSegment);
-            const RgFloat uv00{static_cast<float>(segment) / static_cast<float>(segments), static_cast<float>(ring) / static_cast<float>(rings)};
-            const RgFloat uv01{static_cast<float>(segment + 1u) / static_cast<float>(segments), static_cast<float>(ring) / static_cast<float>(rings)};
-            const RgFloat uv10{static_cast<float>(segment) / static_cast<float>(segments), static_cast<float>(ring + 1u) / static_cast<float>(rings)};
-            const RgFloat uv11{static_cast<float>(segment + 1u) / static_cast<float>(segments), static_cast<float>(ring + 1u) / static_cast<float>(rings)};
-            if (ring == 0) {
-                pushTriangle(vertices, p00, p10, p11, uv00, uv10, uv11);
-            } else if (ring + 1u == rings) {
-                pushTriangle(vertices, p00, p10, p01, uv00, uv10, uv01);
-            } else {
-                pushTriangle(vertices, p00, p10, p11, uv00, uv10, uv11);
-                pushTriangle(vertices, p00, p11, p01, uv00, uv11, uv01);
-            }
-        }
-    }
-    return vertices;
-}
-
-Vec3 importanceSampleGgx(float u1, float u2, float roughness) {
-    const float a = roughness * roughness;
-    const float phi = 2.0f * kPi * u1;
-    const float cosTheta = std::sqrt((1.0f - u2) / (1.0f + (a * a - 1.0f) * u2));
-    const float sinTheta = std::sqrt(std::max(0.0f, 1.0f - cosTheta * cosTheta));
-    return normalize({std::cos(phi) * sinTheta, std::sin(phi) * sinTheta, cosTheta});
-}
-
-float geometrySchlickGgx(float ndotv, float roughness) {
-    const float a = roughness;
-    const float k = (a * a) * 0.5f;
-    return ndotv / (ndotv * (1.0f - k) + k);
-}
-
-float geometrySmith(float ndotv, float ndotl, float roughness) {
-    return geometrySchlickGgx(ndotv, roughness) * geometrySchlickGgx(ndotl, roughness);
-}
-
-RgFloat integrateEnvironmentBrdf(float ndotv, float roughness) {
-    const Vec3 view{std::sqrt(std::max(0.0f, 1.0f - ndotv * ndotv)), 0.0f, ndotv};
-    float scale = 0.0f;
-    float bias = 0.0f;
-    constexpr std::uint32_t kSamples = 512;
-
-    for (std::uint32_t i = 0; i < kSamples; ++i) {
-        const auto xi = hammersley(i, kSamples);
-        const Vec3 halfVector = importanceSampleGgx(xi[0], xi[1], roughness);
-        const Vec3 light = normalize(halfVector * (2.0f * dot(view, halfVector)) - view);
-        const float ndotl = std::max(light.z, 0.0f);
-        const float ndoth = std::max(halfVector.z, 0.0f);
-        const float vdoth = std::max(dot(view, halfVector), 0.0f);
-        if (ndotl > 0.0f) {
-            const float g = geometrySmith(ndotv, ndotl, roughness);
-            const float gVis = (g * vdoth) / std::max(0.0001f, ndoth * ndotv);
-            const float fc = std::pow(1.0f - vdoth, 5.0f);
-            scale += (1.0f - fc) * gVis;
-            bias += fc * gVis;
-        }
-    }
-    return {scale / static_cast<float>(kSamples), bias / static_cast<float>(kSamples)};
-}
-
-Vec3 eyeOf(const V1CameraSettings& camera) {
-    return {camera.eyeX, camera.eyeY, camera.eyeZ};
-}
-
-Vec3 targetOf(const V1CameraSettings& camera) {
-    return {camera.targetX, camera.targetY, camera.targetZ};
-}
-
-Vec3 upOf(const V1CameraSettings& camera) {
-    const Vec3 up{camera.upX, camera.upY, camera.upZ};
-    return dot(up, up) <= 0.00001f ? Vec3{0.0f, 0.0f, 1.0f} : normalize(up);
-}
-
-Vec3 forwardFor(float yaw, float pitch) {
-    const float cp = std::cos(pitch);
-    return normalize({cp * std::cos(yaw), cp * std::sin(yaw), std::sin(pitch)});
-}
-
-Vec3 rightFor(Vec3 forward, Vec3 upHint = {0.0f, 0.0f, 1.0f}) {
-    Vec3 right = normalize(cross(forward, upHint));
-    if (dot(right, right) <= 0.00001f) {
-        right = normalize(cross(forward, {0.0f, 0.0f, 1.0f}));
-    }
-    return dot(right, right) <= 0.00001f ? Vec3{1.0f, 0.0f, 0.0f} : right;
-}
-
-std::vector<std::uint32_t> readSpirv(const std::filesystem::path& path) {
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
-        throw std::runtime_error("Could not open SPIR-V shader: " + path.string());
-    }
-    const std::vector<char> bytes{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-    if (bytes.empty() || bytes.size() % sizeof(std::uint32_t) != 0) {
-        throw std::runtime_error("Invalid SPIR-V shader size: " + path.string());
-    }
-    std::vector<std::uint32_t> words(bytes.size() / sizeof(std::uint32_t));
-    std::memcpy(words.data(), bytes.data(), bytes.size());
-    return words;
-}
-
-std::filesystem::path executablePath() {
-    std::wstring buffer(32768, L'\0');
-    const DWORD size = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-    if (size == 0) {
-        return {};
-    }
-    buffer.resize(size);
-    return std::filesystem::path(buffer);
-}
-
-std::filesystem::path resolveProjectPath(const std::filesystem::path& relativePath) {
-    if (relativePath.is_absolute() || std::filesystem::exists(relativePath)) {
-        return relativePath;
-    }
-
-    std::filesystem::path cursor = executablePath().parent_path();
-    while (!cursor.empty()) {
-        const std::filesystem::path candidate = cursor / relativePath;
-        if (std::filesystem::exists(candidate)) {
-            return candidate;
-        }
-        const std::filesystem::path parent = cursor.parent_path();
-        if (parent == cursor) {
-            break;
-        }
-        cursor = parent;
-    }
-    return relativePath;
-}
-
-std::filesystem::path projectRootPath() {
-    std::filesystem::path cursor = executablePath().parent_path();
-    while (!cursor.empty()) {
-        if (std::filesystem::exists(cursor / "assets") && std::filesystem::exists(cursor / "shaders")) {
-            return cursor;
-        }
-        const std::filesystem::path parent = cursor.parent_path();
-        if (parent == cursor) {
-            break;
-        }
-        cursor = parent;
-    }
-    return std::filesystem::current_path();
-}
-
-std::filesystem::path previewLogPath() {
-    const std::filesystem::path path = projectRootPath() / "out/vulkan-preview.log";
-    if (path.has_parent_path()) {
-        std::filesystem::create_directories(path.parent_path());
-    }
-    return path;
-}
-
-void previewLog(const std::string& message) {
-    std::ofstream out(previewLogPath(), std::ios::app);
-    out << message << '\n';
-}
-
-void resetPreviewLog() {
-    std::ofstream out(previewLogPath(), std::ios::trunc);
-    out << "Vulkan preview log\n";
-}
-
-void require(VkResult result, const char* what) {
-    if (result != VK_SUCCESS) {
-        throw std::runtime_error(std::string(what) + " failed");
-    }
-}
-
-template <class T>
-void loadGlobal(HMODULE library, T& target, const char* name) {
-    target = reinterpret_cast<T>(GetProcAddress(library, name));
-    if (!target) {
-        throw std::runtime_error(std::string("Could not load Vulkan global function: ") + name);
-    }
-}
-
-template <class T>
-void loadInstance(VkInstance instance, T& target, const char* name) {
-    target = reinterpret_cast<T>(vkGetInstanceProcAddr(instance, name));
-    if (!target) {
-        throw std::runtime_error(std::string("Could not load Vulkan instance function: ") + name);
-    }
-}
-
-template <class T>
-void loadDevice(VkDevice device, T& target, const char* name) {
-    target = reinterpret_cast<T>(vkGetDeviceProcAddr(device, name));
-    if (!target) {
-        throw std::runtime_error(std::string("Could not load Vulkan device function: ") + name);
-    }
-}
-
-void loadVulkanLibrary() {
-    static bool loaded = false;
-    if (loaded) {
-        return;
-    }
-    SetEnvironmentVariableW(
-        L"VK_LOADER_LAYERS_DISABLE",
-        L"VK_LAYER_VALVE_steam_overlay,VK_LAYER_VALVE_steam_fossilize"
-    );
-    SetEnvironmentVariableW(L"DISABLE_LAYER_NV_OPTIMUS_1", L"1");
-    SetEnvironmentVariableW(L"DISABLE_LAYER_NV_PRESENT_1", L"1");
-    HMODULE library = vulkanLibraryHandle();
-    loadGlobal(library, vkGetInstanceProcAddr, "vkGetInstanceProcAddr");
-    loadGlobal(library, vkCreateInstance, "vkCreateInstance");
-    loaded = true;
-}
-
-std::uint32_t findMemoryType(VkPhysicalDevice physicalDevice, std::uint32_t bits, VkMemoryPropertyFlags flags) {
-    VkPhysicalDeviceMemoryProperties properties{};
-    vkGetPhysicalDeviceMemoryProperties(physicalDevice, &properties);
-    for (std::uint32_t i = 0; i < properties.memoryTypeCount; ++i) {
-        if ((bits & (1u << i)) && (properties.memoryTypes[i].propertyFlags & flags) == flags) {
-            return i;
-        }
-    }
-    throw std::runtime_error("No compatible Vulkan memory type found");
-}
-
 class VulkanGpuRenderer {
 public:
     VulkanGpuRenderer(HWND hwnd, std::uint32_t width, std::uint32_t height, const GpuPreviewGeometry& geometry, bool enableV3Shadows, bool enableV4Ssao, bool enableV5RayTracing)
@@ -562,7 +37,7 @@ public:
         previewLog("VulkanGpuRenderer: createInstance");
         createInstance();
         previewLog("VulkanGpuRenderer: loadInstanceFunctions");
-        loadInstanceFunctions();
+        loadInstanceFunctions(instance_);
         previewLog("VulkanGpuRenderer: createSurface");
         createSurface();
         previewLog("VulkanGpuRenderer: selectDevice");
@@ -570,28 +45,23 @@ public:
         previewLog("VulkanGpuRenderer: createDevice");
         createDevice();
         previewLog("VulkanGpuRenderer: loadDeviceFunctions");
-        loadDeviceFunctions();
+        loadDeviceFunctions(device_, enableV5RayTracing_);
         previewLog("VulkanGpuRenderer: fetchDeviceQueues");
         fetchDeviceQueues();
         previewLog("VulkanGpuRenderer: createSwapchain");
         createSwapchain();
-        previewLog("VulkanGpuRenderer: createRenderPass");
-        createRenderPass();
-        previewLog("VulkanGpuRenderer: createShadowRenderPass");
-        createShadowRenderPass();
-        if (enableV4Ssao_ || enableV5RayTracing_) {
-            previewLog("VulkanGpuRenderer: createGBufferRenderPass");
-            createGBufferRenderPass();
-        }
-        if (enableV4Ssao_) {
-            previewLog("VulkanGpuRenderer: createSsaoRenderPass");
-            createSsaoRenderPass();
-        }
+        previewLog("VulkanGpuRenderer: createRenderPasses (factory)");
+        const bool enableGBuffer = enableV4Ssao_ || enableV5RayTracing_;
+        RenderPasses renderPasses = createRenderPasses(device_, swapchainFormat_, msaaSamples_, enableGBuffer, enableV4Ssao_);
+        renderPass_ = renderPasses.forward;
+        shadowRenderPass_ = renderPasses.shadow;
+        gbufferRenderPass_ = renderPasses.gbuffer;
+        ssaoRenderPass_ = renderPasses.ssao;
         previewLog("VulkanGpuRenderer: createDepthResources");
         createDepthResources();
         previewLog("VulkanGpuRenderer: createShadowResources");
         createShadowResources();
-        if (enableV4Ssao_ || enableV5RayTracing_) {
+        if (enableGBuffer) {
             previewLog("VulkanGpuRenderer: createGBufferResources");
             createGBufferResources();
         }
@@ -632,8 +102,22 @@ public:
             + " sphereInstances=" + std::to_string(geometry_.sphereInstances.size())
             + " v5RayTracing=" + (enableV5RayTracing_ ? std::string("on") : std::string("off"))
         );
-        previewLog("VulkanGpuRenderer: createPipeline");
-        createPipeline();
+        previewLog("VulkanGpuRenderer: createPipelines (factory)");
+        auto pipelines = createPipelines(device_, msaaSamples_, renderPasses,
+            descriptorSetLayout_, v4DescriptorSetLayout_, v5DescriptorSetLayout_,
+            enableV4Ssao_, enableV5RayTracing_);
+        pipelineLayout_ = pipelines.forwardLayout;
+        v4ComposePipelineLayout_ = pipelines.v4ComposeLayout;
+        v5RayTracingPipelineLayout_ = pipelines.v5RayTracingLayout;
+        pipeline_ = pipelines.forward;
+        skyPipeline_ = pipelines.sky;
+        shadowPipeline_ = pipelines.shadow;
+        gbufferPipeline_ = pipelines.gbuffer;
+        instancedGBufferPipeline_ = pipelines.gbufferInstanced;
+        ssaoPipeline_ = pipelines.ssao;
+        ssaoBlurPipeline_ = pipelines.ssaoBlur;
+        v4ComposePipeline_ = pipelines.v4Compose;
+        v5RayTracingPipeline_ = pipelines.v5Compute;
         previewLog("VulkanGpuRenderer: createCommands");
         createCommands();
         previewLog("VulkanGpuRenderer: createSync");
@@ -816,105 +300,6 @@ private:
         createInfo.enabledExtensionCount = static_cast<std::uint32_t>(std::size(extensions));
         createInfo.ppEnabledExtensionNames = extensions;
         require(vkCreateInstance(&createInfo, nullptr, &instance_), "vkCreateInstance");
-    }
-
-    void loadInstanceFunctions() {
-        loadInstance(instance_, vkDestroyInstance, "vkDestroyInstance");
-        loadInstance(instance_, vkCreateWin32SurfaceKHR, "vkCreateWin32SurfaceKHR");
-        loadInstance(instance_, vkDestroySurfaceKHR, "vkDestroySurfaceKHR");
-        loadInstance(instance_, vkEnumeratePhysicalDevices, "vkEnumeratePhysicalDevices");
-        loadInstance(instance_, vkGetPhysicalDeviceProperties, "vkGetPhysicalDeviceProperties");
-        loadInstance(instance_, vkGetPhysicalDeviceFeatures, "vkGetPhysicalDeviceFeatures");
-        loadInstance(instance_, vkGetPhysicalDeviceFeatures2, "vkGetPhysicalDeviceFeatures2");
-        loadInstance(instance_, vkGetPhysicalDeviceFormatProperties, "vkGetPhysicalDeviceFormatProperties");
-        loadInstance(instance_, vkGetPhysicalDeviceQueueFamilyProperties, "vkGetPhysicalDeviceQueueFamilyProperties");
-        loadInstance(instance_, vkGetPhysicalDeviceSurfaceSupportKHR, "vkGetPhysicalDeviceSurfaceSupportKHR");
-        loadInstance(instance_, vkGetPhysicalDeviceSurfaceCapabilitiesKHR, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
-        loadInstance(instance_, vkGetPhysicalDeviceSurfaceFormatsKHR, "vkGetPhysicalDeviceSurfaceFormatsKHR");
-        loadInstance(instance_, vkGetPhysicalDeviceSurfacePresentModesKHR, "vkGetPhysicalDeviceSurfacePresentModesKHR");
-        loadInstance(instance_, vkGetPhysicalDeviceMemoryProperties, "vkGetPhysicalDeviceMemoryProperties");
-        loadInstance(instance_, vkEnumerateDeviceExtensionProperties, "vkEnumerateDeviceExtensionProperties");
-        loadInstance(instance_, vkCreateDevice, "vkCreateDevice");
-        loadInstance(instance_, vkGetDeviceProcAddr, "vkGetDeviceProcAddr");
-    }
-
-    void loadDeviceFunctions() {
-        loadDevice(device_, vkDestroyDevice, "vkDestroyDevice");
-        loadDevice(device_, vkGetDeviceQueue, "vkGetDeviceQueue");
-        loadDevice(device_, vkDeviceWaitIdle, "vkDeviceWaitIdle");
-        loadDevice(device_, vkCreateSwapchainKHR, "vkCreateSwapchainKHR");
-        loadDevice(device_, vkDestroySwapchainKHR, "vkDestroySwapchainKHR");
-        loadDevice(device_, vkGetSwapchainImagesKHR, "vkGetSwapchainImagesKHR");
-        loadDevice(device_, vkAcquireNextImageKHR, "vkAcquireNextImageKHR");
-        loadDevice(device_, vkQueuePresentKHR, "vkQueuePresentKHR");
-        loadDevice(device_, vkCreateImageView, "vkCreateImageView");
-        loadDevice(device_, vkDestroyImageView, "vkDestroyImageView");
-        loadDevice(device_, vkCreateRenderPass, "vkCreateRenderPass");
-        loadDevice(device_, vkDestroyRenderPass, "vkDestroyRenderPass");
-        loadDevice(device_, vkCreateFramebuffer, "vkCreateFramebuffer");
-        loadDevice(device_, vkDestroyFramebuffer, "vkDestroyFramebuffer");
-        loadDevice(device_, vkCreateShaderModule, "vkCreateShaderModule");
-        loadDevice(device_, vkDestroyShaderModule, "vkDestroyShaderModule");
-        loadDevice(device_, vkCreateDescriptorSetLayout, "vkCreateDescriptorSetLayout");
-        loadDevice(device_, vkDestroyDescriptorSetLayout, "vkDestroyDescriptorSetLayout");
-        loadDevice(device_, vkCreateDescriptorPool, "vkCreateDescriptorPool");
-        loadDevice(device_, vkDestroyDescriptorPool, "vkDestroyDescriptorPool");
-        loadDevice(device_, vkAllocateDescriptorSets, "vkAllocateDescriptorSets");
-        loadDevice(device_, vkUpdateDescriptorSets, "vkUpdateDescriptorSets");
-        loadDevice(device_, vkCreatePipelineLayout, "vkCreatePipelineLayout");
-        loadDevice(device_, vkDestroyPipelineLayout, "vkDestroyPipelineLayout");
-        loadDevice(device_, vkCreateGraphicsPipelines, "vkCreateGraphicsPipelines");
-        loadDevice(device_, vkCreateComputePipelines, "vkCreateComputePipelines");
-        loadDevice(device_, vkDestroyPipeline, "vkDestroyPipeline");
-        loadDevice(device_, vkCreateBuffer, "vkCreateBuffer");
-        loadDevice(device_, vkDestroyBuffer, "vkDestroyBuffer");
-        loadDevice(device_, vkGetBufferMemoryRequirements, "vkGetBufferMemoryRequirements");
-        loadDevice(device_, vkAllocateMemory, "vkAllocateMemory");
-        loadDevice(device_, vkFreeMemory, "vkFreeMemory");
-        loadDevice(device_, vkBindBufferMemory, "vkBindBufferMemory");
-        loadDevice(device_, vkMapMemory, "vkMapMemory");
-        loadDevice(device_, vkUnmapMemory, "vkUnmapMemory");
-        loadDevice(device_, vkCreateImage, "vkCreateImage");
-        loadDevice(device_, vkDestroyImage, "vkDestroyImage");
-        loadDevice(device_, vkGetImageMemoryRequirements, "vkGetImageMemoryRequirements");
-        loadDevice(device_, vkBindImageMemory, "vkBindImageMemory");
-        loadDevice(device_, vkCreateSampler, "vkCreateSampler");
-        loadDevice(device_, vkDestroySampler, "vkDestroySampler");
-        loadDevice(device_, vkCreateCommandPool, "vkCreateCommandPool");
-        loadDevice(device_, vkDestroyCommandPool, "vkDestroyCommandPool");
-        loadDevice(device_, vkAllocateCommandBuffers, "vkAllocateCommandBuffers");
-        loadDevice(device_, vkResetCommandBuffer, "vkResetCommandBuffer");
-        loadDevice(device_, vkBeginCommandBuffer, "vkBeginCommandBuffer");
-        loadDevice(device_, vkEndCommandBuffer, "vkEndCommandBuffer");
-        loadDevice(device_, vkFreeCommandBuffers, "vkFreeCommandBuffers");
-        loadDevice(device_, vkCmdBeginRenderPass, "vkCmdBeginRenderPass");
-        loadDevice(device_, vkCmdEndRenderPass, "vkCmdEndRenderPass");
-        loadDevice(device_, vkCmdBindPipeline, "vkCmdBindPipeline");
-        loadDevice(device_, vkCmdBindDescriptorSets, "vkCmdBindDescriptorSets");
-        loadDevice(device_, vkCmdBindVertexBuffers, "vkCmdBindVertexBuffers");
-        loadDevice(device_, vkCmdSetViewport, "vkCmdSetViewport");
-        loadDevice(device_, vkCmdSetScissor, "vkCmdSetScissor");
-        loadDevice(device_, vkCmdPipelineBarrier, "vkCmdPipelineBarrier");
-        loadDevice(device_, vkCmdDispatch, "vkCmdDispatch");
-        loadDevice(device_, vkCmdCopyBufferToImage, "vkCmdCopyBufferToImage");
-        loadDevice(device_, vkCmdBlitImage, "vkCmdBlitImage");
-        loadDevice(device_, vkCmdDraw, "vkCmdDraw");
-        loadDevice(device_, vkCreateSemaphore, "vkCreateSemaphore");
-        loadDevice(device_, vkDestroySemaphore, "vkDestroySemaphore");
-        loadDevice(device_, vkCreateFence, "vkCreateFence");
-        loadDevice(device_, vkDestroyFence, "vkDestroyFence");
-        loadDevice(device_, vkWaitForFences, "vkWaitForFences");
-        loadDevice(device_, vkResetFences, "vkResetFences");
-        loadDevice(device_, vkQueueSubmit, "vkQueueSubmit");
-        loadDevice(device_, vkQueueWaitIdle, "vkQueueWaitIdle");
-        if (enableV5RayTracing_) {
-            loadDevice(device_, vkGetBufferDeviceAddressKHR, "vkGetBufferDeviceAddressKHR");
-            loadDevice(device_, vkCreateAccelerationStructureKHR, "vkCreateAccelerationStructureKHR");
-            loadDevice(device_, vkDestroyAccelerationStructureKHR, "vkDestroyAccelerationStructureKHR");
-            loadDevice(device_, vkGetAccelerationStructureBuildSizesKHR, "vkGetAccelerationStructureBuildSizesKHR");
-            loadDevice(device_, vkCmdBuildAccelerationStructuresKHR, "vkCmdBuildAccelerationStructuresKHR");
-            loadDevice(device_, vkGetAccelerationStructureDeviceAddressKHR, "vkGetAccelerationStructureDeviceAddressKHR");
-        }
     }
 
     void createSurface() {

@@ -4,6 +4,10 @@ set(VR_SOURCES
     core/RendererApp.cpp
     platform/CommandLine.cpp
     platform/PreviewWindow.cpp
+    platform/VulkanLoader.cpp
+    platform/VulkanRenderPassBuilder.cpp
+    platform/VulkanPipelineBuilder.cpp
+    platform/VulkanCommandRecorder.cpp
     platform/VulkanPreviewWindow.cpp
     render/SoftwareV1Renderer.cpp
     rhi/RenderDevice.cpp
