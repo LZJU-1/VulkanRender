@@ -1566,6 +1566,13 @@ private:
         sampler.anisotropyEnable = samplerAnisotropy_ ? VK_TRUE : VK_FALSE;
         sampler.maxAnisotropy = maxSamplerAnisotropy_;
         require(vkCreateSampler(device_, &sampler, nullptr, &textureSampler_), "vkCreateSampler(texture)");
+        previewLog(
+            "createTextureResources: mipLevels="
+            + std::to_string(maxTextureMipLevels_)
+            + " sampler=linear-mipmap-linear anisotropy="
+            + (samplerAnisotropy_ ? std::to_string(maxSamplerAnisotropy_) + "x" : "off")
+            + " edgeAA=g-buffer"
+        );
     }
 
     void createDescriptors() {

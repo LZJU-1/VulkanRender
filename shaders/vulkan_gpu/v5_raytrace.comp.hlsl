@@ -62,6 +62,12 @@ float3 toneMap(float3 color) {
     return pow(saturate(color), 1.0 / 2.2);
 }
 
+float3 skyColorAtUv(float2 uv) {
+    float2 ndc = uv * 2.0 - 1.0;
+    float3 cameraRay = normalize(forwardAspect.xyz + rightFar.xyz * ndc.x * forwardAspect.w * upTanHalf.w + upTanHalf.xyz * -ndc.y * upTanHalf.w);
+    return toneMap(skyRadiance(cameraRay));
+}
+
 bool readSurface(float2 uv, out Surface surface) {
     surface.worldPos = 0.0.xxx;
     surface.normal = float3(0.0, 0.0, 1.0);
@@ -93,6 +99,71 @@ bool readSurface(float2 uv, out Surface surface) {
     surface.metalness = saturate(normalMetalness.a);
     surface.materialKind = max(0.0, worldKind.w - 1.0);
     return true;
+}
+
+float3 cheapNeighborColor(uint2 pixel, uint width, uint height) {
+    float2 uv = (float2(pixel) + 0.5) / float2(max(width, 1u), max(height, 1u));
+    Surface surface;
+    if (!readSurface(uv, surface)) {
+        return skyColorAtUv(uv);
+    }
+
+    float3 lightDir = normalize(-shadowForwardFar.xyz);
+    float ndotl = saturate(dot(surface.normal, lightDir));
+    float3 lit = surface.base * (0.20 + ndotl * 0.70);
+    if (abs(surface.materialKind - 5.0) < 0.25) {
+        lit = surface.base * 8.0;
+    }
+    return toneMap(lit);
+}
+
+float edgeStrength(uint2 pixel, uint width, uint height) {
+    int2 centerPixel = int2(pixel);
+    int2 maxPixel = int2(max(width, 1u) - 1u, max(height, 1u) - 1u);
+    float4 centerWorld = gbufferWorld.Load(int3(centerPixel, 0));
+    if (centerWorld.w <= 0.5) {
+        return 0.0;
+    }
+
+    float3 centerNormal = normalize(gbufferNormal.Load(int3(centerPixel, 0)).rgb * 2.0 - 1.0);
+    float centerDepth = dot(centerWorld.xyz - eyeNear.xyz, forwardAspect.xyz);
+    float edge = 0.0;
+
+    [unroll]
+    for (int i = 0; i < 4; ++i) {
+        int2 offset = i == 0 ? int2(1, 0) : (i == 1 ? int2(-1, 0) : (i == 2 ? int2(0, 1) : int2(0, -1)));
+        int2 samplePixel = min(max(centerPixel + offset, int2(0, 0)), maxPixel);
+        float4 sampleWorld = gbufferWorld.Load(int3(samplePixel, 0));
+        float objectEdge = abs(sampleWorld.w - centerWorld.w) > 0.25 ? 1.0 : 0.0;
+        float sampleDepth = dot(sampleWorld.xyz - eyeNear.xyz, forwardAspect.xyz);
+        float depthEdge = smoothstep(0.05, 0.45, abs(sampleDepth - centerDepth));
+        float3 sampleNormal = normalize(gbufferNormal.Load(int3(samplePixel, 0)).rgb * 2.0 - 1.0);
+        float normalEdge = smoothstep(0.18, 0.65, 1.0 - saturate(dot(centerNormal, sampleNormal)));
+        edge = max(edge, max(objectEdge, max(depthEdge, normalEdge)));
+    }
+
+    return edge;
+}
+
+float3 applyEdgeAntialias(uint2 pixel, uint width, uint height, float3 color) {
+    float edge = edgeStrength(pixel, width, height);
+    if (edge <= 0.001) {
+        return color;
+    }
+
+    int2 centerPixel = int2(pixel);
+    int2 maxPixel = int2(max(width, 1u) - 1u, max(height, 1u) - 1u);
+    uint2 rightPixel = uint2(min(max(centerPixel + int2(1, 0), int2(0, 0)), maxPixel));
+    uint2 leftPixel = uint2(min(max(centerPixel + int2(-1, 0), int2(0, 0)), maxPixel));
+    uint2 downPixel = uint2(min(max(centerPixel + int2(0, 1), int2(0, 0)), maxPixel));
+    uint2 upPixel = uint2(min(max(centerPixel + int2(0, -1), int2(0, 0)), maxPixel));
+    float3 neighborAverage =
+        cheapNeighborColor(rightPixel, width, height) +
+        cheapNeighborColor(leftPixel, width, height) +
+        cheapNeighborColor(downPixel, width, height) +
+        cheapNeighborColor(upPixel, width, height);
+    neighborAverage *= 0.25;
+    return lerp(color, neighborAverage, min(0.34, edge * 0.26));
 }
 
 bool projectWorldToUv(float3 p, out float2 uv, out float cameraZ) {
@@ -166,6 +237,9 @@ float2 rotate2(float2 v, float angle) {
 }
 
 void writeAccumulatedColor(uint2 pixel, float3 currentColor) {
+    uint width;
+    uint height;
+    outputImage.GetDimensions(width, height);
     float historyFrames = max(v4Flags.w, 0.0);
     float3 previousColor = historyColor.Load(int3(pixel, 0)).rgb;
     float lumaCurrent = dot(currentColor, float3(0.2126, 0.7152, 0.0722));
@@ -175,7 +249,7 @@ void writeAccumulatedColor(uint2 pixel, float3 currentColor) {
     historyWeight *= historyConfidence;
     float3 accumulated = lerp(currentColor, previousColor, historyWeight);
     historyOutput[pixel] = float4(accumulated, 1.0);
-    outputImage[pixel] = float4(accumulated, 1.0);
+    outputImage[pixel] = float4(applyEdgeAntialias(pixel, width, height, accumulated), 1.0);
 }
 
 float3 pbrDirectional(Surface surface, float3 view, float3 lightDir, float3 lightColor, float lightIntensity, float visibility) {

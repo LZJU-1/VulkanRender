@@ -49,6 +49,12 @@ float3 skyRadiance(float3 dir) {
     return lerp(ground, lerp(lowSky, highSky, horizon), horizon) * 1.05;
 }
 
+float3 skyColorAt(float2 uv) {
+    float2 ndc = uv * 2.0 - 1.0;
+    float3 ray = normalize(forwardAspect.xyz + rightFar.xyz * ndc.x * forwardAspect.w * upTanHalf.w + upTanHalf.xyz * -ndc.y * upTanHalf.w);
+    return toneMap(skyRadiance(ray));
+}
+
 float3 pointPbr(float3 lightPos, float lightRadius, float3 lightColor, float lightIntensity, float3 worldPos, float3 normal, float3 view, float3 base, float roughness, float metalness, float3 f0) {
     float3 toLight = lightPos - worldPos;
     float distanceToLight = length(toLight);
@@ -107,12 +113,72 @@ float3 manyLightsRadiance(float3 worldPos, float3 normal, float3 view, float3 ba
     return radiance;
 }
 
+float3 cheapNeighborColor(float2 uv) {
+    float4 worldKind = gbufferWorld.SampleLevel(materialSampler, uv, 0.0);
+    if (worldKind.w <= 0.5) {
+        return skyColorAt(uv);
+    }
+    float3 base = saturate(gbufferAlbedo.SampleLevel(materialSampler, uv, 0.0).rgb);
+    float ao = saturate(ssaoBlur.SampleLevel(materialSampler, uv, 0.0));
+    float3 normal = normalize(gbufferNormal.SampleLevel(materialSampler, uv, 0.0).rgb * 2.0 - 1.0);
+    float ndotl = saturate(dot(normal, normalize(-shadowForwardFar.xyz)));
+    float3 lit = base * (0.22 + 0.42 * ao + ndotl * 0.60);
+    return toneMap(lit);
+}
+
+float edgeStrength(float2 uv, float4 centerWorld, float3 centerNormal) {
+    uint width;
+    uint height;
+    gbufferWorld.GetDimensions(width, height);
+    float2 texel = 1.0 / float2(max(width, 1u), max(height, 1u));
+    float centerDepth = dot(centerWorld.xyz - eyeNear.xyz, forwardAspect.xyz);
+    float edge = 0.0;
+
+    [unroll]
+    for (int i = 0; i < 4; ++i) {
+        float2 offset = i == 0 ? float2(texel.x, 0.0) : (i == 1 ? float2(-texel.x, 0.0) : (i == 2 ? float2(0.0, texel.y) : float2(0.0, -texel.y)));
+        float2 sampleUv = saturate(uv + offset);
+        float4 sampleWorld = gbufferWorld.SampleLevel(materialSampler, sampleUv, 0.0);
+        float sampleDepth = dot(sampleWorld.xyz - eyeNear.xyz, forwardAspect.xyz);
+        float objectEdge = abs(sampleWorld.w - centerWorld.w) > 0.25 ? 1.0 : 0.0;
+        float depthEdge = smoothstep(0.05, 0.45, abs(sampleDepth - centerDepth));
+        float3 sampleNormal = normalize(gbufferNormal.SampleLevel(materialSampler, sampleUv, 0.0).rgb * 2.0 - 1.0);
+        float normalEdge = smoothstep(0.18, 0.65, 1.0 - saturate(dot(centerNormal, sampleNormal)));
+        edge = max(edge, max(objectEdge, max(depthEdge, normalEdge)));
+    }
+
+    return edge;
+}
+
+float3 applyEdgeAntialias(float2 uv, float3 color, float4 centerWorld, float3 centerNormal) {
+    uint debugMode = (uint)(v4Flags.z + 0.5);
+    if (debugMode != 0) {
+        return color;
+    }
+
+    uint width;
+    uint height;
+    gbufferWorld.GetDimensions(width, height);
+    float2 texel = 1.0 / float2(max(width, 1u), max(height, 1u));
+    float edge = edgeStrength(uv, centerWorld, centerNormal);
+    if (edge <= 0.001) {
+        return color;
+    }
+
+    float3 neighborAverage =
+        cheapNeighborColor(saturate(uv + float2(texel.x, 0.0))) +
+        cheapNeighborColor(saturate(uv + float2(-texel.x, 0.0))) +
+        cheapNeighborColor(saturate(uv + float2(0.0, texel.y))) +
+        cheapNeighborColor(saturate(uv + float2(0.0, -texel.y)));
+    neighborAverage *= 0.25;
+    float blend = min(0.38, edge * 0.30);
+    return lerp(color, neighborAverage, blend);
+}
+
 float4 main(FragmentIn input) : SV_Target0 {
     float4 worldKind = gbufferWorld.SampleLevel(materialSampler, input.uv, 0.0);
     if (worldKind.w <= 0.5) {
-        float2 ndc = input.uv * 2.0 - 1.0;
-        float3 ray = normalize(forwardAspect.xyz + rightFar.xyz * ndc.x * forwardAspect.w * upTanHalf.w + upTanHalf.xyz * -ndc.y * upTanHalf.w);
-        return float4(toneMap(skyRadiance(ray)), 1.0);
+        return float4(skyColorAt(input.uv), 1.0);
     }
 
     float4 albedoRoughness = gbufferAlbedo.SampleLevel(materialSampler, input.uv, 0.0);
@@ -156,5 +222,6 @@ float4 main(FragmentIn input) : SV_Target0 {
     float3 localLights = manyLightsRadiance(worldPos, normal, view, base, roughness, metalness, f0);
     float contact = pow(1.0 - ao, 2.0);
     float3 debugTint = contact.xxx * float3(0.02, 0.035, 0.055);
-    return float4(toneMap(ambient + direct + highlight + localLights * ao - debugTint), 1.0);
+    float3 color = toneMap(ambient + direct + highlight + localLights * ao - debugTint);
+    return float4(applyEdgeAntialias(input.uv, color, worldKind, normal), 1.0);
 }
