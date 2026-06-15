@@ -25,7 +25,15 @@ cbuffer Camera : register(b0) {
 [[vk::binding(15, 0)]] Texture2D<float4> gbufferAlbedo;
 [[vk::binding(16, 0)]] Texture2D<float4> gbufferNormal;
 [[vk::binding(17, 0)]] Texture2D<float4> gbufferWorld;
+[[vk::binding(18, 0)]] Texture2D<float> ssaoRaw;
 [[vk::binding(19, 0)]] Texture2D<float> ssaoBlur;
+
+struct ManyLight {
+    float4 positionRadius;
+    float4 colorIntensity;
+};
+
+[[vk::binding(20, 0)]] StructuredBuffer<ManyLight> manyLightBuffer;
 
 float3 toneMap(float3 hdr) {
     float3 mapped = hdr / (hdr + 1.0.xxx);
@@ -41,28 +49,10 @@ float3 skyRadiance(float3 dir) {
     return lerp(ground, lerp(lowSky, highSky, horizon), horizon) * 1.05;
 }
 
-float3 manyLightColor(uint index) {
-    float phase = (float)index * 0.61803399;
-    return float3(
-        0.45 + 0.55 * (0.5 + 0.5 * sin(phase * 6.28318 + 0.1)),
-        0.45 + 0.55 * (0.5 + 0.5 * sin(phase * 6.28318 + 2.2)),
-        0.45 + 0.55 * (0.5 + 0.5 * sin(phase * 6.28318 + 4.3))
-    );
-}
-
-float3 manyLightPosition(uint index) {
-    uint col = index % 16;
-    uint row = index / 16;
-    float x = ((float)col - 7.5) * 1.45;
-    float y = ((float)row - 7.5) * 0.92;
-    float z = 2.05 + 0.30 * sin((float)index * 0.37);
-    return float3(x, y, z);
-}
-
-float3 pointPbr(float3 lightPos, float3 lightColor, float3 worldPos, float3 normal, float3 view, float3 base, float roughness, float metalness, float3 f0) {
+float3 pointPbr(float3 lightPos, float lightRadius, float3 lightColor, float lightIntensity, float3 worldPos, float3 normal, float3 view, float3 base, float roughness, float metalness, float3 f0) {
     float3 toLight = lightPos - worldPos;
     float distanceToLight = length(toLight);
-    float radius = max(0.1, v4Flags.z);
+    float radius = max(0.1, lightRadius);
     if (distanceToLight >= radius) {
         return 0.0.xxx;
     }
@@ -87,7 +77,7 @@ float3 pointPbr(float3 lightPos, float3 lightColor, float3 worldPos, float3 norm
     float3 fresnel = f0 + (1.0.xxx - f0) * pow(1.0 - ndotv, 5.0);
     float3 specular = distribution * geometry * fresnel / max(0.001, 4.0 * ndotl * ndotv);
     float3 diffuse = base * (1.0 - metalness) * (1.0.xxx - fresnel) * 0.31830988;
-    return lightColor * falloff * ndotl * (diffuse + specular);
+    return lightColor * lightIntensity * falloff * ndotl * (diffuse + specular);
 }
 
 float3 manyLightsRadiance(float3 worldPos, float3 normal, float3 view, float3 base, float roughness, float metalness, float3 f0) {
@@ -96,11 +86,23 @@ float3 manyLightsRadiance(float3 worldPos, float3 normal, float3 view, float3 ba
     }
 
     float3 radiance = 0.0.xxx;
+    uint lightCount = min((uint)max(0.0, v4Flags.y), 1024u);
     [loop]
-    for (uint i = 0; i < 256; ++i) {
-        float3 lightPos = manyLightPosition(i);
-        float3 lightColor = manyLightColor(i) * (0.42 * v4Flags.w);
-        radiance += pointPbr(lightPos, lightColor, worldPos, normal, view, base, roughness, metalness, f0);
+    for (uint i = 0; i < lightCount; ++i) {
+        ManyLight light = manyLightBuffer[i];
+        radiance += pointPbr(
+            light.positionRadius.xyz,
+            light.positionRadius.w,
+            light.colorIntensity.rgb,
+            light.colorIntensity.w * v4Flags.w,
+            worldPos,
+            normal,
+            view,
+            base,
+            roughness,
+            metalness,
+            f0
+        );
     }
     return radiance;
 }
@@ -121,6 +123,24 @@ float4 main(FragmentIn input) : SV_Target0 {
     float3 normal = normalize(normalMetalness.rgb * 2.0 - 1.0);
     float3 worldPos = worldKind.xyz;
     float3 view = normalize(eyeNear.xyz - worldPos);
+    uint debugMode = (uint)(v4Flags.z + 0.5);
+    if (debugMode == 1) {
+        return float4(base, 1.0);
+    }
+    if (debugMode == 2) {
+        return float4(normal * 0.5 + 0.5, 1.0);
+    }
+    if (debugMode == 3) {
+        float depth = saturate(dot(worldPos - eyeNear.xyz, forwardAspect.xyz) / max(0.001, rightFar.w));
+        return float4(depth.xxx, 1.0);
+    }
+    if (debugMode == 4) {
+        return float4(ssaoRaw.SampleLevel(materialSampler, input.uv, 0.0).xxx, 1.0);
+    }
+    if (debugMode == 5) {
+        return float4(ssaoBlur.SampleLevel(materialSampler, input.uv, 0.0).xxx, 1.0);
+    }
+
     float3 lightDir = normalize(-shadowForwardFar.xyz);
     float ndotl = saturate(dot(normal, lightDir));
     float ndotv = max(0.04, saturate(dot(normal, view)));

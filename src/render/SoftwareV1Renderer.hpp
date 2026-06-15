@@ -72,10 +72,22 @@ struct GpuPreviewVertex {
     float tw = 1.0f;
 };
 
+struct GpuPreviewLight {
+    float px = 0.0f;
+    float py = 0.0f;
+    float pz = 0.0f;
+    float radius = 1.0f;
+    float r = 1.0f;
+    float g = 1.0f;
+    float b = 1.0f;
+    float intensity = 1.0f;
+};
+
 struct GpuPreviewGeometry {
     std::vector<GpuPreviewVertex> vertices;
     V1CameraSettings camera;
     bool manyLightDemo = false;
+    std::vector<GpuPreviewLight> lights;
     struct MaterialTextures {
         std::filesystem::path albedoTexturePath;
         std::filesystem::path normalTexturePath;

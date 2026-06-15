@@ -50,6 +50,7 @@ constexpr std::uint32_t kGBufferNormalBinding = 16;
 constexpr std::uint32_t kGBufferWorldBinding = 17;
 constexpr std::uint32_t kSsaoRawBinding = 18;
 constexpr std::uint32_t kSsaoBlurBinding = 19;
+constexpr std::uint32_t kV4ManyLightBufferBinding = 20;
 constexpr VkFormat kGBufferAlbedoFormat = VK_FORMAT_R8G8B8A8_UNORM;
 constexpr VkFormat kGBufferNormalFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 constexpr VkFormat kGBufferWorldFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
@@ -527,6 +528,7 @@ public:
         previewLog(
             "VulkanGpuRenderer: materialSets=" + std::to_string(materialTextures_.size())
             + " batches=" + std::to_string(geometry_.batches.size())
+            + " lights=" + std::to_string(geometry_.lights.size())
         );
         previewLog("VulkanGpuRenderer: createPipeline");
         createPipeline();
@@ -577,6 +579,8 @@ public:
         }
         if (device_ != VK_NULL_HANDLE && uniformBuffer_ != VK_NULL_HANDLE) vkDestroyBuffer(device_, uniformBuffer_, nullptr);
         if (device_ != VK_NULL_HANDLE && uniformMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, uniformMemory_, nullptr);
+        if (device_ != VK_NULL_HANDLE && lightBuffer_ != VK_NULL_HANDLE) vkDestroyBuffer(device_, lightBuffer_, nullptr);
+        if (device_ != VK_NULL_HANDLE && lightMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, lightMemory_, nullptr);
         if (device_ != VK_NULL_HANDLE && vertexBuffer_ != VK_NULL_HANDLE) vkDestroyBuffer(device_, vertexBuffer_, nullptr);
         if (device_ != VK_NULL_HANDLE && vertexMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, vertexMemory_, nullptr);
         for (VkFramebuffer framebuffer : framebuffers_) vkDestroyFramebuffer(device_, framebuffer, nullptr);
@@ -614,7 +618,7 @@ public:
         if (instance_ != VK_NULL_HANDLE) vkDestroyInstance(instance_, nullptr);
     }
 
-    void draw(const V1CameraSettings& camera) {
+    void draw(const V1CameraSettings& camera, std::uint32_t v4DebugMode = 0) {
         const bool logFrame = frameIndex_ < 4;
         if (logFrame) previewLog("draw: wait fence");
         vkWaitForFences(device_, 1, &inFlight_, VK_TRUE, UINT64_MAX);
@@ -630,7 +634,7 @@ public:
         }
 
         if (logFrame) previewLog("draw: update uniform");
-        updateUniform(camera);
+        updateUniform(camera, v4DebugMode);
         if (logFrame) previewLog("draw: record command buffer");
         recordCommandBuffer(commandBuffer_, imageIndex);
 
@@ -1457,6 +1461,16 @@ private:
         vkUnmapMemory(device_, vertexMemory_);
 
         createBuffer(sizeof(CameraUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, uniformBuffer_, uniformMemory_);
+
+        lightCount_ = static_cast<std::uint32_t>(geometry_.lights.size());
+        lightBytes_ = std::max<VkDeviceSize>(sizeof(GpuPreviewLight), sizeof(GpuPreviewLight) * geometry_.lights.size());
+        createBuffer(lightBytes_, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, lightBuffer_, lightMemory_);
+        if (!geometry_.lights.empty()) {
+            void* lightMapped = nullptr;
+            require(vkMapMemory(device_, lightMemory_, 0, lightBytes_, 0, &lightMapped), "vkMapMemory(light buffer)");
+            std::memcpy(lightMapped, geometry_.lights.data(), sizeof(GpuPreviewLight) * geometry_.lights.size());
+            vkUnmapMemory(device_, lightMemory_);
+        }
     }
 
     VkCommandBuffer beginOneTimeCommands() {
@@ -2086,8 +2100,13 @@ private:
         ssaoBinding.binding = kSsaoRawBinding;
         VkDescriptorSetLayoutBinding ssaoBlurBinding = albedoBinding;
         ssaoBlurBinding.binding = kSsaoBlurBinding;
+        VkDescriptorSetLayoutBinding manyLightBinding{};
+        manyLightBinding.binding = kV4ManyLightBufferBinding;
+        manyLightBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        manyLightBinding.descriptorCount = 1;
+        manyLightBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        std::array<VkDescriptorSetLayoutBinding, 7> bindings{
+        std::array<VkDescriptorSetLayoutBinding, 8> bindings{
             cameraBinding,
             samplerBinding,
             albedoBinding,
@@ -2095,6 +2114,7 @@ private:
             worldBinding,
             ssaoBinding,
             ssaoBlurBinding,
+            manyLightBinding,
         };
         VkDescriptorSetLayoutCreateInfo layout{};
         layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -2102,13 +2122,15 @@ private:
         layout.pBindings = bindings.data();
         require(vkCreateDescriptorSetLayout(device_, &layout, nullptr, &v4DescriptorSetLayout_), "vkCreateDescriptorSetLayout(v4)");
 
-        std::array<VkDescriptorPoolSize, 3> poolSizes{};
+        std::array<VkDescriptorPoolSize, 4> poolSizes{};
         poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         poolSizes[0].descriptorCount = 1;
         poolSizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLER;
         poolSizes[1].descriptorCount = 1;
         poolSizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
         poolSizes[2].descriptorCount = 5;
+        poolSizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        poolSizes[3].descriptorCount = 1;
         VkDescriptorPoolCreateInfo pool{};
         pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         pool.poolSizeCount = static_cast<std::uint32_t>(poolSizes.size());
@@ -2144,8 +2166,12 @@ private:
         VkDescriptorImageInfo ssaoBlurInfo{};
         ssaoBlurInfo.imageView = ssaoBlurTarget_.view;
         ssaoBlurInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkDescriptorBufferInfo manyLightInfo{};
+        manyLightInfo.buffer = lightBuffer_;
+        manyLightInfo.offset = 0;
+        manyLightInfo.range = lightBytes_;
 
-        std::array<VkWriteDescriptorSet, 7> writes{};
+        std::array<VkWriteDescriptorSet, 8> writes{};
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet = v4DescriptorSet_;
         writes[0].dstBinding = 0;
@@ -2188,6 +2214,12 @@ private:
         writes[6].descriptorCount = 1;
         writes[6].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
         writes[6].pImageInfo = &ssaoBlurInfo;
+        writes[7].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[7].dstSet = v4DescriptorSet_;
+        writes[7].dstBinding = kV4ManyLightBufferBinding;
+        writes[7].descriptorCount = 1;
+        writes[7].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[7].pBufferInfo = &manyLightInfo;
         vkUpdateDescriptorSets(device_, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
     }
 
@@ -2522,7 +2554,7 @@ private:
         require(vkCreateFence(device_, &fence, nullptr, &inFlight_), "vkCreateFence");
     }
 
-    void updateUniform(const V1CameraSettings& cameraSettings) {
+    void updateUniform(const V1CameraSettings& cameraSettings, std::uint32_t v4DebugMode) {
         const Vec3 eye = eyeOf(cameraSettings);
         const Vec3 forward = normalize(targetOf(cameraSettings) - eye);
         const Vec3 right = rightFor(forward);
@@ -2599,9 +2631,9 @@ private:
         uniform.v3Flags[2] = 4.5f;
         uniform.v3Flags[3] = 7.2f;
         uniform.v4Flags[0] = geometry_.manyLightDemo ? 1.0f : 0.0f;
-        uniform.v4Flags[1] = 256.0f;
-        uniform.v4Flags[2] = 4.8f;
-        uniform.v4Flags[3] = 1.35f;
+        uniform.v4Flags[1] = static_cast<float>(lightCount_);
+        uniform.v4Flags[2] = static_cast<float>(v4DebugMode);
+        uniform.v4Flags[3] = 1.0f;
 
         void* mapped = nullptr;
         require(vkMapMemory(device_, uniformMemory_, 0, sizeof(uniform), 0, &mapped), "vkMapMemory(uniform)");
@@ -2842,6 +2874,10 @@ private:
     std::uint32_t vertexCount_ = 0;
     VkBuffer uniformBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory uniformMemory_ = VK_NULL_HANDLE;
+    VkBuffer lightBuffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory lightMemory_ = VK_NULL_HANDLE;
+    VkDeviceSize lightBytes_ = 0;
+    std::uint32_t lightCount_ = 0;
     std::vector<MaterialTextureResources> materialTextures_;
     std::array<TextureResource, kSharedTextureCount> sharedTextures_{};
     VkSampler textureSampler_ = VK_NULL_HANDLE;
@@ -2885,6 +2921,7 @@ struct PreviewState {
     int lastMouseY = 0;
     float yaw = 0.0f;
     float pitch = 0.0f;
+    std::uint32_t v4DebugMode = 0;
     std::uint32_t frameIndex = 0;
     std::chrono::steady_clock::time_point lastTick = std::chrono::steady_clock::now();
 };
@@ -2991,7 +3028,7 @@ LRESULT CALLBACK vulkanPreviewProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
             try {
                 advanceAnimatedGeometry(*state);
                 updateCamera(*state, std::max(0.001f, static_cast<float>(elapsedMs) / 1000.0f));
-                state->renderer->draw(state->camera);
+                state->renderer->draw(state->camera, state->v4DebugMode);
             } catch (const std::exception& error) {
                 std::cerr << "Vulkan preview draw failed: " << error.what() << '\n';
                 DestroyWindow(hwnd);
@@ -3021,6 +3058,19 @@ LRESULT CALLBACK vulkanPreviewProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
                         SetWindowTextW(hwnd, L"VulkanRender GPU preview - press R for roaming");
                         std::cout << "GPU camera roaming disabled.\n";
                     }
+                }
+                if (wParam >= '0' && wParam <= '5' && !(lParam & (1 << 30))) {
+                    state->v4DebugMode = static_cast<std::uint32_t>(wParam - '0');
+                    const wchar_t* titles[] = {
+                        L"VulkanRender GPU preview - v4 final",
+                        L"VulkanRender GPU preview - v4 albedo",
+                        L"VulkanRender GPU preview - v4 normal",
+                        L"VulkanRender GPU preview - v4 depth",
+                        L"VulkanRender GPU preview - v4 SSAO raw",
+                        L"VulkanRender GPU preview - v4 SSAO blur",
+                    };
+                    SetWindowTextW(hwnd, titles[state->v4DebugMode]);
+                    std::cout << "V4 debug view " << state->v4DebugMode << " selected. 0 final, 1 albedo, 2 normal, 3 depth, 4 SSAO raw, 5 SSAO blur.\n";
                 }
             }
         }

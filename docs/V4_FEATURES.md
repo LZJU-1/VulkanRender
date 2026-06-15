@@ -71,12 +71,13 @@ build\nmake-debug\src\vulkan_render.exe --profile v4 --preview --width 1280 --he
 
 - 新增 marker 文件 `assets\third_party\s72_examples\v4_many_lights.manylights`。
 - `buildGpuPreviewGeometry` 识别 `.manylights` 扩展后程序化生成：
-  - 16x16 PBR sphere grid
-  - 一组可见彩色 light marker
+  - 100x100 PBR sphere grid，即 10000 个 PBR spheres
+  - 32x32 可见彩色 light marker，即 1024 个 lights
   - floor/wall receiver
 - `GpuPreviewGeometry::manyLightDemo` 标记该场景。
-- Vulkan camera uniform 中的 `v4Flags` 将 many-light 模式传给 shader。
-- `v4_ssao_compose.frag.hlsl` 在 deferred composition 阶段循环 256 个 procedural point lights，并用 G-buffer position/normal/material 数据计算局部 PBR 光照。
+- `GpuPreviewGeometry::lights` 保存 1024 个 light records。
+- Vulkan preview 将 lights 上传为 `VK_DESCRIPTOR_TYPE_STORAGE_BUFFER`，绑定在 `binding 20`。
+- `v4_ssao_compose.frag.hlsl` 在 deferred composition 阶段读取 `StructuredBuffer<ManyLight>`，并用 G-buffer position/normal/material 数据计算局部 PBR 光照。
 
 素材要求：
 
@@ -91,9 +92,32 @@ build\nmake-debug\src\vulkan_render.exe --profile v4 --preview --width 1280 --he
 
 观察点：
 
-- 应看到一片 PBR 球阵列和悬浮的彩色 light marker。
+- 应看到密集 PBR 球阵列和悬浮的彩色 light marker。
 - 球面应出现多点光造成的局部彩色高光/明暗变化。
-- 这个版本是 procedural many-light 演示，下一步会升级为 Renderer72 风格的 light buffer/SSBO benchmark。
+- 日志应显示 `geometry vertices=1190718` 和 `lights=1024`。
+
+## Feature: V4 Debug Views
+
+实现方式：
+
+- `0`: final composition
+- `1`: G-buffer albedo
+- `2`: G-buffer normal
+- `3`: view depth
+- `4`: SSAO raw
+- `5`: SSAO blur
+- 键盘输入会更新 `v4Flags.z`，最终 compose shader 根据 debug mode 输出对应中间结果。
+
+演示方式：
+
+```powershell
+build\nmake-debug\src\vulkan_render.exe --profile v4 --preview --width 1280 --height 720
+```
+
+观察点：
+
+- 按 `1/2/3` 可以检查 G-buffer 是否正常。
+- 按 `4/5` 可以检查 SSAO raw 与 blur 的差异。
 
 ## Feature: SSAO Raw Pass
 
@@ -190,6 +214,7 @@ build\nmake-debug\src\vulkan_render.exe --profile v4 --preview --width 1280 --he
 ## Current V4 Notes
 
 - 已实现：G-buffer fill、独立 SSAO raw pass、独立 SSAO blur pass、deferred composition、v3 shadow atlas 复用、漫游相机。
-- 已新增：v4 many-light procedural demo，默认 `--profile v4 --preview` 会打开。
-- 与 Renderer72 v4 的主要剩余差距：当前 many-light 是 shader procedural loop，不是 Renderer72 风格 light buffer/SSBO；Renderer72 README 里的 `1024 sphere lights + 10000 PBR spheres` 压力测试仍是下一步重点。
+- 已新增：v4 many-light demo，默认 `--profile v4 --preview` 会打开。
+- 当前 many-light demo 已达到 Renderer72 README 中的 `1024 sphere lights + 10000 PBR spheres` 数量级，并且灯光通过 Vulkan storage buffer 进入 deferred composition。
+- 剩余工程差距：当前 10000 spheres 是 CPU 展开的 vertex buffer，不是 GPU instancing/indirect draw；如果继续追求现代 benchmark 架构，下一步应改为 instanced sphere mesh + light/instance buffers。
 - 当前 SSAO 是 fullscreen graphics pass，不是 compute pass；RenderGraph 里的 `ssao.generate`/`ssao.blur` 语义已经对应实际 pass，但底层执行队列仍是 raster fullscreen。

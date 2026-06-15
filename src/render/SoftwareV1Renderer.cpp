@@ -1524,10 +1524,12 @@ void appendSphere(
             const Vec2 uv01{static_cast<float>(segment + 1u) / static_cast<float>(segments), static_cast<float>(ring) / static_cast<float>(rings)};
             const Vec2 uv10{static_cast<float>(segment) / static_cast<float>(segments), static_cast<float>(ring + 1u) / static_cast<float>(rings)};
             const Vec2 uv11{static_cast<float>(segment + 1u) / static_cast<float>(segments), static_cast<float>(ring + 1u) / static_cast<float>(rings)};
-            if (ring > 0) {
+            if (ring == 0) {
+                makeSphereTri(p00, p11, p10, uv00, uv11, uv10);
+            } else if (ring + 1u == rings) {
+                makeSphereTri(p00, p01, p10, uv00, uv01, uv10);
+            } else {
                 makeSphereTri(p00, p10, p11, uv00, uv10, uv11);
-            }
-            if (ring + 1u < rings) {
                 makeSphereTri(p00, p11, p01, uv00, uv11, uv01);
             }
         }
@@ -1562,46 +1564,46 @@ ProceduralScene makeV4ManyLightDemoScene() {
     ProceduralScene scene;
     std::vector<Triangle3>& tris = scene.triangles;
 
-    appendQuad(tris, {-13.0f, -9.0f, 0.0f}, {13.0f, -9.0f, 0.0f}, {13.0f, 9.0f, 0.0f}, {-13.0f, 9.0f, 0.0f}, {0.36f, 0.38f, 0.36f}, MaterialKind::Pbr);
-    appendBox(tris, {0.0f, 0.0f, -0.32f}, {13.2f, 9.2f, 0.30f}, {0.22f, 0.23f, 0.22f}, MaterialKind::Lambertian, false);
-    appendBox(tris, {-13.0f, 0.0f, 2.8f}, {0.18f, 9.0f, 2.8f}, {0.32f, 0.34f, 0.38f}, MaterialKind::Lambertian, false);
-    appendBox(tris, {13.0f, 0.0f, 2.8f}, {0.18f, 9.0f, 2.8f}, {0.30f, 0.33f, 0.36f}, MaterialKind::Lambertian, false);
-    appendBox(tris, {0.0f, 9.0f, 2.4f}, {13.0f, 0.18f, 2.4f}, {0.30f, 0.31f, 0.34f}, MaterialKind::Lambertian, false);
+    appendQuad(tris, {-24.0f, -18.0f, 0.0f}, {24.0f, -18.0f, 0.0f}, {24.0f, 18.0f, 0.0f}, {-24.0f, 18.0f, 0.0f}, {0.32f, 0.34f, 0.32f}, MaterialKind::Pbr);
+    appendBox(tris, {0.0f, 0.0f, -0.32f}, {24.2f, 18.2f, 0.30f}, {0.20f, 0.21f, 0.21f}, MaterialKind::Lambertian, false);
+    appendBox(tris, {-24.0f, 0.0f, 4.2f}, {0.20f, 18.0f, 4.2f}, {0.29f, 0.31f, 0.35f}, MaterialKind::Lambertian, false);
+    appendBox(tris, {24.0f, 0.0f, 4.2f}, {0.20f, 18.0f, 4.2f}, {0.29f, 0.32f, 0.35f}, MaterialKind::Lambertian, false);
+    appendBox(tris, {0.0f, 18.0f, 3.7f}, {24.0f, 0.20f, 3.7f}, {0.28f, 0.30f, 0.33f}, MaterialKind::Lambertian, false);
 
-    const std::uint32_t rows = 16;
-    const std::uint32_t cols = 16;
+    const std::uint32_t rows = 100;
+    const std::uint32_t cols = 100;
     for (std::uint32_t row = 0; row < rows; ++row) {
         for (std::uint32_t col = 0; col < cols; ++col) {
             const std::uint32_t index = row * cols + col;
-            const float x = (static_cast<float>(col) - 7.5f) * 1.45f;
-            const float y = (static_cast<float>(row) - 7.5f) * 0.92f;
-            const float wave = 0.12f * std::sin(static_cast<float>(index) * 0.73f);
-            const float radius = 0.26f + 0.035f * static_cast<float>((row + col) % 4);
+            const float x = (static_cast<float>(col) - 49.5f) * 0.44f;
+            const float y = (static_cast<float>(row) - 49.5f) * 0.31f;
+            const float wave = 0.025f * std::sin(static_cast<float>(index) * 0.73f);
+            const float radius = 0.105f + 0.012f * static_cast<float>((row + col) % 4);
             const Vec3 baseColor{
-                0.32f + 0.045f * static_cast<float>(col),
-                0.34f + 0.035f * static_cast<float>(row),
-                0.78f - 0.018f * static_cast<float>((row + col) % 12),
+                0.24f + 0.58f * static_cast<float>(col) / static_cast<float>(cols - 1u),
+                0.26f + 0.54f * static_cast<float>(row) / static_cast<float>(rows - 1u),
+                0.76f - 0.030f * static_cast<float>((row + col) % 12),
             };
             const float roughness = 0.16f + 0.74f * static_cast<float>(row) / static_cast<float>(rows - 1u);
             const float metalness = static_cast<float>(col) / static_cast<float>(cols - 1u);
-            appendSphere(tris, {x, y, radius + wave + 0.02f}, radius, clamp01(baseColor), MaterialKind::Pbr, 8, 12, roughness, metalness);
+            appendSphere(tris, {x, y, radius + wave + 0.02f}, radius, clamp01(baseColor), MaterialKind::Pbr, 4, 6, roughness, metalness);
         }
     }
 
-    for (std::uint32_t row = 0; row < 8; ++row) {
-        for (std::uint32_t col = 0; col < 16; ++col) {
-            const std::uint32_t index = row * 16u + col;
-            const float x = (static_cast<float>(col) - 7.5f) * 1.45f;
-            const float y = (static_cast<float>(row) - 3.5f) * 1.78f;
+    for (std::uint32_t row = 0; row < 32; ++row) {
+        for (std::uint32_t col = 0; col < 32; ++col) {
+            const std::uint32_t index = row * 32u + col;
+            const float x = (static_cast<float>(col) - 15.5f) * 1.38f;
+            const float y = (static_cast<float>(row) - 15.5f) * 0.95f;
             const Vec3 color = proceduralManyLightColor(index);
-            appendSphere(tris, {x, y, 2.15f + 0.28f * std::sin(static_cast<float>(index) * 0.37f)}, 0.07f, color, MaterialKind::Simple, 5, 8, 0.2f, 0.0f);
+            appendSphere(tris, {x, y, 2.65f + 0.38f * std::sin(static_cast<float>(index) * 0.37f)}, 0.045f, color, MaterialKind::Simple, 4, 6, 0.2f, 0.0f);
         }
     }
 
-    scene.camera.eye = {8.6f, -11.4f, 6.2f};
-    scene.camera.target = {0.0f, 0.0f, 0.75f};
+    scene.camera.eye = {12.5f, -20.0f, 9.2f};
+    scene.camera.target = {0.0f, 0.0f, 0.85f};
     scene.camera.up = {0.0f, 0.0f, 1.0f};
-    scene.camera.fovY = 47.0f * kPi / 180.0f;
+    scene.camera.fovY = 50.0f * kPi / 180.0f;
     scene.camera.nearPlane = 0.05f;
     scene.camera.farPlane = 80.0f;
     return scene;
@@ -2251,6 +2253,25 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
 
     GpuPreviewGeometry geometry;
     geometry.manyLightDemo = extension == ".manylights";
+    if (geometry.manyLightDemo) {
+        geometry.lights.reserve(1024);
+        for (std::uint32_t row = 0; row < 32; ++row) {
+            for (std::uint32_t col = 0; col < 32; ++col) {
+                const std::uint32_t index = row * 32u + col;
+                const Vec3 color = proceduralManyLightColor(index);
+                geometry.lights.push_back({
+                    (static_cast<float>(col) - 15.5f) * 1.38f,
+                    (static_cast<float>(row) - 15.5f) * 0.95f,
+                    2.65f + 0.38f * std::sin(static_cast<float>(index) * 0.37f),
+                    3.8f,
+                    color.x,
+                    color.y,
+                    color.z,
+                    0.72f,
+                });
+            }
+        }
+    }
     GpuPreviewGeometry::MaterialTextures fallbackMaterial;
     if (settings.enableV2Shading) {
         const std::filesystem::path sceneAssetRoot = settings.scenePath.parent_path();

@@ -1,5 +1,38 @@
 # Development Log
 
+## 2026-06-15 - V4 Renderer72-Scale Many-Light Alignment
+
+- Upgraded the v4 many-light demo from a procedural shader loop to a Vulkan storage-buffer light path.
+- `GpuPreviewGeometry` now carries `GpuPreviewLight` records.
+- The Vulkan preview uploads the v4 lights into a `VK_DESCRIPTOR_TYPE_STORAGE_BUFFER` bound at `binding 20`.
+- `v4_ssao_compose.frag.hlsl` now reads `StructuredBuffer<ManyLight>` instead of hard-coded light positions.
+- Expanded the demo to Renderer72-scale counts:
+  - 10000 PBR spheres
+  - 1024 sphere/point lights
+- Fixed the procedural sphere cap winding bug that caused the visible top cut-outs in the previous many-light scene.
+- Added v4 debug views on number keys:
+  - `0`: final composition
+  - `1`: albedo
+  - `2`: normal
+  - `3`: depth
+  - `4`: SSAO raw
+  - `5`: SSAO blur
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v4 --preview --width 1280 --height 720
+```
+
+Validation log markers:
+
+```text
+geometry vertices=1190718
+materialSets=1 batches=1 lights=1024
+draw/present
+```
+
 ## 2026-06-15 - V4 Many-Light Demo Scene
 
 - Added `assets/third_party/s72_examples/v4_many_lights.manylights` as a procedural v4 deferred demo marker.

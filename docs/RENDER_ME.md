@@ -87,7 +87,7 @@ Realtime preview:
 build\nmake-debug\src\vulkan_render.exe --profile v4 --preview --width 1280 --height 720
 ```
 
-This opens the dedicated many-light deferred demo scene by default. It contains a 16x16 PBR sphere field and 256 procedural point lights in the v4 fullscreen composition shader. Press `R` for roaming; hold right mouse and drag to look.
+This opens the dedicated many-light deferred demo scene by default. It contains 10000 PBR spheres and 1024 storage-buffer lights consumed by the v4 fullscreen composition shader. Press `R` for roaming; hold right mouse and drag to look. Press `0-5` to switch final/albedo/normal/depth/SSAO debug views.
 
 Shadow/SSAO regression scene:
 
