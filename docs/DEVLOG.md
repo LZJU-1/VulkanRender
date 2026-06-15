@@ -1,5 +1,33 @@
 # Development Log
 
+## 2026-06-15 - V4 Instanced Sphere Benchmark Geometry
+
+- Replaced the v4 many-light benchmark's CPU-expanded 10000-sphere vertex buffer with GPU instancing.
+- Added `GpuPreviewSphereInstance` records to `GpuPreviewGeometry`.
+- The many-light scene now keeps room/light marker geometry as regular mesh vertices, while the 10000 PBR spheres are submitted as 10000 instances.
+- Added `v4_instanced_sphere.vert.hlsl` and a dedicated instanced G-buffer pipeline.
+- The G-buffer pass now draws benchmark spheres with one `vkCmdDraw(..., instanceCount=10000)` call.
+- Validation log changed from the old expanded path:
+
+```text
+geometry vertices=1190718
+```
+
+to the instanced path:
+
+```text
+geometry vertices=110718
+materialSets=1 batches=1 lights=1024 sphereInstances=10000
+draw/present
+```
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v4 --preview --width 1280 --height 720
+```
+
 ## 2026-06-15 - V4 Renderer72-Scale Many-Light Alignment
 
 - Upgraded the v4 many-light demo from a procedural shader loop to a Vulkan storage-buffer light path.

@@ -71,11 +71,14 @@ build\nmake-debug\src\vulkan_render.exe --profile v4 --preview --width 1280 --he
 
 - 新增 marker 文件 `assets\third_party\s72_examples\v4_many_lights.manylights`。
 - `buildGpuPreviewGeometry` 识别 `.manylights` 扩展后程序化生成：
-  - 100x100 PBR sphere grid，即 10000 个 PBR spheres
+  - 100x100 PBR sphere instance grid，即 10000 个 instanced PBR spheres
   - 32x32 可见彩色 light marker，即 1024 个 lights
   - floor/wall receiver
 - `GpuPreviewGeometry::manyLightDemo` 标记该场景。
+- `GpuPreviewGeometry::sphereInstances` 保存 10000 个 sphere instance records。
 - `GpuPreviewGeometry::lights` 保存 1024 个 light records。
+- Vulkan preview 为 benchmark spheres 创建一个 unit sphere vertex buffer 和一个 instance buffer。
+- G-buffer pass 通过 `v4_instanced_sphere.vert.hlsl` 和 instanced pipeline 画出 10000 个 PBR spheres。
 - Vulkan preview 将 lights 上传为 `VK_DESCRIPTOR_TYPE_STORAGE_BUFFER`，绑定在 `binding 20`。
 - `v4_ssao_compose.frag.hlsl` 在 deferred composition 阶段读取 `StructuredBuffer<ManyLight>`，并用 G-buffer position/normal/material 数据计算局部 PBR 光照。
 
@@ -94,7 +97,7 @@ build\nmake-debug\src\vulkan_render.exe --profile v4 --preview --width 1280 --he
 
 - 应看到密集 PBR 球阵列和悬浮的彩色 light marker。
 - 球面应出现多点光造成的局部彩色高光/明暗变化。
-- 日志应显示 `geometry vertices=1190718` 和 `lights=1024`。
+- 日志应显示 `geometry vertices=110718`、`lights=1024` 和 `sphereInstances=10000`。这表示 10000 spheres 没有再被 CPU 展开成巨大顶点数组。
 
 ## Feature: V4 Debug Views
 
@@ -215,6 +218,6 @@ build\nmake-debug\src\vulkan_render.exe --profile v4 --preview --width 1280 --he
 
 - 已实现：G-buffer fill、独立 SSAO raw pass、独立 SSAO blur pass、deferred composition、v3 shadow atlas 复用、漫游相机。
 - 已新增：v4 many-light demo，默认 `--profile v4 --preview` 会打开。
-- 当前 many-light demo 已达到 Renderer72 README 中的 `1024 sphere lights + 10000 PBR spheres` 数量级，并且灯光通过 Vulkan storage buffer 进入 deferred composition。
-- 剩余工程差距：当前 10000 spheres 是 CPU 展开的 vertex buffer，不是 GPU instancing/indirect draw；如果继续追求现代 benchmark 架构，下一步应改为 instanced sphere mesh + light/instance buffers。
+- 当前 many-light demo 已达到 Renderer72 README 中的 `1024 sphere lights + 10000 PBR spheres` 数量级，灯光通过 Vulkan storage buffer 进入 deferred composition，10000 spheres 通过 GPU instancing 提交。
+- 剩余工程差距：当前还是 CPU 发起 instanced draw，下一步可改为 indirect draw + GPU culling。
 - 当前 SSAO 是 fullscreen graphics pass，不是 compute pass；RenderGraph 里的 `ssao.generate`/`ssao.blur` 语义已经对应实际 pass，但底层执行队列仍是 raster fullscreen。

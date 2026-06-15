@@ -274,6 +274,62 @@ Vec3 normalize(Vec3 v) {
     return v * (1.0f / len);
 }
 
+std::vector<GpuPreviewVertex> makeUnitSphereVertices(std::uint32_t rings = 8, std::uint32_t segments = 12) {
+    const auto spherePoint = [&](std::uint32_t ring, std::uint32_t segment) {
+        const float v = static_cast<float>(ring) / static_cast<float>(rings);
+        const float u = static_cast<float>(segment) / static_cast<float>(segments);
+        const float theta = v * kPi;
+        const float phi = u * kPi * 2.0f;
+        const float sinTheta = std::sin(theta);
+        return Vec3{sinTheta * std::cos(phi), sinTheta * std::sin(phi), std::cos(theta)};
+    };
+    const auto pushVertex = [](std::vector<GpuPreviewVertex>& vertices, Vec3 p, RgFloat uv) {
+        Vec3 normal = normalize(p);
+        Vec3 tangent = normalize(std::abs(normal.z) < 0.9f ? cross({0.0f, 0.0f, 1.0f}, normal) : cross({0.0f, 1.0f, 0.0f}, normal));
+        vertices.push_back({
+            p.x, p.y, p.z,
+            normal.x, normal.y, normal.z,
+            1.0f, 1.0f, 1.0f,
+            uv.x, uv.y,
+            0.0f,
+            0.5f,
+            0.0f,
+            4.0f,
+            tangent.x, tangent.y, tangent.z, 1.0f,
+        });
+    };
+    const auto pushTriangle = [&](std::vector<GpuPreviewVertex>& vertices, Vec3 a, Vec3 b, Vec3 c, RgFloat uvA, RgFloat uvB, RgFloat uvC) {
+        pushVertex(vertices, a, uvA);
+        pushVertex(vertices, b, uvB);
+        pushVertex(vertices, c, uvC);
+    };
+
+    std::vector<GpuPreviewVertex> vertices;
+    vertices.reserve(static_cast<std::size_t>(rings) * segments * 6u);
+    for (std::uint32_t ring = 0; ring < rings; ++ring) {
+        for (std::uint32_t segment = 0; segment < segments; ++segment) {
+            const std::uint32_t nextSegment = (segment + 1u) % segments;
+            const Vec3 p00 = spherePoint(ring, segment);
+            const Vec3 p01 = spherePoint(ring, nextSegment);
+            const Vec3 p10 = spherePoint(ring + 1u, segment);
+            const Vec3 p11 = spherePoint(ring + 1u, nextSegment);
+            const RgFloat uv00{static_cast<float>(segment) / static_cast<float>(segments), static_cast<float>(ring) / static_cast<float>(rings)};
+            const RgFloat uv01{static_cast<float>(segment + 1u) / static_cast<float>(segments), static_cast<float>(ring) / static_cast<float>(rings)};
+            const RgFloat uv10{static_cast<float>(segment) / static_cast<float>(segments), static_cast<float>(ring + 1u) / static_cast<float>(rings)};
+            const RgFloat uv11{static_cast<float>(segment + 1u) / static_cast<float>(segments), static_cast<float>(ring + 1u) / static_cast<float>(rings)};
+            if (ring == 0) {
+                pushTriangle(vertices, p00, p11, p10, uv00, uv11, uv10);
+            } else if (ring + 1u == rings) {
+                pushTriangle(vertices, p00, p01, p10, uv00, uv01, uv10);
+            } else {
+                pushTriangle(vertices, p00, p10, p11, uv00, uv10, uv11);
+                pushTriangle(vertices, p00, p11, p01, uv00, uv11, uv01);
+            }
+        }
+    }
+    return vertices;
+}
+
 Vec3 importanceSampleGgx(float u1, float u2, float roughness) {
     const float a = roughness * roughness;
     const float phi = 2.0f * kPi * u1;
@@ -529,6 +585,7 @@ public:
             "VulkanGpuRenderer: materialSets=" + std::to_string(materialTextures_.size())
             + " batches=" + std::to_string(geometry_.batches.size())
             + " lights=" + std::to_string(geometry_.lights.size())
+            + " sphereInstances=" + std::to_string(geometry_.sphereInstances.size())
         );
         previewLog("VulkanGpuRenderer: createPipeline");
         createPipeline();
@@ -554,6 +611,7 @@ public:
         if (device_ != VK_NULL_HANDLE && v4ComposePipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, v4ComposePipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && ssaoBlurPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, ssaoBlurPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && ssaoPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, ssaoPipeline_, nullptr);
+        if (device_ != VK_NULL_HANDLE && instancedGBufferPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, instancedGBufferPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && gbufferPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, gbufferPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && shadowPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, shadowPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && skyPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, skyPipeline_, nullptr);
@@ -581,6 +639,10 @@ public:
         if (device_ != VK_NULL_HANDLE && uniformMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, uniformMemory_, nullptr);
         if (device_ != VK_NULL_HANDLE && lightBuffer_ != VK_NULL_HANDLE) vkDestroyBuffer(device_, lightBuffer_, nullptr);
         if (device_ != VK_NULL_HANDLE && lightMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, lightMemory_, nullptr);
+        if (device_ != VK_NULL_HANDLE && sphereInstanceBuffer_ != VK_NULL_HANDLE) vkDestroyBuffer(device_, sphereInstanceBuffer_, nullptr);
+        if (device_ != VK_NULL_HANDLE && sphereInstanceMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, sphereInstanceMemory_, nullptr);
+        if (device_ != VK_NULL_HANDLE && sphereVertexBuffer_ != VK_NULL_HANDLE) vkDestroyBuffer(device_, sphereVertexBuffer_, nullptr);
+        if (device_ != VK_NULL_HANDLE && sphereVertexMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, sphereVertexMemory_, nullptr);
         if (device_ != VK_NULL_HANDLE && vertexBuffer_ != VK_NULL_HANDLE) vkDestroyBuffer(device_, vertexBuffer_, nullptr);
         if (device_ != VK_NULL_HANDLE && vertexMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, vertexMemory_, nullptr);
         for (VkFramebuffer framebuffer : framebuffers_) vkDestroyFramebuffer(device_, framebuffer, nullptr);
@@ -1470,6 +1532,25 @@ private:
             require(vkMapMemory(device_, lightMemory_, 0, lightBytes_, 0, &lightMapped), "vkMapMemory(light buffer)");
             std::memcpy(lightMapped, geometry_.lights.data(), sizeof(GpuPreviewLight) * geometry_.lights.size());
             vkUnmapMemory(device_, lightMemory_);
+        }
+
+        sphereInstanceCount_ = static_cast<std::uint32_t>(geometry_.sphereInstances.size());
+        if (!geometry_.sphereInstances.empty()) {
+            const std::vector<GpuPreviewVertex> unitSphere = makeUnitSphereVertices(8, 12);
+            sphereVertexCount_ = static_cast<std::uint32_t>(unitSphere.size());
+            sphereVertexBytes_ = sizeof(GpuPreviewVertex) * unitSphere.size();
+            createBuffer(sphereVertexBytes_, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sphereVertexBuffer_, sphereVertexMemory_);
+            void* sphereMapped = nullptr;
+            require(vkMapMemory(device_, sphereVertexMemory_, 0, sphereVertexBytes_, 0, &sphereMapped), "vkMapMemory(sphere vertex)");
+            std::memcpy(sphereMapped, unitSphere.data(), static_cast<std::size_t>(sphereVertexBytes_));
+            vkUnmapMemory(device_, sphereVertexMemory_);
+
+            sphereInstanceBytes_ = sizeof(GpuPreviewSphereInstance) * geometry_.sphereInstances.size();
+            createBuffer(sphereInstanceBytes_, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sphereInstanceBuffer_, sphereInstanceMemory_);
+            void* instanceMapped = nullptr;
+            require(vkMapMemory(device_, sphereInstanceMemory_, 0, sphereInstanceBytes_, 0, &instanceMapped), "vkMapMemory(sphere instance)");
+            std::memcpy(instanceMapped, geometry_.sphereInstances.data(), static_cast<std::size_t>(sphereInstanceBytes_));
+            vkUnmapMemory(device_, sphereInstanceMemory_);
         }
     }
 
@@ -2463,6 +2544,43 @@ private:
             vkDestroyShaderModule(device_, gbufferFragmentShader, nullptr);
             vkDestroyShaderModule(device_, gbufferVertexShader, nullptr);
 
+            const VkShaderModule instancedVertexShader = createShader("shaders/vulkan_gpu/v4_instanced_sphere.vert.spv");
+            const VkShaderModule instancedFragmentShader = createShader("shaders/vulkan_gpu/v4_gbuffer.frag.spv");
+            VkPipelineShaderStageCreateInfo instancedStages[2]{};
+            instancedStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            instancedStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+            instancedStages[0].module = instancedVertexShader;
+            instancedStages[0].pName = "main";
+            instancedStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            instancedStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+            instancedStages[1].module = instancedFragmentShader;
+            instancedStages[1].pName = "main";
+
+            std::array<VkVertexInputBindingDescription, 2> instancedBindings{};
+            instancedBindings[0] = binding;
+            instancedBindings[1].binding = 1;
+            instancedBindings[1].stride = sizeof(GpuPreviewSphereInstance);
+            instancedBindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+            std::array<VkVertexInputAttributeDescription, 12> instancedAttributes{};
+            std::copy(attributes.begin(), attributes.end(), instancedAttributes.begin());
+            instancedAttributes[9] = {9, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(GpuPreviewSphereInstance, px)};
+            instancedAttributes[10] = {10, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(GpuPreviewSphereInstance, r)};
+            instancedAttributes[11] = {11, 1, VK_FORMAT_R32G32_SFLOAT, offsetof(GpuPreviewSphereInstance, metalness)};
+
+            VkPipelineVertexInputStateCreateInfo instancedVertexInput{};
+            instancedVertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+            instancedVertexInput.vertexBindingDescriptionCount = static_cast<std::uint32_t>(instancedBindings.size());
+            instancedVertexInput.pVertexBindingDescriptions = instancedBindings.data();
+            instancedVertexInput.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(instancedAttributes.size());
+            instancedVertexInput.pVertexAttributeDescriptions = instancedAttributes.data();
+
+            VkGraphicsPipelineCreateInfo instancedCreateInfo = gbufferCreateInfo;
+            instancedCreateInfo.pStages = instancedStages;
+            instancedCreateInfo.pVertexInputState = &instancedVertexInput;
+            require(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &instancedCreateInfo, nullptr, &instancedGBufferPipeline_), "vkCreateGraphicsPipelines(gbuffer instanced)");
+            vkDestroyShaderModule(device_, instancedFragmentShader, nullptr);
+            vkDestroyShaderModule(device_, instancedVertexShader, nullptr);
+
             VkPipelineLayoutCreateInfo composeLayout{};
             composeLayout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
             composeLayout.setLayoutCount = 1;
@@ -2726,6 +2844,15 @@ private:
                     vkCmdDraw(commandBuffer, batch.vertexCount, 1, batch.firstVertex, 0);
                 }
             }
+            if (sphereVertexCount_ > 0 && sphereInstanceCount_ > 0) {
+                vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, instancedGBufferPipeline_);
+                const VkDescriptorSet instancedDescriptorSet = descriptorSets_.empty() ? VK_NULL_HANDLE : descriptorSets_.front();
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &instancedDescriptorSet, 0, nullptr);
+                std::array<VkBuffer, 2> sphereBuffers{sphereVertexBuffer_, sphereInstanceBuffer_};
+                std::array<VkDeviceSize, 2> sphereOffsets{0, 0};
+                vkCmdBindVertexBuffers(commandBuffer, 0, static_cast<std::uint32_t>(sphereBuffers.size()), sphereBuffers.data(), sphereOffsets.data());
+                vkCmdDraw(commandBuffer, sphereVertexCount_, sphereInstanceCount_, 0, 0);
+            }
             vkCmdEndRenderPass(commandBuffer);
 
             VkClearValue ssaoClear{};
@@ -2872,6 +2999,14 @@ private:
     VkDeviceMemory vertexMemory_ = VK_NULL_HANDLE;
     VkDeviceSize vertexBytes_ = 0;
     std::uint32_t vertexCount_ = 0;
+    VkBuffer sphereVertexBuffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory sphereVertexMemory_ = VK_NULL_HANDLE;
+    VkDeviceSize sphereVertexBytes_ = 0;
+    std::uint32_t sphereVertexCount_ = 0;
+    VkBuffer sphereInstanceBuffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory sphereInstanceMemory_ = VK_NULL_HANDLE;
+    VkDeviceSize sphereInstanceBytes_ = 0;
+    std::uint32_t sphereInstanceCount_ = 0;
     VkBuffer uniformBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory uniformMemory_ = VK_NULL_HANDLE;
     VkBuffer lightBuffer_ = VK_NULL_HANDLE;
@@ -2896,6 +3031,7 @@ private:
     VkPipeline skyPipeline_ = VK_NULL_HANDLE;
     VkPipeline shadowPipeline_ = VK_NULL_HANDLE;
     VkPipeline gbufferPipeline_ = VK_NULL_HANDLE;
+    VkPipeline instancedGBufferPipeline_ = VK_NULL_HANDLE;
     VkPipeline ssaoPipeline_ = VK_NULL_HANDLE;
     VkPipeline ssaoBlurPipeline_ = VK_NULL_HANDLE;
     VkPipeline v4ComposePipeline_ = VK_NULL_HANDLE;

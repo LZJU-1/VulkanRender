@@ -1,9 +1,10 @@
 # VulkanRender v4 procedural many-light deferred demo marker.
 #
 # The renderer recognizes this extension and builds a procedural scene with:
-# - a 100x100 PBR sphere grid
+# - a 100x100 instanced PBR sphere grid
 # - 32x32 visible colored light markers
 # - a simple room/floor receiver for SSAO and local light falloff
 #
-# The actual many-light records are generated on the CPU, uploaded to a Vulkan
-# storage buffer, and consumed by the v4 deferred composition shader.
+# The sphere records are uploaded as a Vulkan instance buffer. The actual
+# many-light records are generated on the CPU, uploaded to a Vulkan storage
+# buffer, and consumed by the v4 deferred composition shader.

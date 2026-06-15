@@ -1570,26 +1570,6 @@ ProceduralScene makeV4ManyLightDemoScene() {
     appendBox(tris, {24.0f, 0.0f, 4.2f}, {0.20f, 18.0f, 4.2f}, {0.29f, 0.32f, 0.35f}, MaterialKind::Lambertian, false);
     appendBox(tris, {0.0f, 18.0f, 3.7f}, {24.0f, 0.20f, 3.7f}, {0.28f, 0.30f, 0.33f}, MaterialKind::Lambertian, false);
 
-    const std::uint32_t rows = 100;
-    const std::uint32_t cols = 100;
-    for (std::uint32_t row = 0; row < rows; ++row) {
-        for (std::uint32_t col = 0; col < cols; ++col) {
-            const std::uint32_t index = row * cols + col;
-            const float x = (static_cast<float>(col) - 49.5f) * 0.44f;
-            const float y = (static_cast<float>(row) - 49.5f) * 0.31f;
-            const float wave = 0.025f * std::sin(static_cast<float>(index) * 0.73f);
-            const float radius = 0.105f + 0.012f * static_cast<float>((row + col) % 4);
-            const Vec3 baseColor{
-                0.24f + 0.58f * static_cast<float>(col) / static_cast<float>(cols - 1u),
-                0.26f + 0.54f * static_cast<float>(row) / static_cast<float>(rows - 1u),
-                0.76f - 0.030f * static_cast<float>((row + col) % 12),
-            };
-            const float roughness = 0.16f + 0.74f * static_cast<float>(row) / static_cast<float>(rows - 1u);
-            const float metalness = static_cast<float>(col) / static_cast<float>(cols - 1u);
-            appendSphere(tris, {x, y, radius + wave + 0.02f}, radius, clamp01(baseColor), MaterialKind::Pbr, 4, 6, roughness, metalness);
-        }
-    }
-
     for (std::uint32_t row = 0; row < 32; ++row) {
         for (std::uint32_t col = 0; col < 32; ++col) {
             const std::uint32_t index = row * 32u + col;
@@ -2254,6 +2234,30 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
     GpuPreviewGeometry geometry;
     geometry.manyLightDemo = extension == ".manylights";
     if (geometry.manyLightDemo) {
+        geometry.sphereInstances.reserve(10000);
+        for (std::uint32_t row = 0; row < 100; ++row) {
+            for (std::uint32_t col = 0; col < 100; ++col) {
+                const std::uint32_t index = row * 100u + col;
+                const float radius = 0.105f + 0.012f * static_cast<float>((row + col) % 4);
+                const Vec3 baseColor{
+                    0.24f + 0.58f * static_cast<float>(col) / 99.0f,
+                    0.26f + 0.54f * static_cast<float>(row) / 99.0f,
+                    0.76f - 0.030f * static_cast<float>((row + col) % 12),
+                };
+                geometry.sphereInstances.push_back({
+                    (static_cast<float>(col) - 49.5f) * 0.44f,
+                    (static_cast<float>(row) - 49.5f) * 0.31f,
+                    radius + 0.025f * std::sin(static_cast<float>(index) * 0.73f) + 0.02f,
+                    radius,
+                    clamp01(baseColor).x,
+                    clamp01(baseColor).y,
+                    clamp01(baseColor).z,
+                    0.16f + 0.74f * static_cast<float>(row) / 99.0f,
+                    static_cast<float>(col) / 99.0f,
+                    gpuMaterialKind(MaterialKind::Pbr),
+                });
+            }
+        }
         geometry.lights.reserve(1024);
         for (std::uint32_t row = 0; row < 32; ++row) {
             for (std::uint32_t col = 0; col < 32; ++col) {
