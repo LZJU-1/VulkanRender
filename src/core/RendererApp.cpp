@@ -134,15 +134,16 @@ int RendererApp::run() {
     }
 
     if (config_.previewWindow) {
-        if (profile->id != ProfileId::V1SceneForward && profile->id != ProfileId::V2PbrIbl && profile->id != ProfileId::V3LightsShadows && profile->id != ProfileId::V4DeferredSsao) {
-            std::cout << "Realtime preview is currently implemented for v1, v2, v3, and v4.\n";
+        if (profile->id != ProfileId::V1SceneForward && profile->id != ProfileId::V2PbrIbl && profile->id != ProfileId::V3LightsShadows && profile->id != ProfileId::V4DeferredSsao && profile->id != ProfileId::V5RealtimeRayTracing) {
+            std::cout << "Realtime preview is currently implemented for v1, v2, v3, v4, and v5.\n";
             return 0;
         }
 
         V1RenderSettings settings;
         settings.width = config_.width;
         settings.height = config_.height;
-        settings.enableV2Shading = profile->id == ProfileId::V2PbrIbl || profile->id == ProfileId::V3LightsShadows || profile->id == ProfileId::V4DeferredSsao;
+        settings.enableV5RayTracing = profile->id == ProfileId::V5RealtimeRayTracing;
+        settings.enableV2Shading = profile->id == ProfileId::V2PbrIbl || profile->id == ProfileId::V3LightsShadows || profile->id == ProfileId::V4DeferredSsao || settings.enableV5RayTracing;
         settings.enableV3Shadows = profile->id == ProfileId::V3LightsShadows || profile->id == ProfileId::V4DeferredSsao;
         settings.enableV4Ssao = profile->id == ProfileId::V4DeferredSsao;
         settings.scenePath = config_.scenePath.empty()

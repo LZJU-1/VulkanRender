@@ -99,4 +99,12 @@ build\nmake-debug\src\vulkan_render.exe --profile v4 --preview --scene assets\th
 
 Target behavior: opt into hardware ray tracing for primary visibility, reflections, shadows, or hybrid accumulation.
 
-Current implementation: the app detects Vulkan RT capability and exposes the RT graph stages. Concrete Vulkan BLAS/TLAS allocation and shader binding table upload are the next implementation step.
+Current implementation: see `docs/V5_FEATURES.md`. The realtime preview now has a GPU compute ray tracing path that dispatches primary rays into a procedural validation scene and writes directly to the swapchain storage image. KHR BLAS/TLAS/SBT hardware RT is the next v5 step.
+
+Realtime preview:
+
+```powershell
+build\nmake-debug\src\vulkan_render.exe --profile v5-rt --preview --width 1280 --height 720
+```
+
+Expected log markers: `createV5RayTracingDescriptors`, `v5RayTracing=on`, and repeated `draw/present`.

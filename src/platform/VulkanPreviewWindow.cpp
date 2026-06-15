@@ -99,6 +99,7 @@ PFN_vkUpdateDescriptorSets vkUpdateDescriptorSets = nullptr;
 PFN_vkCreatePipelineLayout vkCreatePipelineLayout = nullptr;
 PFN_vkDestroyPipelineLayout vkDestroyPipelineLayout = nullptr;
 PFN_vkCreateGraphicsPipelines vkCreateGraphicsPipelines = nullptr;
+PFN_vkCreateComputePipelines vkCreateComputePipelines = nullptr;
 PFN_vkDestroyPipeline vkDestroyPipeline = nullptr;
 PFN_vkCreateBuffer vkCreateBuffer = nullptr;
 PFN_vkDestroyBuffer vkDestroyBuffer = nullptr;
@@ -129,6 +130,7 @@ PFN_vkCmdBindVertexBuffers vkCmdBindVertexBuffers = nullptr;
 PFN_vkCmdSetViewport vkCmdSetViewport = nullptr;
 PFN_vkCmdSetScissor vkCmdSetScissor = nullptr;
 PFN_vkCmdPipelineBarrier vkCmdPipelineBarrier = nullptr;
+PFN_vkCmdDispatch vkCmdDispatch = nullptr;
 PFN_vkCmdCopyBufferToImage vkCmdCopyBufferToImage = nullptr;
 PFN_vkCmdBlitImage vkCmdBlitImage = nullptr;
 PFN_vkCmdDraw vkCmdDraw = nullptr;
@@ -527,8 +529,8 @@ std::uint32_t findMemoryType(VkPhysicalDevice physicalDevice, std::uint32_t bits
 
 class VulkanGpuRenderer {
 public:
-    VulkanGpuRenderer(HWND hwnd, std::uint32_t width, std::uint32_t height, const GpuPreviewGeometry& geometry, bool enableV3Shadows, bool enableV4Ssao)
-        : hwnd_(hwnd), width_(width), height_(height), geometry_(geometry), enableV3Shadows_(enableV3Shadows), enableV4Ssao_(enableV4Ssao) {
+    VulkanGpuRenderer(HWND hwnd, std::uint32_t width, std::uint32_t height, const GpuPreviewGeometry& geometry, bool enableV3Shadows, bool enableV4Ssao, bool enableV5RayTracing)
+        : hwnd_(hwnd), width_(width), height_(height), geometry_(geometry), enableV3Shadows_(enableV3Shadows), enableV4Ssao_(enableV4Ssao), enableV5RayTracing_(enableV5RayTracing) {
         previewLog("VulkanGpuRenderer: loadVulkanLibrary");
         loadVulkanLibrary();
         previewLog("VulkanGpuRenderer: createInstance");
@@ -581,11 +583,16 @@ public:
             previewLog("VulkanGpuRenderer: createV4ComposeDescriptors");
             createV4ComposeDescriptors();
         }
+        if (enableV5RayTracing_) {
+            previewLog("VulkanGpuRenderer: createV5RayTracingDescriptors");
+            createV5RayTracingDescriptors();
+        }
         previewLog(
             "VulkanGpuRenderer: materialSets=" + std::to_string(materialTextures_.size())
             + " batches=" + std::to_string(geometry_.batches.size())
             + " lights=" + std::to_string(geometry_.lights.size())
             + " sphereInstances=" + std::to_string(geometry_.sphereInstances.size())
+            + " v5RayTracing=" + (enableV5RayTracing_ ? std::string("on") : std::string("off"))
         );
         previewLog("VulkanGpuRenderer: createPipeline");
         createPipeline();
@@ -611,13 +618,17 @@ public:
         if (device_ != VK_NULL_HANDLE && v4ComposePipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, v4ComposePipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && ssaoBlurPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, ssaoBlurPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && ssaoPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, ssaoPipeline_, nullptr);
+        if (device_ != VK_NULL_HANDLE && v5RayTracingPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, v5RayTracingPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && instancedGBufferPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, instancedGBufferPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && gbufferPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, gbufferPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && shadowPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, shadowPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && skyPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, skyPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && pipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, pipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && v4ComposePipelineLayout_ != VK_NULL_HANDLE) vkDestroyPipelineLayout(device_, v4ComposePipelineLayout_, nullptr);
+        if (device_ != VK_NULL_HANDLE && v5RayTracingPipelineLayout_ != VK_NULL_HANDLE) vkDestroyPipelineLayout(device_, v5RayTracingPipelineLayout_, nullptr);
         if (device_ != VK_NULL_HANDLE && pipelineLayout_ != VK_NULL_HANDLE) vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr);
+        if (device_ != VK_NULL_HANDLE && v5DescriptorPool_ != VK_NULL_HANDLE) vkDestroyDescriptorPool(device_, v5DescriptorPool_, nullptr);
+        if (device_ != VK_NULL_HANDLE && v5DescriptorSetLayout_ != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, v5DescriptorSetLayout_, nullptr);
         if (device_ != VK_NULL_HANDLE && v4DescriptorPool_ != VK_NULL_HANDLE) vkDestroyDescriptorPool(device_, v4DescriptorPool_, nullptr);
         if (device_ != VK_NULL_HANDLE && v4DescriptorSetLayout_ != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, v4DescriptorSetLayout_, nullptr);
         if (device_ != VK_NULL_HANDLE && descriptorPool_ != VK_NULL_HANDLE) vkDestroyDescriptorPool(device_, descriptorPool_, nullptr);
@@ -701,7 +712,7 @@ public:
         recordCommandBuffer(commandBuffer_, imageIndex);
 
         if (logFrame) previewLog("draw: submit");
-        const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        const VkPipelineStageFlags waitStage = enableV5RayTracing_ ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         VkSubmitInfo submit{};
         submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submit.waitSemaphoreCount = 1;
@@ -807,6 +818,7 @@ private:
         loadDevice(device_, vkCreatePipelineLayout, "vkCreatePipelineLayout");
         loadDevice(device_, vkDestroyPipelineLayout, "vkDestroyPipelineLayout");
         loadDevice(device_, vkCreateGraphicsPipelines, "vkCreateGraphicsPipelines");
+        loadDevice(device_, vkCreateComputePipelines, "vkCreateComputePipelines");
         loadDevice(device_, vkDestroyPipeline, "vkDestroyPipeline");
         loadDevice(device_, vkCreateBuffer, "vkCreateBuffer");
         loadDevice(device_, vkDestroyBuffer, "vkDestroyBuffer");
@@ -837,6 +849,7 @@ private:
         loadDevice(device_, vkCmdSetViewport, "vkCmdSetViewport");
         loadDevice(device_, vkCmdSetScissor, "vkCmdSetScissor");
         loadDevice(device_, vkCmdPipelineBarrier, "vkCmdPipelineBarrier");
+        loadDevice(device_, vkCmdDispatch, "vkCmdDispatch");
         loadDevice(device_, vkCmdCopyBufferToImage, "vkCmdCopyBufferToImage");
         loadDevice(device_, vkCmdBlitImage, "vkCmdBlitImage");
         loadDevice(device_, vkCmdDraw, "vkCmdDraw");
@@ -978,6 +991,9 @@ private:
     void createSwapchain() {
         VkSurfaceCapabilitiesKHR caps{};
         vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice_, surface_, &caps);
+        if (enableV5RayTracing_ && !(caps.supportedUsageFlags & VK_IMAGE_USAGE_STORAGE_BIT)) {
+            throw std::runtime_error("Selected swapchain surface does not support VK_IMAGE_USAGE_STORAGE_BIT required by v5 realtime ray tracing");
+        }
 
         std::uint32_t formatCount = 0;
         vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice_, surface_, &formatCount, nullptr);
@@ -1010,6 +1026,9 @@ private:
         createInfo.imageExtent = swapchainExtent_;
         createInfo.imageArrayLayers = 1;
         createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        if (enableV5RayTracing_) {
+            createInfo.imageUsage |= VK_IMAGE_USAGE_STORAGE_BIT;
+        }
         if (queueFamilies_.graphics != queueFamilies_.present) {
             std::uint32_t indices[] = {queueFamilies_.graphics, queueFamilies_.present};
             createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
@@ -2304,6 +2323,75 @@ private:
         vkUpdateDescriptorSets(device_, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
     }
 
+    void createV5RayTracingDescriptors() {
+        VkDescriptorSetLayoutBinding cameraBinding{};
+        cameraBinding.binding = 0;
+        cameraBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        cameraBinding.descriptorCount = 1;
+        cameraBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+        VkDescriptorSetLayoutBinding outputBinding{};
+        outputBinding.binding = 1;
+        outputBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        outputBinding.descriptorCount = 1;
+        outputBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+        std::array<VkDescriptorSetLayoutBinding, 2> bindings{cameraBinding, outputBinding};
+        VkDescriptorSetLayoutCreateInfo layout{};
+        layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layout.bindingCount = static_cast<std::uint32_t>(bindings.size());
+        layout.pBindings = bindings.data();
+        require(vkCreateDescriptorSetLayout(device_, &layout, nullptr, &v5DescriptorSetLayout_), "vkCreateDescriptorSetLayout(v5 rt)");
+
+        std::array<VkDescriptorPoolSize, 2> poolSizes{};
+        poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        poolSizes[0].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size());
+        poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        poolSizes[1].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size());
+        VkDescriptorPoolCreateInfo pool{};
+        pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pool.poolSizeCount = static_cast<std::uint32_t>(poolSizes.size());
+        pool.pPoolSizes = poolSizes.data();
+        pool.maxSets = static_cast<std::uint32_t>(swapchainImageViews_.size());
+        require(vkCreateDescriptorPool(device_, &pool, nullptr, &v5DescriptorPool_), "vkCreateDescriptorPool(v5 rt)");
+
+        std::vector<VkDescriptorSetLayout> layouts(swapchainImageViews_.size(), v5DescriptorSetLayout_);
+        v5DescriptorSets_.resize(swapchainImageViews_.size());
+        VkDescriptorSetAllocateInfo allocate{};
+        allocate.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocate.descriptorPool = v5DescriptorPool_;
+        allocate.descriptorSetCount = static_cast<std::uint32_t>(v5DescriptorSets_.size());
+        allocate.pSetLayouts = layouts.data();
+        require(vkAllocateDescriptorSets(device_, &allocate, v5DescriptorSets_.data()), "vkAllocateDescriptorSets(v5 rt)");
+
+        VkDescriptorBufferInfo bufferInfo{};
+        bufferInfo.buffer = uniformBuffer_;
+        bufferInfo.offset = 0;
+        bufferInfo.range = sizeof(CameraUniform);
+
+        std::vector<VkDescriptorImageInfo> imageInfos(v5DescriptorSets_.size());
+        std::vector<std::array<VkWriteDescriptorSet, 2>> writes(v5DescriptorSets_.size());
+        for (std::size_t i = 0; i < v5DescriptorSets_.size(); ++i) {
+            imageInfos[i].imageView = swapchainImageViews_[i];
+            imageInfos[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+            writes[i][0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i][0].dstSet = v5DescriptorSets_[i];
+            writes[i][0].dstBinding = 0;
+            writes[i][0].descriptorCount = 1;
+            writes[i][0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[i][0].pBufferInfo = &bufferInfo;
+
+            writes[i][1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i][1].dstSet = v5DescriptorSets_[i];
+            writes[i][1].dstBinding = 1;
+            writes[i][1].descriptorCount = 1;
+            writes[i][1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[i][1].pImageInfo = &imageInfos[i];
+            vkUpdateDescriptorSets(device_, static_cast<std::uint32_t>(writes[i].size()), writes[i].data(), 0, nullptr);
+        }
+    }
+
     VkShaderModule createShader(const std::filesystem::path& path) {
         const std::vector<std::uint32_t> code = readSpirv(resolveProjectPath(path));
         VkShaderModuleCreateInfo createInfo{};
@@ -2642,6 +2730,28 @@ private:
             vkDestroyShaderModule(device_, fullscreenVertexShader, nullptr);
         }
 
+        if (enableV5RayTracing_) {
+            VkPipelineLayoutCreateInfo rtLayout{};
+            rtLayout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+            rtLayout.setLayoutCount = 1;
+            rtLayout.pSetLayouts = &v5DescriptorSetLayout_;
+            require(vkCreatePipelineLayout(device_, &rtLayout, nullptr, &v5RayTracingPipelineLayout_), "vkCreatePipelineLayout(v5 rt)");
+
+            const VkShaderModule rayTracingShader = createShader("shaders/vulkan_gpu/v5_raytrace.comp.spv");
+            VkPipelineShaderStageCreateInfo stage{};
+            stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+            stage.module = rayTracingShader;
+            stage.pName = "main";
+
+            VkComputePipelineCreateInfo computeCreateInfo{};
+            computeCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+            computeCreateInfo.stage = stage;
+            computeCreateInfo.layout = v5RayTracingPipelineLayout_;
+            require(vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &computeCreateInfo, nullptr, &v5RayTracingPipeline_), "vkCreateComputePipelines(v5 rt)");
+            vkDestroyShaderModule(device_, rayTracingShader, nullptr);
+        }
+
         vkDestroyShaderModule(device_, skyFragmentShader, nullptr);
         vkDestroyShaderModule(device_, skyVertexShader, nullptr);
     }
@@ -2751,7 +2861,7 @@ private:
         uniform.v4Flags[0] = geometry_.manyLightDemo ? 1.0f : 0.0f;
         uniform.v4Flags[1] = static_cast<float>(lightCount_);
         uniform.v4Flags[2] = static_cast<float>(v4DebugMode);
-        uniform.v4Flags[3] = 1.0f;
+        uniform.v4Flags[3] = static_cast<float>(frameIndex_);
 
         void* mapped = nullptr;
         require(vkMapMemory(device_, uniformMemory_, 0, sizeof(uniform), 0, &mapped), "vkMapMemory(uniform)");
@@ -2809,6 +2919,58 @@ private:
         viewport.maxDepth = 1.0f;
         VkRect2D scissor{};
         scissor.extent = swapchainExtent_;
+
+        if (enableV5RayTracing_) {
+            VkImageMemoryBarrier toGeneral{};
+            toGeneral.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            toGeneral.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            toGeneral.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toGeneral.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toGeneral.image = swapchainImages_[imageIndex];
+            toGeneral.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            toGeneral.subresourceRange.levelCount = 1;
+            toGeneral.subresourceRange.layerCount = 1;
+            toGeneral.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            vkCmdPipelineBarrier(
+                commandBuffer,
+                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                0,
+                0,
+                nullptr,
+                0,
+                nullptr,
+                1,
+                &toGeneral
+            );
+
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, v5RayTracingPipeline_);
+            const VkDescriptorSet descriptorSet = v5DescriptorSets_[imageIndex];
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, v5RayTracingPipelineLayout_, 0, 1, &descriptorSet, 0, nullptr);
+            vkCmdDispatch(commandBuffer, (swapchainExtent_.width + 7u) / 8u, (swapchainExtent_.height + 7u) / 8u, 1);
+
+            VkImageMemoryBarrier toPresent = toGeneral;
+            toPresent.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+            toPresent.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+            toPresent.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            toPresent.dstAccessMask = 0;
+            vkCmdPipelineBarrier(
+                commandBuffer,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                0,
+                0,
+                nullptr,
+                0,
+                nullptr,
+                1,
+                &toPresent
+            );
+
+            require(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer");
+            return;
+        }
 
         if (enableV4Ssao_) {
             std::array<VkClearValue, 4> gbufferClears{};
@@ -2960,6 +3122,7 @@ private:
     std::uint32_t height_ = 0;
     const GpuPreviewGeometry& geometry_;
     bool enableV3Shadows_ = false;
+    bool enableV5RayTracing_ = false;
     std::string gpuName_;
 
     VkInstance instance_ = VK_NULL_HANDLE;
@@ -3029,8 +3192,12 @@ private:
     VkDescriptorSetLayout v4DescriptorSetLayout_ = VK_NULL_HANDLE;
     VkDescriptorPool v4DescriptorPool_ = VK_NULL_HANDLE;
     VkDescriptorSet v4DescriptorSet_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout v5DescriptorSetLayout_ = VK_NULL_HANDLE;
+    VkDescriptorPool v5DescriptorPool_ = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> v5DescriptorSets_;
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipelineLayout v4ComposePipelineLayout_ = VK_NULL_HANDLE;
+    VkPipelineLayout v5RayTracingPipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     VkPipeline skyPipeline_ = VK_NULL_HANDLE;
     VkPipeline shadowPipeline_ = VK_NULL_HANDLE;
@@ -3039,6 +3206,7 @@ private:
     VkPipeline ssaoPipeline_ = VK_NULL_HANDLE;
     VkPipeline ssaoBlurPipeline_ = VK_NULL_HANDLE;
     VkPipeline v4ComposePipeline_ = VK_NULL_HANDLE;
+    VkPipeline v5RayTracingPipeline_ = VK_NULL_HANDLE;
     VkCommandPool uploadCommandPool_ = VK_NULL_HANDLE;
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     VkCommandBuffer commandBuffer_ = VK_NULL_HANDLE;
@@ -3310,7 +3478,7 @@ int runVulkanPreviewWindow(V1RenderSettings settings) {
 
     try {
         previewLog("runVulkanPreviewWindow: create renderer");
-        state.renderer = std::make_unique<VulkanGpuRenderer>(hwnd, state.settings.width, state.settings.height, state.geometry, state.settings.enableV3Shadows, state.settings.enableV4Ssao);
+        state.renderer = std::make_unique<VulkanGpuRenderer>(hwnd, state.settings.width, state.settings.height, state.geometry, state.settings.enableV3Shadows, state.settings.enableV4Ssao, state.settings.enableV5RayTracing);
     } catch (const std::exception& error) {
         std::cerr << "Could not initialize Vulkan GPU preview: " << error.what() << '\n';
         previewLog(std::string("runVulkanPreviewWindow: renderer init failed: ") + error.what());

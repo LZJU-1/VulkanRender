@@ -30,6 +30,7 @@ struct V1RenderSettings {
     bool enableV2Shading = false;
     bool enableV3Shadows = false;
     bool enableV4Ssao = false;
+    bool enableV5RayTracing = false;
     V1CameraSettings camera;
     std::filesystem::path scenePath;
     std::filesystem::path outputPath;

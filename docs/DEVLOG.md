@@ -441,6 +441,34 @@ scripts\build_msvc.bat
 C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
 ```
 
+## 2026-06-15 - V5 Realtime Compute Ray Tracing Preview
+
+- Added the first runnable v5 realtime ray tracing preview path.
+- `--profile v5-rt --preview` now opens the Vulkan preview instead of stopping at graph planning.
+- Added `V1RenderSettings::enableV5RayTracing` to select the v5 path.
+- Added a Vulkan compute pipeline that dispatches `shaders/vulkan_gpu/v5_raytrace.comp.spv`.
+- Added `shaders/vulkan_gpu/v5_raytrace.comp.hlsl`, a procedural GPU ray tracer with:
+  - primary camera rays
+  - sphere and plane intersections
+  - hard shadow rays
+  - simple reflection/sky contribution
+  - tone mapping
+- V5 writes directly to the acquired swapchain image as a storage image:
+  - swapchain requests `VK_IMAGE_USAGE_STORAGE_BIT`
+  - descriptor binding 0 is the camera uniform buffer
+  - descriptor binding 1 is the storage output image
+  - command buffer transitions `UNDEFINED -> GENERAL -> PRESENT_SRC_KHR`
+- Added `docs/V5_FEATURES.md` and updated `docs/RENDER_ME.md`.
+- Downloaded DXC locally during development to compile the v5 shader, but `tools/` is ignored and is not intended to be committed.
+- Current limit: this is a GPU compute ray tracing path, not yet a KHR ray tracing pipeline with BLAS/TLAS/SBT.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+build\nmake-debug\src\vulkan_render.exe --profile v5-rt --preview --width 1280 --height 720
+```
+
 ## 2026-06-14 - V2 GPU Texture And Bump/Parallax Preview
 
 - Added per-vertex UVs to the GPU preview geometry instead of using one averaged UV per triangle.

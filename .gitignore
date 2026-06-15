@@ -15,4 +15,4 @@ CMakeUserPresets.json
 *.dll
 *.lib
 *.log
-
+tools/
