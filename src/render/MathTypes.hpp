@@ -95,6 +95,20 @@ struct Quat {
     float w = 1.0f;
 };
 
+struct Vertex2 {
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+};
+
+struct CubeInstance {
+    std::string name;
+    Vec3 center;
+    float size = 1.0f;
+    Vec3 color;
+    float spin = 1.0f;
+};
+
 struct Camera {
     Vec3 eye{0.0f, 1.1f, 5.7f};
     Vec3 target{0.0f, 0.55f, 0.0f};
