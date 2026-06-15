@@ -1,5 +1,28 @@
 # Development Log
 
+## 2026-06-15 - V4 Deferred G-buffer And SSAO Preview
+
+- Enabled realtime preview for `--profile v4`.
+- Added `enableV4Ssao` render setting and routed v4 through the GPU preview path.
+- Added offscreen G-buffer resources:
+  - albedo + roughness
+  - normal + metalness
+  - world position + material marker
+- Added v4 shaders:
+  - `v4_gbuffer.frag.hlsl`
+  - `v4_fullscreen.vert.hlsl`
+  - `v4_ssao_compose.frag.hlsl`
+- Compiled the v4 shaders with `C:\Users\lzju\Desktop\NTC\bin\x64\dxc.exe`.
+- Added fullscreen deferred composition with SSAO contact darkening.
+- Updated v4 docs and render commands.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v4 --preview --width 1280 --height 720
+```
+
 ## 2026-06-15 - GPU Preview Mouse Look
 
 - Added right-mouse drag look to the Vulkan GPU preview roaming camera.

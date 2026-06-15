@@ -29,6 +29,7 @@ struct V1RenderSettings {
     std::uint32_t frameIndex = 0;
     bool enableV2Shading = false;
     bool enableV3Shadows = false;
+    bool enableV4Ssao = false;
     V1CameraSettings camera;
     std::filesystem::path scenePath;
     std::filesystem::path outputPath;

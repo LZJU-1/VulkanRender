@@ -79,7 +79,15 @@ This opens the dedicated v3 shadow demo scene by default. To be explicit, pass `
 
 Target behavior: render G-buffer data, apply SSAO, and compose many lights efficiently.
 
-Current implementation: deferred graph shape is ready and tested.
+Current implementation: see `docs/V4_FEATURES.md`. The realtime Vulkan preview fills an offscreen G-buffer, then runs a fullscreen deferred composition pass with SSAO.
+
+Realtime preview:
+
+```powershell
+build\nmake-debug\src\vulkan_render.exe --profile v4 --preview --width 1280 --height 720
+```
+
+This opens the dedicated shadow/occlusion demo scene by default. Press `R` for roaming; hold right mouse and drag to look.
 
 ## v5 Realtime Ray Tracing
 

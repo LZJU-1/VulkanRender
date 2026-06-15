@@ -45,6 +45,12 @@ constexpr std::uint32_t kShadowAtlasWidth = kShadowTileSize * kShadowAtlasColumn
 constexpr std::uint32_t kShadowAtlasHeight = kShadowTileSize * kShadowAtlasRows;
 constexpr std::uint32_t kShadowMapCount = 10;
 constexpr std::uint32_t kDirectionalShadowTextureBinding = 14;
+constexpr std::uint32_t kGBufferAlbedoBinding = 15;
+constexpr std::uint32_t kGBufferNormalBinding = 16;
+constexpr std::uint32_t kGBufferWorldBinding = 17;
+constexpr VkFormat kGBufferAlbedoFormat = VK_FORMAT_R8G8B8A8_UNORM;
+constexpr VkFormat kGBufferNormalFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+constexpr VkFormat kGBufferWorldFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
 
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
 PFN_vkCreateInstance vkCreateInstance = nullptr;
@@ -460,8 +466,8 @@ std::uint32_t findMemoryType(VkPhysicalDevice physicalDevice, std::uint32_t bits
 
 class VulkanGpuRenderer {
 public:
-    VulkanGpuRenderer(HWND hwnd, std::uint32_t width, std::uint32_t height, const GpuPreviewGeometry& geometry, bool enableV3Shadows)
-        : hwnd_(hwnd), width_(width), height_(height), geometry_(geometry), enableV3Shadows_(enableV3Shadows) {
+    VulkanGpuRenderer(HWND hwnd, std::uint32_t width, std::uint32_t height, const GpuPreviewGeometry& geometry, bool enableV3Shadows, bool enableV4Ssao)
+        : hwnd_(hwnd), width_(width), height_(height), geometry_(geometry), enableV3Shadows_(enableV3Shadows), enableV4Ssao_(enableV4Ssao) {
         previewLog("VulkanGpuRenderer: loadVulkanLibrary");
         loadVulkanLibrary();
         previewLog("VulkanGpuRenderer: createInstance");
@@ -484,10 +490,18 @@ public:
         createRenderPass();
         previewLog("VulkanGpuRenderer: createShadowRenderPass");
         createShadowRenderPass();
+        if (enableV4Ssao_) {
+            previewLog("VulkanGpuRenderer: createGBufferRenderPass");
+            createGBufferRenderPass();
+        }
         previewLog("VulkanGpuRenderer: createDepthResources");
         createDepthResources();
         previewLog("VulkanGpuRenderer: createShadowResources");
         createShadowResources();
+        if (enableV4Ssao_) {
+            previewLog("VulkanGpuRenderer: createGBufferResources");
+            createGBufferResources();
+        }
         previewLog("VulkanGpuRenderer: createMsaaColorResources");
         createMsaaColorResources();
         previewLog("VulkanGpuRenderer: createFramebuffers");
@@ -498,6 +512,10 @@ public:
         createTextureResources();
         previewLog("VulkanGpuRenderer: createDescriptors");
         createDescriptors();
+        if (enableV4Ssao_) {
+            previewLog("VulkanGpuRenderer: createV4ComposeDescriptors");
+            createV4ComposeDescriptors();
+        }
         previewLog(
             "VulkanGpuRenderer: materialSets=" + std::to_string(materialTextures_.size())
             + " batches=" + std::to_string(geometry_.batches.size())
@@ -520,10 +538,16 @@ public:
         if (device_ != VK_NULL_HANDLE && inFlight_ != VK_NULL_HANDLE) vkDestroyFence(device_, inFlight_, nullptr);
         if (device_ != VK_NULL_HANDLE && commandPool_ != VK_NULL_HANDLE) vkDestroyCommandPool(device_, commandPool_, nullptr);
         if (device_ != VK_NULL_HANDLE && shadowFramebuffer_ != VK_NULL_HANDLE) vkDestroyFramebuffer(device_, shadowFramebuffer_, nullptr);
+        if (device_ != VK_NULL_HANDLE && gbufferFramebuffer_ != VK_NULL_HANDLE) vkDestroyFramebuffer(device_, gbufferFramebuffer_, nullptr);
+        if (device_ != VK_NULL_HANDLE && v4ComposePipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, v4ComposePipeline_, nullptr);
+        if (device_ != VK_NULL_HANDLE && gbufferPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, gbufferPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && shadowPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, shadowPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && skyPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, skyPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && pipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, pipeline_, nullptr);
+        if (device_ != VK_NULL_HANDLE && v4ComposePipelineLayout_ != VK_NULL_HANDLE) vkDestroyPipelineLayout(device_, v4ComposePipelineLayout_, nullptr);
         if (device_ != VK_NULL_HANDLE && pipelineLayout_ != VK_NULL_HANDLE) vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr);
+        if (device_ != VK_NULL_HANDLE && v4DescriptorPool_ != VK_NULL_HANDLE) vkDestroyDescriptorPool(device_, v4DescriptorPool_, nullptr);
+        if (device_ != VK_NULL_HANDLE && v4DescriptorSetLayout_ != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, v4DescriptorSetLayout_, nullptr);
         if (device_ != VK_NULL_HANDLE && descriptorPool_ != VK_NULL_HANDLE) vkDestroyDescriptorPool(device_, descriptorPool_, nullptr);
         if (device_ != VK_NULL_HANDLE && descriptorSetLayout_ != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, descriptorSetLayout_, nullptr);
         if (device_ != VK_NULL_HANDLE && textureSampler_ != VK_NULL_HANDLE) vkDestroySampler(device_, textureSampler_, nullptr);
@@ -553,6 +577,15 @@ public:
         if (device_ != VK_NULL_HANDLE && shadowDepthView_ != VK_NULL_HANDLE) vkDestroyImageView(device_, shadowDepthView_, nullptr);
         if (device_ != VK_NULL_HANDLE && shadowDepthImage_ != VK_NULL_HANDLE) vkDestroyImage(device_, shadowDepthImage_, nullptr);
         if (device_ != VK_NULL_HANDLE && shadowDepthMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, shadowDepthMemory_, nullptr);
+        for (TextureResource& target : gbufferTargets_) {
+            if (device_ != VK_NULL_HANDLE && target.view != VK_NULL_HANDLE) vkDestroyImageView(device_, target.view, nullptr);
+            if (device_ != VK_NULL_HANDLE && target.image != VK_NULL_HANDLE) vkDestroyImage(device_, target.image, nullptr);
+            if (device_ != VK_NULL_HANDLE && target.memory != VK_NULL_HANDLE) vkFreeMemory(device_, target.memory, nullptr);
+        }
+        if (device_ != VK_NULL_HANDLE && gbufferDepthView_ != VK_NULL_HANDLE) vkDestroyImageView(device_, gbufferDepthView_, nullptr);
+        if (device_ != VK_NULL_HANDLE && gbufferDepthImage_ != VK_NULL_HANDLE) vkDestroyImage(device_, gbufferDepthImage_, nullptr);
+        if (device_ != VK_NULL_HANDLE && gbufferDepthMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, gbufferDepthMemory_, nullptr);
+        if (device_ != VK_NULL_HANDLE && gbufferRenderPass_ != VK_NULL_HANDLE) vkDestroyRenderPass(device_, gbufferRenderPass_, nullptr);
         if (device_ != VK_NULL_HANDLE && shadowRenderPass_ != VK_NULL_HANDLE) vkDestroyRenderPass(device_, shadowRenderPass_, nullptr);
         if (device_ != VK_NULL_HANDLE && renderPass_ != VK_NULL_HANDLE) vkDestroyRenderPass(device_, renderPass_, nullptr);
         for (VkImageView view : swapchainImageViews_) vkDestroyImageView(device_, view, nullptr);
@@ -1047,6 +1080,81 @@ private:
         require(vkCreateRenderPass(device_, &createInfo, nullptr, &shadowRenderPass_), "vkCreateRenderPass(shadow)");
     }
 
+    void createGBufferRenderPass() {
+        VkAttachmentDescription albedo{};
+        albedo.format = kGBufferAlbedoFormat;
+        albedo.samples = VK_SAMPLE_COUNT_1_BIT;
+        albedo.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        albedo.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        albedo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        albedo.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkAttachmentDescription normal{};
+        normal.format = kGBufferNormalFormat;
+        normal.samples = VK_SAMPLE_COUNT_1_BIT;
+        normal.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        normal.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        normal.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        normal.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkAttachmentDescription world{};
+        world.format = kGBufferWorldFormat;
+        world.samples = VK_SAMPLE_COUNT_1_BIT;
+        world.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        world.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        world.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        world.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkAttachmentDescription depth{};
+        depth.format = VK_FORMAT_D32_SFLOAT;
+        depth.samples = VK_SAMPLE_COUNT_1_BIT;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        depth.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+        std::array<VkAttachmentReference, 3> colorRefs{};
+        colorRefs[0] = {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        colorRefs[1] = {1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        colorRefs[2] = {2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkAttachmentReference depthRef{};
+        depthRef.attachment = 3;
+        depthRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = static_cast<std::uint32_t>(colorRefs.size());
+        subpass.pColorAttachments = colorRefs.data();
+        subpass.pDepthStencilAttachment = &depthRef;
+
+        std::array<VkSubpassDependency, 2> dependencies{};
+        dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+        dependencies[0].dstSubpass = 0;
+        dependencies[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+        dependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+        dependencies[1].srcSubpass = 0;
+        dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+        dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+        std::array<VkAttachmentDescription, 4> attachments{albedo, normal, world, depth};
+        VkRenderPassCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        createInfo.attachmentCount = static_cast<std::uint32_t>(attachments.size());
+        createInfo.pAttachments = attachments.data();
+        createInfo.subpassCount = 1;
+        createInfo.pSubpasses = &subpass;
+        createInfo.dependencyCount = static_cast<std::uint32_t>(dependencies.size());
+        createInfo.pDependencies = dependencies.data();
+        require(vkCreateRenderPass(device_, &createInfo, nullptr, &gbufferRenderPass_), "vkCreateRenderPass(gbuffer)");
+    }
+
     void createDepthResources() {
         VkImageCreateInfo image{};
         image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -1108,6 +1216,78 @@ private:
         framebuffer.layers = 1;
         require(vkCreateFramebuffer(device_, &framebuffer, nullptr, &shadowFramebuffer_), "vkCreateFramebuffer(shadow)");
 
+    }
+
+    void createColorAttachment(TextureResource& target, VkFormat format, const char* label) {
+        VkImageCreateInfo image{};
+        image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        image.imageType = VK_IMAGE_TYPE_2D;
+        image.extent = {swapchainExtent_.width, swapchainExtent_.height, 1};
+        image.mipLevels = 1;
+        image.arrayLayers = 1;
+        image.format = format;
+        image.tiling = VK_IMAGE_TILING_OPTIMAL;
+        image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        image.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        image.samples = VK_SAMPLE_COUNT_1_BIT;
+        image.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        require(vkCreateImage(device_, &image, nullptr, &target.image), label);
+
+        VkMemoryRequirements requirements{};
+        vkGetImageMemoryRequirements(device_, target.image, &requirements);
+        VkMemoryAllocateInfo allocate{};
+        allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocate.allocationSize = requirements.size;
+        allocate.memoryTypeIndex = findMemoryType(physicalDevice_, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        require(vkAllocateMemory(device_, &allocate, nullptr, &target.memory), "vkAllocateMemory(gbuffer)");
+        require(vkBindImageMemory(device_, target.image, target.memory, 0), "vkBindImageMemory(gbuffer)");
+        target.view = createImageView(target.image, format, VK_IMAGE_ASPECT_COLOR_BIT);
+    }
+
+    void createGBufferResources() {
+        createColorAttachment(gbufferTargets_[0], kGBufferAlbedoFormat, "vkCreateImage(gbuffer albedo)");
+        createColorAttachment(gbufferTargets_[1], kGBufferNormalFormat, "vkCreateImage(gbuffer normal)");
+        createColorAttachment(gbufferTargets_[2], kGBufferWorldFormat, "vkCreateImage(gbuffer world)");
+
+        VkImageCreateInfo depth{};
+        depth.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        depth.imageType = VK_IMAGE_TYPE_2D;
+        depth.extent = {swapchainExtent_.width, swapchainExtent_.height, 1};
+        depth.mipLevels = 1;
+        depth.arrayLayers = 1;
+        depth.format = VK_FORMAT_D32_SFLOAT;
+        depth.tiling = VK_IMAGE_TILING_OPTIMAL;
+        depth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        depth.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        depth.samples = VK_SAMPLE_COUNT_1_BIT;
+        depth.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        require(vkCreateImage(device_, &depth, nullptr, &gbufferDepthImage_), "vkCreateImage(gbuffer depth)");
+
+        VkMemoryRequirements requirements{};
+        vkGetImageMemoryRequirements(device_, gbufferDepthImage_, &requirements);
+        VkMemoryAllocateInfo allocate{};
+        allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocate.allocationSize = requirements.size;
+        allocate.memoryTypeIndex = findMemoryType(physicalDevice_, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        require(vkAllocateMemory(device_, &allocate, nullptr, &gbufferDepthMemory_), "vkAllocateMemory(gbuffer depth)");
+        require(vkBindImageMemory(device_, gbufferDepthImage_, gbufferDepthMemory_, 0), "vkBindImageMemory(gbuffer depth)");
+        gbufferDepthView_ = createImageView(gbufferDepthImage_, VK_FORMAT_D32_SFLOAT, VK_IMAGE_ASPECT_DEPTH_BIT);
+
+        std::array<VkImageView, 4> attachments{
+            gbufferTargets_[0].view,
+            gbufferTargets_[1].view,
+            gbufferTargets_[2].view,
+            gbufferDepthView_,
+        };
+        VkFramebufferCreateInfo framebuffer{};
+        framebuffer.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebuffer.renderPass = gbufferRenderPass_;
+        framebuffer.attachmentCount = static_cast<std::uint32_t>(attachments.size());
+        framebuffer.pAttachments = attachments.data();
+        framebuffer.width = swapchainExtent_.width;
+        framebuffer.height = swapchainExtent_.height;
+        framebuffer.layers = 1;
+        require(vkCreateFramebuffer(device_, &framebuffer, nullptr, &gbufferFramebuffer_), "vkCreateFramebuffer(gbuffer)");
     }
 
     void createMsaaColorResources() {
@@ -1796,6 +1976,114 @@ private:
         }
     }
 
+    void createV4ComposeDescriptors() {
+        VkDescriptorSetLayoutBinding cameraBinding{};
+        cameraBinding.binding = 0;
+        cameraBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        cameraBinding.descriptorCount = 1;
+        cameraBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        VkDescriptorSetLayoutBinding samplerBinding{};
+        samplerBinding.binding = 5;
+        samplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+        samplerBinding.descriptorCount = 1;
+        samplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        VkDescriptorSetLayoutBinding albedoBinding{};
+        albedoBinding.binding = kGBufferAlbedoBinding;
+        albedoBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        albedoBinding.descriptorCount = 1;
+        albedoBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        VkDescriptorSetLayoutBinding normalBinding = albedoBinding;
+        normalBinding.binding = kGBufferNormalBinding;
+        VkDescriptorSetLayoutBinding worldBinding = albedoBinding;
+        worldBinding.binding = kGBufferWorldBinding;
+
+        std::array<VkDescriptorSetLayoutBinding, 5> bindings{
+            cameraBinding,
+            samplerBinding,
+            albedoBinding,
+            normalBinding,
+            worldBinding,
+        };
+        VkDescriptorSetLayoutCreateInfo layout{};
+        layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layout.bindingCount = static_cast<std::uint32_t>(bindings.size());
+        layout.pBindings = bindings.data();
+        require(vkCreateDescriptorSetLayout(device_, &layout, nullptr, &v4DescriptorSetLayout_), "vkCreateDescriptorSetLayout(v4)");
+
+        std::array<VkDescriptorPoolSize, 3> poolSizes{};
+        poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        poolSizes[0].descriptorCount = 1;
+        poolSizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+        poolSizes[1].descriptorCount = 1;
+        poolSizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        poolSizes[2].descriptorCount = 3;
+        VkDescriptorPoolCreateInfo pool{};
+        pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pool.poolSizeCount = static_cast<std::uint32_t>(poolSizes.size());
+        pool.pPoolSizes = poolSizes.data();
+        pool.maxSets = 1;
+        require(vkCreateDescriptorPool(device_, &pool, nullptr, &v4DescriptorPool_), "vkCreateDescriptorPool(v4)");
+
+        VkDescriptorSetAllocateInfo allocate{};
+        allocate.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocate.descriptorPool = v4DescriptorPool_;
+        allocate.descriptorSetCount = 1;
+        allocate.pSetLayouts = &v4DescriptorSetLayout_;
+        require(vkAllocateDescriptorSets(device_, &allocate, &v4DescriptorSet_), "vkAllocateDescriptorSets(v4)");
+
+        VkDescriptorBufferInfo bufferInfo{};
+        bufferInfo.buffer = uniformBuffer_;
+        bufferInfo.offset = 0;
+        bufferInfo.range = sizeof(CameraUniform);
+        VkDescriptorImageInfo samplerInfo{};
+        samplerInfo.sampler = textureSampler_;
+        VkDescriptorImageInfo albedoInfo{};
+        albedoInfo.imageView = gbufferTargets_[0].view;
+        albedoInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkDescriptorImageInfo normalInfo{};
+        normalInfo.imageView = gbufferTargets_[1].view;
+        normalInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkDescriptorImageInfo worldInfo{};
+        worldInfo.imageView = gbufferTargets_[2].view;
+        worldInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        std::array<VkWriteDescriptorSet, 5> writes{};
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet = v4DescriptorSet_;
+        writes[0].dstBinding = 0;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[0].pBufferInfo = &bufferInfo;
+        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet = v4DescriptorSet_;
+        writes[1].dstBinding = 5;
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+        writes[1].pImageInfo = &samplerInfo;
+        writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[2].dstSet = v4DescriptorSet_;
+        writes[2].dstBinding = kGBufferAlbedoBinding;
+        writes[2].descriptorCount = 1;
+        writes[2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        writes[2].pImageInfo = &albedoInfo;
+        writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[3].dstSet = v4DescriptorSet_;
+        writes[3].dstBinding = kGBufferNormalBinding;
+        writes[3].descriptorCount = 1;
+        writes[3].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        writes[3].pImageInfo = &normalInfo;
+        writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[4].dstSet = v4DescriptorSet_;
+        writes[4].dstBinding = kGBufferWorldBinding;
+        writes[4].descriptorCount = 1;
+        writes[4].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        writes[4].pImageInfo = &worldInfo;
+        vkUpdateDescriptorSets(device_, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    }
+
     VkShaderModule createShader(const std::filesystem::path& path) {
         const std::vector<std::uint32_t> code = readSpirv(resolveProjectPath(path));
         VkShaderModuleCreateInfo createInfo{};
@@ -1992,6 +2280,94 @@ private:
         skyCreateInfo.subpass = 0;
         require(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &skyCreateInfo, nullptr, &skyPipeline_), "vkCreateGraphicsPipelines(sky)");
 
+        if (enableV4Ssao_) {
+            const VkShaderModule gbufferVertexShader = createShader("shaders/vulkan_gpu/simple_color.vert.spv");
+            const VkShaderModule gbufferFragmentShader = createShader("shaders/vulkan_gpu/v4_gbuffer.frag.spv");
+            VkPipelineShaderStageCreateInfo gbufferStages[2]{};
+            gbufferStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            gbufferStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+            gbufferStages[0].module = gbufferVertexShader;
+            gbufferStages[0].pName = "main";
+            gbufferStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            gbufferStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+            gbufferStages[1].module = gbufferFragmentShader;
+            gbufferStages[1].pName = "main";
+
+            VkPipelineMultisampleStateCreateInfo gbufferMultisample{};
+            gbufferMultisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+            gbufferMultisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+            std::array<VkPipelineColorBlendAttachmentState, 3> gbufferColorBlends{};
+            for (VkPipelineColorBlendAttachmentState& attachment : gbufferColorBlends) {
+                attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+            }
+            VkPipelineColorBlendStateCreateInfo gbufferBlend{};
+            gbufferBlend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+            gbufferBlend.attachmentCount = static_cast<std::uint32_t>(gbufferColorBlends.size());
+            gbufferBlend.pAttachments = gbufferColorBlends.data();
+
+            VkGraphicsPipelineCreateInfo gbufferCreateInfo{};
+            gbufferCreateInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+            gbufferCreateInfo.stageCount = 2;
+            gbufferCreateInfo.pStages = gbufferStages;
+            gbufferCreateInfo.pVertexInputState = &vertexInput;
+            gbufferCreateInfo.pInputAssemblyState = &inputAssembly;
+            gbufferCreateInfo.pViewportState = &viewportState;
+            gbufferCreateInfo.pRasterizationState = &raster;
+            gbufferCreateInfo.pMultisampleState = &gbufferMultisample;
+            gbufferCreateInfo.pDepthStencilState = &depth;
+            gbufferCreateInfo.pColorBlendState = &gbufferBlend;
+            gbufferCreateInfo.pDynamicState = &dynamic;
+            gbufferCreateInfo.layout = pipelineLayout_;
+            gbufferCreateInfo.renderPass = gbufferRenderPass_;
+            gbufferCreateInfo.subpass = 0;
+            require(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &gbufferCreateInfo, nullptr, &gbufferPipeline_), "vkCreateGraphicsPipelines(gbuffer)");
+            vkDestroyShaderModule(device_, gbufferFragmentShader, nullptr);
+            vkDestroyShaderModule(device_, gbufferVertexShader, nullptr);
+
+            VkPipelineLayoutCreateInfo composeLayout{};
+            composeLayout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+            composeLayout.setLayoutCount = 1;
+            composeLayout.pSetLayouts = &v4DescriptorSetLayout_;
+            require(vkCreatePipelineLayout(device_, &composeLayout, nullptr, &v4ComposePipelineLayout_), "vkCreatePipelineLayout(v4 compose)");
+
+            const VkShaderModule composeVertexShader = createShader("shaders/vulkan_gpu/v4_fullscreen.vert.spv");
+            const VkShaderModule composeFragmentShader = createShader("shaders/vulkan_gpu/v4_ssao_compose.frag.spv");
+            VkPipelineShaderStageCreateInfo composeStages[2]{};
+            composeStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            composeStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+            composeStages[0].module = composeVertexShader;
+            composeStages[0].pName = "main";
+            composeStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            composeStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+            composeStages[1].module = composeFragmentShader;
+            composeStages[1].pName = "main";
+            VkPipelineDepthStencilStateCreateInfo composeDepth{};
+            composeDepth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+            composeDepth.depthTestEnable = VK_FALSE;
+            composeDepth.depthWriteEnable = VK_FALSE;
+            VkPipelineRasterizationStateCreateInfo composeRaster = skyRaster;
+            composeRaster.cullMode = VK_CULL_MODE_NONE;
+
+            VkGraphicsPipelineCreateInfo composeCreateInfo{};
+            composeCreateInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+            composeCreateInfo.stageCount = 2;
+            composeCreateInfo.pStages = composeStages;
+            composeCreateInfo.pVertexInputState = &skyVertexInput;
+            composeCreateInfo.pInputAssemblyState = &inputAssembly;
+            composeCreateInfo.pViewportState = &viewportState;
+            composeCreateInfo.pRasterizationState = &composeRaster;
+            composeCreateInfo.pMultisampleState = &multisample;
+            composeCreateInfo.pDepthStencilState = &composeDepth;
+            composeCreateInfo.pColorBlendState = &blend;
+            composeCreateInfo.pDynamicState = &dynamic;
+            composeCreateInfo.layout = v4ComposePipelineLayout_;
+            composeCreateInfo.renderPass = renderPass_;
+            composeCreateInfo.subpass = 0;
+            require(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &composeCreateInfo, nullptr, &v4ComposePipeline_), "vkCreateGraphicsPipelines(v4 compose)");
+            vkDestroyShaderModule(device_, composeFragmentShader, nullptr);
+            vkDestroyShaderModule(device_, composeVertexShader, nullptr);
+        }
+
         vkDestroyShaderModule(device_, skyFragmentShader, nullptr);
         vkDestroyShaderModule(device_, skyVertexShader, nullptr);
     }
@@ -2094,7 +2470,7 @@ private:
         uniform.spotColorIntensity[1] = 0.68f;
         uniform.spotColorIntensity[2] = 1.0f;
         uniform.spotColorIntensity[3] = 0.85f;
-        uniform.v3Flags[0] = enableV3Shadows_ ? 1.0f : 0.0f;
+        uniform.v3Flags[0] = enableV4Ssao_ ? 2.0f : (enableV3Shadows_ ? 1.0f : 0.0f);
         uniform.v3Flags[1] = 2.4f;
         uniform.v3Flags[2] = 4.5f;
         uniform.v3Flags[3] = 7.2f;
@@ -2148,6 +2524,71 @@ private:
             vkCmdEndRenderPass(commandBuffer);
         }
 
+        VkViewport viewport{};
+        viewport.width = static_cast<float>(swapchainExtent_.width);
+        viewport.height = static_cast<float>(swapchainExtent_.height);
+        viewport.minDepth = 0.0f;
+        viewport.maxDepth = 1.0f;
+        VkRect2D scissor{};
+        scissor.extent = swapchainExtent_;
+
+        if (enableV4Ssao_) {
+            std::array<VkClearValue, 4> gbufferClears{};
+            gbufferClears[0].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
+            gbufferClears[1].color = {{0.5f, 0.5f, 1.0f, 1.0f}};
+            gbufferClears[2].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
+            gbufferClears[3].depthStencil = {1.0f, 0};
+            VkRenderPassBeginInfo gbufferPass{};
+            gbufferPass.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            gbufferPass.renderPass = gbufferRenderPass_;
+            gbufferPass.framebuffer = gbufferFramebuffer_;
+            gbufferPass.renderArea.extent = swapchainExtent_;
+            gbufferPass.clearValueCount = static_cast<std::uint32_t>(gbufferClears.size());
+            gbufferPass.pClearValues = gbufferClears.data();
+            vkCmdBeginRenderPass(commandBuffer, &gbufferPass, VK_SUBPASS_CONTENTS_INLINE);
+            vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+            vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, gbufferPipeline_);
+            VkDeviceSize gbufferOffset = 0;
+            vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer_, &gbufferOffset);
+            const VkDescriptorSet fallbackDescriptorSet = descriptorSets_.empty() ? VK_NULL_HANDLE : descriptorSets_.front();
+            if (geometry_.batches.empty()) {
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &fallbackDescriptorSet, 0, nullptr);
+                vkCmdDraw(commandBuffer, vertexCount_, 1, 0, 0);
+            } else {
+                for (const GpuPreviewGeometry::Batch& batch : geometry_.batches) {
+                    if (batch.vertexCount == 0) {
+                        continue;
+                    }
+                    const std::uint32_t materialIndex = batch.materialIndex < descriptorSets_.size() ? batch.materialIndex : 0u;
+                    const VkDescriptorSet descriptorSet = descriptorSets_[materialIndex];
+                    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &descriptorSet, 0, nullptr);
+                    vkCmdDraw(commandBuffer, batch.vertexCount, 1, batch.firstVertex, 0);
+                }
+            }
+            vkCmdEndRenderPass(commandBuffer);
+
+            std::array<VkClearValue, 2> composeClears{};
+            composeClears[0].color = {{0.58f, 0.62f, 0.68f, 1.0f}};
+            composeClears[1].depthStencil = {1.0f, 0};
+            VkRenderPassBeginInfo composePass{};
+            composePass.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            composePass.renderPass = renderPass_;
+            composePass.framebuffer = framebuffers_[imageIndex];
+            composePass.renderArea.extent = swapchainExtent_;
+            composePass.clearValueCount = static_cast<std::uint32_t>(composeClears.size());
+            composePass.pClearValues = composeClears.data();
+            vkCmdBeginRenderPass(commandBuffer, &composePass, VK_SUBPASS_CONTENTS_INLINE);
+            vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+            vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, v4ComposePipeline_);
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, v4ComposePipelineLayout_, 0, 1, &v4DescriptorSet_, 0, nullptr);
+            vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+            vkCmdEndRenderPass(commandBuffer);
+            require(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer");
+            return;
+        }
+
         std::array<VkClearValue, 2> clears{};
         clears[0].color = {{0.58f, 0.62f, 0.68f, 1.0f}};
         clears[1].depthStencil = {1.0f, 0};
@@ -2161,13 +2602,6 @@ private:
         renderPass.pClearValues = clears.data();
         vkCmdBeginRenderPass(commandBuffer, &renderPass, VK_SUBPASS_CONTENTS_INLINE);
 
-        VkViewport viewport{};
-        viewport.width = static_cast<float>(swapchainExtent_.width);
-        viewport.height = static_cast<float>(swapchainExtent_.height);
-        viewport.minDepth = 0.0f;
-        viewport.maxDepth = 1.0f;
-        VkRect2D scissor{};
-        scissor.extent = swapchainExtent_;
         vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
         vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
         const VkDescriptorSet fallbackDescriptorSet = descriptorSets_.empty() ? VK_NULL_HANDLE : descriptorSets_.front();
@@ -2217,6 +2651,7 @@ private:
     std::vector<VkImageView> swapchainImageViews_;
     VkRenderPass renderPass_ = VK_NULL_HANDLE;
     VkRenderPass shadowRenderPass_ = VK_NULL_HANDLE;
+    VkRenderPass gbufferRenderPass_ = VK_NULL_HANDLE;
     VkSampleCountFlagBits msaaSamples_ = VK_SAMPLE_COUNT_1_BIT;
     VkImage msaaColorImage_ = VK_NULL_HANDLE;
     VkDeviceMemory msaaColorMemory_ = VK_NULL_HANDLE;
@@ -2228,6 +2663,11 @@ private:
     VkDeviceMemory shadowDepthMemory_ = VK_NULL_HANDLE;
     VkImageView shadowDepthView_ = VK_NULL_HANDLE;
     VkFramebuffer shadowFramebuffer_ = VK_NULL_HANDLE;
+    std::array<TextureResource, 3> gbufferTargets_{};
+    VkImage gbufferDepthImage_ = VK_NULL_HANDLE;
+    VkDeviceMemory gbufferDepthMemory_ = VK_NULL_HANDLE;
+    VkImageView gbufferDepthView_ = VK_NULL_HANDLE;
+    VkFramebuffer gbufferFramebuffer_ = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> framebuffers_;
     VkBuffer vertexBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory vertexMemory_ = VK_NULL_HANDLE;
@@ -2244,10 +2684,16 @@ private:
     VkDescriptorSetLayout descriptorSetLayout_ = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool_ = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> descriptorSets_;
+    VkDescriptorSetLayout v4DescriptorSetLayout_ = VK_NULL_HANDLE;
+    VkDescriptorPool v4DescriptorPool_ = VK_NULL_HANDLE;
+    VkDescriptorSet v4DescriptorSet_ = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
+    VkPipelineLayout v4ComposePipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     VkPipeline skyPipeline_ = VK_NULL_HANDLE;
     VkPipeline shadowPipeline_ = VK_NULL_HANDLE;
+    VkPipeline gbufferPipeline_ = VK_NULL_HANDLE;
+    VkPipeline v4ComposePipeline_ = VK_NULL_HANDLE;
     VkCommandPool uploadCommandPool_ = VK_NULL_HANDLE;
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     VkCommandBuffer commandBuffer_ = VK_NULL_HANDLE;
@@ -2255,6 +2701,7 @@ private:
     VkSemaphore renderFinished_ = VK_NULL_HANDLE;
     VkFence inFlight_ = VK_NULL_HANDLE;
     std::uint32_t frameIndex_ = 0;
+    bool enableV4Ssao_ = false;
 };
 
 struct PreviewState {
@@ -2504,7 +2951,7 @@ int runVulkanPreviewWindow(V1RenderSettings settings) {
 
     try {
         previewLog("runVulkanPreviewWindow: create renderer");
-        state.renderer = std::make_unique<VulkanGpuRenderer>(hwnd, state.settings.width, state.settings.height, state.geometry, state.settings.enableV3Shadows);
+        state.renderer = std::make_unique<VulkanGpuRenderer>(hwnd, state.settings.width, state.settings.height, state.geometry, state.settings.enableV3Shadows, state.settings.enableV4Ssao);
     } catch (const std::exception& error) {
         std::cerr << "Could not initialize Vulkan GPU preview: " << error.what() << '\n';
         previewLog(std::string("runVulkanPreviewWindow: renderer init failed: ") + error.what());
