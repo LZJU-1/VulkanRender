@@ -73,6 +73,10 @@ float2 parallaxOcclusionMapping(float2 uv, float3 tangentViewDir, float displace
     return lerp(currentUv, previousUv, saturate(weight));
 }
 
+float3 srgbToLinear(float3 color) {
+    return pow(saturate(color), 2.2);
+}
+
 GBufferOut main(FragmentIn input) {
     float3 normal = normalize(input.normal);
     float3 view = normalize(eyeNear.xyz - input.worldPos);
@@ -83,7 +87,9 @@ GBufferOut main(FragmentIn input) {
     float2 uv = input.uv;
     float2 duvdx = ddx(input.uv);
     float2 duvdy = ddy(input.uv);
-    if (input.textured > 0.5) {
+    const bool hasAlbedoTexture = input.textured > 0.5;
+    const bool hasDetailTextures = input.textured > 1.5;
+    if (hasDetailTextures) {
         float3 tangent = normalize(input.tangent.xyz);
         tangent = normalize(tangent - normal * dot(normal, tangent));
         float3 bitangent = normalize(cross(normal, tangent)) * (input.tangent.w < 0.0 ? -1.0 : 1.0);
@@ -105,10 +111,10 @@ GBufferOut main(FragmentIn input) {
         normal = normalize(tangent * tangentNormal.x + bitangent * tangentNormal.y + normal * tangentNormal.z);
     }
 
-    float3 texel = albedoTexture.SampleGrad(materialSampler, uv, duvdx, duvdy).rgb;
-    float3 base = lerp(saturate(input.color), texel, saturate(input.textured));
+    float3 texel = srgbToLinear(albedoTexture.SampleGrad(materialSampler, uv, duvdx, duvdy).rgb);
+    float3 base = lerp(saturate(input.color), texel, hasAlbedoTexture ? 1.0 : 0.0);
     float roughnessMap = roughnessTexture.SampleGrad(materialSampler, uv, duvdx, duvdy).r;
-    float roughness = clamp(lerp(input.roughness, roughnessMap, saturate(input.textured)), 0.03, 1.0);
+    float roughness = clamp(lerp(input.roughness, roughnessMap, hasDetailTextures ? 1.0 : 0.0), 0.03, 1.0);
 
     GBufferOut output;
     output.albedoRoughness = float4(base, roughness);

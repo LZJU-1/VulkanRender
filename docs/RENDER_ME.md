@@ -97,14 +97,22 @@ build\nmake-debug\src\vulkan_render.exe --profile v4 --preview --scene assets\th
 
 ## v5 Realtime Ray Tracing
 
-Target behavior: opt into hardware ray tracing for primary visibility, reflections, shadows, or hybrid accumulation.
+Target behavior: opt into realtime ray tracing effects using a modern hybrid rendering layout.
 
-Current implementation: see `docs/V5_FEATURES.md`. The realtime preview now has a GPU compute ray tracing path that dispatches primary rays into a procedural validation scene and writes directly to the swapchain storage image. KHR BLAS/TLAS/SBT hardware RT is the next v5 step.
+Current implementation: see `docs/V5_FEATURES.md`. The realtime preview rasterizes the selected mesh scene into a G-buffer, builds BLAS/TLAS acceleration structures for the main triangle mesh, then runs a Vulkan compute pass that uses hardware ray-query shadow rays and ping-pong temporal history before writing to the swapchain storage image. Reflections are still screen-space; v5 shadows are not shadow maps.
 
 Realtime preview:
 
 ```powershell
-build\nmake-debug\src\vulkan_render.exe --profile v5-rt --preview --width 1280 --height 720
+build\nmake-debug\src\vulkan_render.exe --profile v5-rt --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
 ```
 
-Expected log markers: `createV5RayTracingDescriptors`, `v5RayTracing=on`, and repeated `draw/present`.
+Expected log markers: `createGBufferRenderPass`, `createV5HistoryResources`, `createV5AccelerationStructures: triangles=... tlas=ready`, `createV5RayTracingDescriptors`, `v5RayTracing=on`, and repeated `draw/present`.
+
+PathTracer bathroom2 scene:
+
+```powershell
+build\nmake-debug\src\vulkan_render.exe --profile v5-rt --preview --scene C:\Users\lzju\Desktop\MonteCarloPathTracer\scenes\bathroom2\bathroom2.xml --width 1280 --height 720
+```
+
+This imports the PathTracer OBJ/MTL scene, applies the companion XML camera, builds a TLAS over the bathroom mesh, and runs the same v5 ray-query shadow path. First load is slow because `bathroom2.obj` is a large text mesh.

@@ -1,5 +1,152 @@
 # Development Log
 
+## 2026-06-15 - V5 Bathroom Emissive Lights And RT Reflection Step
+
+- Imported PathTracer/Mitsuba XML light declarations such as `<light mtlname="Light" radiance="125.0,100.0,75.0"/>`.
+- Added an `Emissive` material kind to the OBJ/MTL preview path.
+- OBJ triangles using emissive materials are now:
+  - drawn as visible bright light surfaces in the G-buffer
+  - converted into bounded realtime preview lights for v5 shading
+- Bound the existing light storage buffer into the v5 compute descriptor set at binding 20.
+- Updated `v5_raytrace.comp.hlsl` so imported local lights contribute PBR light through TLAS ray-query visibility tests.
+- Reworked glossy/mirror reflection to query the TLAS first, then sample visible G-buffer material when the hit projects back into the view.
+
+Validation:
+
+```powershell
+scripts\compile_v5_shader_dxc.bat
+scripts\build_msvc.bat
+build\nmake-debug\src\vulkan_render.exe --profile v5-rt --preview --scene C:\Users\lzju\Desktop\MonteCarloPathTracer\scenes\bathroom2\bathroom2.xml --width 1280 --height 720
+```
+
+Observed log markers:
+
+```text
+runVulkanPreviewWindow: geometry vertices=3731769
+createV5AccelerationStructures: triangles=1243923 tlas=ready
+VulkanGpuRenderer: materialSets=4 batches=10 lights=2 sphereInstances=0 v5RayTracing=on
+record v5: dispatch compute
+draw: present
+```
+
+Current limitations:
+
+- Reflection still uses a ray-query compute approximation, not a full closest-hit shader with triangle material lookup.
+- Glass/transmission is still treated as opaque.
+- `bathroom2.obj` remains slow to load because it is a large text mesh.
+
+## 2026-06-15 - V5 PathTracer Bathroom Scene Import
+
+- Added a lightweight OBJ/MTL importer for realtime preview scenes:
+  - `v`, `vt`, `vn`
+  - `f` polygon triangulation
+  - positive and negative OBJ indices
+  - `mtllib` / `usemtl`
+  - `Kd`, `Ks`, `Ns`, and `map_Kd`
+- Added companion XML camera support for PathTracer/Mitsuba-style scenes where `bathroom2.xml` sits beside `bathroom2.obj`.
+- Added `.obj` and `.xml` as supported GPU preview scene extensions.
+- Mapped OBJ materials approximately into the current PBR preview model:
+  - `Kd` / `map_Kd` -> base color
+  - `Ks` -> metalness
+  - `Ns` -> roughness
+- Validated `C:\Users\lzju\Desktop\MonteCarloPathTracer\scenes\bathroom2\bathroom2.xml` in v5 realtime RT preview.
+
+Observed log markers:
+
+```text
+runVulkanPreviewWindow: geometry vertices=3731769
+createV5AccelerationStructures: triangles=1243923 tlas=ready
+VulkanGpuRenderer: materialSets=4 batches=10 lights=2 sphereInstances=0 v5RayTracing=on
+record v5: dispatch compute
+draw: present
+```
+
+Current limitations:
+
+- The PathTracer area light/emissive material model is imported as bounded realtime preview lights, not full physically sampled area lights yet.
+- Glass/transmission is treated as opaque material for now.
+- The large text OBJ path is slow to load; a cached mesh or `.glb` conversion should be added for repeated tests.
+
+## 2026-06-15 - V5 Hardware Ray-Query Shadows
+
+- Corrected the v5 shadow path so it no longer uses shadow maps or screen-space G-buffer occlusion as the ray-traced shadow source.
+- V5 now requires and enables the Vulkan hardware RT extension path:
+  - `VK_KHR_acceleration_structure`
+  - `VK_KHR_buffer_device_address`
+  - `VK_KHR_deferred_host_operations`
+  - `VK_KHR_ray_query`
+  - `VK_KHR_spirv_1_4`
+  - `VK_KHR_shader_float_controls`
+- Added dynamic loading for acceleration-structure and buffer-device-address functions in the preview renderer.
+- Added BLAS/TLAS construction from `GpuPreviewGeometry::vertices`; the validation materials scene builds 32009 triangles into a TLAS instance.
+- Added a v5 acceleration-structure descriptor at binding 21.
+- Updated `v5_raytrace.comp.hlsl` to bind `RaytracingAccelerationStructure sceneTlas` and use `RayQuery` shadow rays for directional-light visibility.
+- Replaced the first hard single-ray shadow test with 12 stable cone-sampled ray-query rays per visible pixel for a softer directional-light penumbra.
+- Added v5 ping-pong temporal history:
+  - two `VK_FORMAT_R16G16B16A16_SFLOAT` history images
+  - descriptor binding 22 for previous history input
+  - descriptor binding 23 for current history storage output
+  - command-buffer layout barriers around history read/write
+  - camera-change reset through the v5 history frame counter
+- Changed the RT shadow sample rotation to vary per frame and rely on temporal accumulation to reduce soft-shadow noise over a few still frames.
+- Updated the DXC v5 shader compile script to target `cs_6_5` and emit SPIR-V ray-query extensions.
+- Current limitation: v5 hardware RT shadows include the main triangle mesh; the v4 many-light instanced benchmark spheres are not yet added as TLAS instances.
+
+Validation:
+
+```powershell
+scripts\compile_v5_shader_dxc.bat
+scripts\build_msvc.bat
+C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v5-rt --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
+```
+
+Observed log markers:
+
+```text
+selectDevice: NVIDIA GeForce RTX 2080 Ti
+createV5AccelerationStructures: triangles=32009 tlas=ready
+createV5HistoryResources
+createV5RayTracingDescriptors
+record v5: dispatch compute
+draw: present
+```
+
+## 2026-06-15 - V5 Hybrid Realtime Ray Tracing Pass
+
+- Reworked v5 from a standalone procedural compute ray demo into a hybrid realtime RT pipeline.
+- V5 now creates the v4 G-buffer render pass/resources and records a first raster pass for real scene geometry.
+- Added v5 compute descriptors for:
+  - swapchain storage image output
+  - material sampler
+  - G-buffer albedo/roughness
+  - G-buffer normal/metalness
+  - G-buffer world position/material kind
+- Replaced the procedural v5 shader with a G-buffer-driven compute shader for screen-space ray traced shadows, reflections, and ambient occlusion.
+- Fixed the v5 preview crash caused by binding a null G-buffer graphics pipeline: the pipeline creation gate now includes `enableV5RayTracing_`.
+- Kept the v5 command path explicit: G-buffer pass, image barrier to compute read, swapchain transition to storage, compute dispatch, then present transition.
+- Retuned v5 shadow tracing from long screen-space directional rays to short contact shadows with distance fade. This avoids broken large shadow fragments from missing offscreen/backside G-buffer information.
+- Disabled screen-space shadow/AO contribution in the main v5 lighting path after validation showed false occluders and black smear artifacts on the material-sphere scene. Stable v5 ray-traced shadows should be supplied by the upcoming BLAS/TLAS hardware RT path.
+- Changed v5 G-buffer reads from filtered `SampleLevel` to `Load` point reads so world position and normal buffers are not linearly blended across geometry edges.
+- Removed the temporary v3 shadow-atlas integration from v5 after review: shadow maps are a raster fallback and should not be presented as ray-traced shadows. The v5 shadow path should use KHR acceleration structures and hardware shadow rays.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v5-rt --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
+```
+
+Validation log markers:
+
+```text
+createGBufferRenderPass
+createV5RayTracingDescriptors
+v5RayTracing=on
+record v5: dispatch compute
+draw: present
+draw: done
+```
+
 ## 2026-06-15 - V4 Instanced Sphere Benchmark Geometry
 
 - Replaced the v4 many-light benchmark's CPU-expanded 10000-sphere vertex buffer with GPU instancing.

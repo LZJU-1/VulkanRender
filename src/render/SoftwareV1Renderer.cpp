@@ -50,7 +50,8 @@ enum class MaterialKind {
     Environment,
     Mirror,
     Lambertian,
-    Pbr
+    Pbr,
+    Emissive
 };
 
 float gpuMaterialKind(MaterialKind kind) {
@@ -63,6 +64,8 @@ float gpuMaterialKind(MaterialKind kind) {
         return 3.0f;
     case MaterialKind::Pbr:
         return 4.0f;
+    case MaterialKind::Emissive:
+        return 5.0f;
     case MaterialKind::Simple:
     default:
         return 0.0f;
@@ -95,6 +98,7 @@ struct Triangle3 {
     float roughness = 0.7f;
     float metalness = 0.0f;
     MaterialKind materialKind = MaterialKind::Simple;
+    Vec3 emission{0.0f, 0.0f, 0.0f};
     bool hasAlbedoTexture = false;
     std::filesystem::path albedoTexturePath;
     std::filesystem::path roughnessTexturePath;
@@ -1405,6 +1409,377 @@ struct GltfScene {
     Camera camera;
 };
 
+struct ObjMaterial {
+    std::string name;
+    Vec3 kd{0.78f, 0.78f, 0.78f};
+    Vec3 ks{0.0f, 0.0f, 0.0f};
+    Vec3 emission{0.0f, 0.0f, 0.0f};
+    float ns = 1.0f;
+    std::filesystem::path albedoTexture;
+};
+
+struct ObjScene {
+    std::vector<Triangle3> triangles;
+    Camera camera;
+};
+
+std::vector<std::string> splitWords(const std::string& line) {
+    std::istringstream stream(line);
+    std::vector<std::string> words;
+    std::string word;
+    while (stream >> word) {
+        words.push_back(word);
+    }
+    return words;
+}
+
+std::map<std::string, ObjMaterial> loadMtlFile(const std::filesystem::path& path) {
+    std::ifstream input(path);
+    std::map<std::string, ObjMaterial> materials;
+    if (!input) {
+        return materials;
+    }
+
+    std::string current;
+    std::string line;
+    while (std::getline(input, line)) {
+        const std::vector<std::string> words = splitWords(line);
+        if (words.empty() || words[0].empty() || words[0][0] == '#') {
+            continue;
+        }
+        if (words[0] == "newmtl" && words.size() >= 2) {
+            current = words[1];
+            materials[current] = ObjMaterial{};
+            materials[current].name = current;
+            if (current == "Light") {
+                materials[current].emission = {16.0f, 12.8f, 9.6f};
+            }
+        } else if (!current.empty() && words[0] == "Kd" && words.size() >= 4) {
+            materials[current].kd = {std::stof(words[1]), std::stof(words[2]), std::stof(words[3])};
+        } else if (!current.empty() && words[0] == "Ks" && words.size() >= 4) {
+            materials[current].ks = {std::stof(words[1]), std::stof(words[2]), std::stof(words[3])};
+        } else if (!current.empty() && words[0] == "Ns" && words.size() >= 2) {
+            materials[current].ns = std::stof(words[1]);
+        } else if (!current.empty() && words[0] == "map_Kd" && words.size() >= 2) {
+            materials[current].albedoTexture = words.back();
+        }
+    }
+    return materials;
+}
+
+struct ObjIndex {
+    int position = 0;
+    int texcoord = 0;
+    int normal = 0;
+};
+
+int resolveObjIndex(int index, std::size_t count) {
+    if (index > 0) return index - 1;
+    if (index < 0) return static_cast<int>(count) + index;
+    return -1;
+}
+
+ObjIndex parseObjIndex(const std::string& token) {
+    ObjIndex out;
+    std::array<std::string, 3> parts{};
+    std::size_t part = 0;
+    std::size_t begin = 0;
+    while (part < parts.size()) {
+        const std::size_t slash = token.find('/', begin);
+        parts[part++] = token.substr(begin, slash == std::string::npos ? std::string::npos : slash - begin);
+        if (slash == std::string::npos) break;
+        begin = slash + 1;
+    }
+    if (!parts[0].empty()) out.position = std::stoi(parts[0]);
+    if (!parts[1].empty()) out.texcoord = std::stoi(parts[1]);
+    if (!parts[2].empty()) out.normal = std::stoi(parts[2]);
+    return out;
+}
+
+float objMaterialMetalness(const ObjMaterial& material) {
+    if (material.name == "Mirror" || material.name == "Bin" || material.name == "StainlessRough") {
+        return 1.0f;
+    }
+    if (material.name == "RoughGlass"
+        || material.name == "Ceramic"
+        || material.name == "Plastic"
+        || material.name == "Wood"
+        || material.name == "WoodFloor"
+        || material.name == "BlackWoodLacquer") {
+        return 0.0f;
+    }
+    return 0.0f;
+}
+
+Vec3 objMaterialBaseColor(const ObjMaterial& material) {
+    if (luminance(material.emission) > 0.0f) {
+        return {1.0f, 0.86f, 0.62f};
+    }
+    if (material.name == "Mirror" || material.name == "Bin") {
+        return {0.95f, 0.95f, 0.95f};
+    }
+    if (!material.albedoTexture.empty()) {
+        return {1.0f, 1.0f, 1.0f};
+    }
+    return clamp01(material.kd);
+}
+
+float objMaterialRoughness(const ObjMaterial& material) {
+    if (material.name == "Mirror" || material.name == "Bin") {
+        return 0.015f;
+    }
+    if (material.name == "StainlessRough") {
+        return 0.32f;
+    }
+    if (material.name == "RoughGlass") {
+        return 0.18f;
+    }
+    if (material.name == "Ceramic") {
+        return 0.24f;
+    }
+    if (material.name == "Plastic") {
+        return 0.42f;
+    }
+    if (material.name == "BlackWoodLacquer") {
+        return 0.20f;
+    }
+    if (material.name == "Wood" || material.name == "WoodFloor") {
+        return 0.34f;
+    }
+    const float gloss = std::clamp(material.ns / 120.0f, 0.0f, 1.0f);
+    return std::clamp(1.0f - gloss * 0.85f, 0.08f, 1.0f);
+}
+
+void appendObjTriangle(
+    std::vector<Triangle3>& triangles,
+    const std::vector<Vec3>& positions,
+    const std::vector<Vec2>& texcoords,
+    const std::vector<Vec3>& normals,
+    const ObjMaterial& material,
+    const std::filesystem::path& basePath,
+    ObjIndex ia,
+    ObjIndex ib,
+    ObjIndex ic
+) {
+    const int pa = resolveObjIndex(ia.position, positions.size());
+    const int pb = resolveObjIndex(ib.position, positions.size());
+    const int pc = resolveObjIndex(ic.position, positions.size());
+    if (pa < 0 || pb < 0 || pc < 0) {
+        return;
+    }
+
+    Triangle3 tri;
+    tri.a = positions[static_cast<std::size_t>(pa)];
+    tri.b = positions[static_cast<std::size_t>(pb)];
+    tri.c = positions[static_cast<std::size_t>(pc)];
+    tri.normal = normalize(cross(tri.b - tri.a, tri.c - tri.a));
+    const int na = resolveObjIndex(ia.normal, normals.size());
+    const int nb = resolveObjIndex(ib.normal, normals.size());
+    const int nc = resolveObjIndex(ic.normal, normals.size());
+    tri.normalA = na >= 0 ? normals[static_cast<std::size_t>(na)] : tri.normal;
+    tri.normalB = nb >= 0 ? normals[static_cast<std::size_t>(nb)] : tri.normal;
+    tri.normalC = nc >= 0 ? normals[static_cast<std::size_t>(nc)] : tri.normal;
+    const int ta = resolveObjIndex(ia.texcoord, texcoords.size());
+    const int tb = resolveObjIndex(ib.texcoord, texcoords.size());
+    const int tc = resolveObjIndex(ic.texcoord, texcoords.size());
+    tri.uvA = ta >= 0 ? texcoords[static_cast<std::size_t>(ta)] : Vec2{0.0f, 0.0f};
+    tri.uvB = tb >= 0 ? texcoords[static_cast<std::size_t>(tb)] : Vec2{1.0f, 0.0f};
+    tri.uvC = tc >= 0 ? texcoords[static_cast<std::size_t>(tc)] : Vec2{1.0f, 1.0f};
+    tri.uv = {(tri.uvA.x + tri.uvB.x + tri.uvC.x) / 3.0f, (tri.uvA.y + tri.uvB.y + tri.uvC.y) / 3.0f};
+    const Vec4 tangent = triangleTangent(tri.a, tri.b, tri.c, tri.uvA, tri.uvB, tri.uvC, tri.normal);
+    tri.tangentA = tangent;
+    tri.tangentB = tangent;
+    tri.tangentC = tangent;
+    tri.baseColor = objMaterialBaseColor(material);
+    tri.roughness = objMaterialRoughness(material);
+    tri.metalness = objMaterialMetalness(material);
+    if (luminance(material.emission) > 0.0f) {
+        tri.materialKind = MaterialKind::Emissive;
+        tri.emission = material.emission;
+        tri.roughness = 0.35f;
+        tri.metalness = 0.0f;
+    } else {
+        tri.materialKind = (material.name == "Mirror" || material.name == "Bin") ? MaterialKind::Mirror : MaterialKind::Pbr;
+    }
+    tri.hasAlbedoTexture = !material.albedoTexture.empty();
+    if (tri.hasAlbedoTexture) {
+        tri.albedoTexturePath = basePath / material.albedoTexture;
+    }
+    tri.color = {
+        static_cast<std::uint8_t>(std::clamp(tri.baseColor.x, 0.0f, 1.0f) * 255.0f + 0.5f),
+        static_cast<std::uint8_t>(std::clamp(tri.baseColor.y, 0.0f, 1.0f) * 255.0f + 0.5f),
+        static_cast<std::uint8_t>(std::clamp(tri.baseColor.z, 0.0f, 1.0f) * 255.0f + 0.5f),
+    };
+    triangles.push_back(tri);
+}
+
+ObjScene loadObjScene(const std::filesystem::path& path, const std::map<std::string, Vec3>& xmlEmissions = {}) {
+    std::ifstream input(path);
+    if (!input) {
+        throw std::runtime_error("Could not open OBJ scene: " + path.string());
+    }
+
+    const std::filesystem::path basePath = path.parent_path();
+    std::vector<Vec3> positions;
+    std::vector<Vec2> texcoords;
+    std::vector<Vec3> normals;
+    std::map<std::string, ObjMaterial> materials;
+    ObjMaterial currentMaterial;
+    ObjScene scene;
+
+    std::string line;
+    while (std::getline(input, line)) {
+        const std::vector<std::string> words = splitWords(line);
+        if (words.empty() || words[0].empty() || words[0][0] == '#') {
+            continue;
+        }
+        if (words[0] == "mtllib" && words.size() >= 2) {
+            std::map<std::string, ObjMaterial> loaded = loadMtlFile(basePath / words.back());
+            for (auto& item : loaded) {
+                const auto emission = xmlEmissions.find(item.first);
+                if (emission != xmlEmissions.end()) {
+                    item.second.emission = emission->second;
+                }
+            }
+            materials.insert(loaded.begin(), loaded.end());
+        } else if (words[0] == "usemtl" && words.size() >= 2) {
+            const auto found = materials.find(words[1]);
+            currentMaterial = found != materials.end() ? found->second : ObjMaterial{};
+        } else if (words[0] == "v" && words.size() >= 4) {
+            positions.push_back({std::stof(words[1]), std::stof(words[2]), std::stof(words[3])});
+        } else if (words[0] == "vt" && words.size() >= 3) {
+            texcoords.push_back({std::stof(words[1]), 1.0f - std::stof(words[2])});
+        } else if (words[0] == "vn" && words.size() >= 4) {
+            const Vec3 normal{std::stof(words[1]), std::stof(words[2]), std::stof(words[3])};
+            normals.push_back(normalize(normal));
+        } else if (words[0] == "f" && words.size() >= 4) {
+            std::vector<ObjIndex> polygon;
+            for (std::size_t i = 1; i < words.size(); ++i) {
+                polygon.push_back(parseObjIndex(words[i]));
+            }
+            for (std::size_t i = 1; i + 1 < polygon.size(); ++i) {
+                appendObjTriangle(scene.triangles, positions, texcoords, normals, currentMaterial, basePath, polygon[0], polygon[i], polygon[i + 1]);
+            }
+        }
+    }
+
+    scene.camera = autoCameraFor(scene.triangles);
+    return scene;
+}
+
+float xmlFloatAttribute(const std::string& text, const std::string& key, float fallback) {
+    const std::string needle = key + "=\"";
+    const std::size_t begin = text.find(needle);
+    if (begin == std::string::npos) return fallback;
+    const std::size_t valueBegin = begin + needle.size();
+    const std::size_t valueEnd = text.find('"', valueBegin);
+    if (valueEnd == std::string::npos) return fallback;
+    return std::stof(text.substr(valueBegin, valueEnd - valueBegin));
+}
+
+std::string xmlStringAttribute(const std::string& text, const std::string& key, const std::string& fallback = {}) {
+    const std::string needle = key + "=\"";
+    const std::size_t begin = text.find(needle);
+    if (begin == std::string::npos) return fallback;
+    const std::size_t valueBegin = begin + needle.size();
+    const std::size_t valueEnd = text.find('"', valueBegin);
+    if (valueEnd == std::string::npos) return fallback;
+    return text.substr(valueBegin, valueEnd - valueBegin);
+}
+
+Vec3 xmlVec3Attribute(const std::string& tag, const std::string& key, Vec3 fallback) {
+    const std::string needle = key + "=\"";
+    const std::size_t begin = tag.find(needle);
+    if (begin == std::string::npos) return fallback;
+    const std::size_t valueBegin = begin + needle.size();
+    const std::size_t valueEnd = tag.find('"', valueBegin);
+    if (valueEnd == std::string::npos) return fallback;
+    std::string value = tag.substr(valueBegin, valueEnd - valueBegin);
+    std::replace(value.begin(), value.end(), ',', ' ');
+    std::istringstream stream(value);
+    Vec3 out = fallback;
+    stream >> out.x >> out.y >> out.z;
+    return out;
+}
+
+std::map<std::string, Vec3> loadXmlEmissionMap(const std::filesystem::path& xmlPath) {
+    std::ifstream input(xmlPath);
+    std::map<std::string, Vec3> emissions;
+    if (!input) {
+        return emissions;
+    }
+    const std::string xml((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    std::size_t begin = 0;
+    while ((begin = xml.find("<light", begin)) != std::string::npos) {
+        const std::size_t end = xml.find("/>", begin);
+        const std::string tag = xml.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
+        const std::string materialName = xmlStringAttribute(tag, "mtlname");
+        if (!materialName.empty()) {
+            emissions[materialName] = xmlVec3Attribute(tag, "radiance", {16.0f, 12.8f, 9.6f});
+        }
+        begin = end == std::string::npos ? xml.size() : end + 2;
+    }
+    return emissions;
+}
+
+void applyMitsubaCamera(const std::filesystem::path& xmlPath, ObjScene& scene) {
+    std::ifstream input(xmlPath);
+    if (!input) {
+        return;
+    }
+    const std::string xml((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    Camera camera = scene.camera;
+    const std::size_t lookatBegin = xml.find("<lookat");
+    if (lookatBegin != std::string::npos) {
+        const std::size_t lookatEnd = xml.find("/>", lookatBegin);
+        const std::string tag = xml.substr(lookatBegin, lookatEnd == std::string::npos ? std::string::npos : lookatEnd - lookatBegin);
+        if (tag.find("origin=\"") != std::string::npos || tag.find("target=\"") != std::string::npos) {
+            camera.eye = xmlVec3Attribute(tag, "origin", camera.eye);
+            camera.target = xmlVec3Attribute(tag, "target", camera.target);
+            camera.up = xmlVec3Attribute(tag, "up", camera.up);
+        } else {
+            camera.eye = {xmlFloatAttribute(tag, "x", camera.eye.x), xmlFloatAttribute(tag, "y", camera.eye.y), xmlFloatAttribute(tag, "z", camera.eye.z)};
+        }
+    }
+    const std::size_t eyeBegin = xml.find("<eye");
+    if (eyeBegin != std::string::npos) {
+        const std::size_t eyeEnd = xml.find("/>", eyeBegin);
+        const std::string tag = xml.substr(eyeBegin, eyeEnd == std::string::npos ? std::string::npos : eyeEnd - eyeBegin);
+        camera.eye = {xmlFloatAttribute(tag, "x", camera.eye.x), xmlFloatAttribute(tag, "y", camera.eye.y), xmlFloatAttribute(tag, "z", camera.eye.z)};
+    }
+    if (lookatBegin != std::string::npos) {
+        const std::size_t lookatEnd = xml.find("/>", lookatBegin);
+        const std::string tag = xml.substr(lookatBegin, lookatEnd == std::string::npos ? std::string::npos : lookatEnd - lookatBegin);
+        if (tag.find("target=\"") == std::string::npos && tag.find("x=\"") != std::string::npos) {
+            camera.target = {xmlFloatAttribute(tag, "x", camera.target.x), xmlFloatAttribute(tag, "y", camera.target.y), xmlFloatAttribute(tag, "z", camera.target.z)};
+        }
+    }
+    const std::size_t upBegin = xml.find("<up");
+    if (upBegin != std::string::npos) {
+        const std::size_t upEnd = xml.find("/>", upBegin);
+        const std::string tag = xml.substr(upBegin, upEnd == std::string::npos ? std::string::npos : upEnd - upBegin);
+        camera.up = {xmlFloatAttribute(tag, "x", camera.up.x), xmlFloatAttribute(tag, "y", camera.up.y), xmlFloatAttribute(tag, "z", camera.up.z)};
+    }
+    camera.fovY = xmlFloatAttribute(xml, "fovy", xmlFloatAttribute(xml, "fov", camera.fovY * 180.0f / kPi)) * kPi / 180.0f;
+    camera.nearPlane = 0.05f;
+    camera.farPlane = 250.0f;
+    scene.camera = camera;
+}
+
+ObjScene loadObjOrCompanionXmlScene(const std::filesystem::path& path) {
+    std::filesystem::path objPath = path;
+    std::map<std::string, Vec3> xmlEmissions;
+    if (path.extension() == ".xml") {
+        objPath = path.parent_path() / (path.stem().string() + ".obj");
+        xmlEmissions = loadXmlEmissionMap(path);
+    }
+    ObjScene scene = loadObjScene(objPath, xmlEmissions);
+    if (path.extension() == ".xml") {
+        applyMitsubaCamera(path, scene);
+    }
+    return scene;
+}
+
 struct ProceduralScene {
     std::vector<Triangle3> triangles;
     Camera camera;
@@ -2025,6 +2400,9 @@ Color shadeV2Triangle(const Triangle3& tri, const Camera& camera, const Texture2
     case MaterialKind::Environment:
         hdr = env;
         break;
+    case MaterialKind::Emissive:
+        hdr = tri.emission + tri.baseColor * 2.0f;
+        break;
     case MaterialKind::Mirror:
         hdr = env * 1.15f;
         break;
@@ -2225,8 +2603,12 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
         GltfScene scene = loadGltfScene(settings.scenePath);
         ownedTriangles = std::move(scene.triangles);
         camera = scene.camera;
+    } else if (extension == ".obj" || extension == ".xml") {
+        ObjScene scene = loadObjOrCompanionXmlScene(settings.scenePath);
+        ownedTriangles = std::move(scene.triangles);
+        camera = scene.camera;
     } else {
-        throw std::runtime_error("GPU preview currently supports .shadowdemo, .manylights, .s72, .gltf, and .glb scenes");
+        throw std::runtime_error("GPU preview currently supports .shadowdemo, .manylights, .s72, .gltf, .glb, .obj, and .xml scenes");
     }
 
     camera = cameraFromSettings(settings.camera, camera);
@@ -2276,6 +2658,31 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
             }
         }
     }
+    if (settings.enableV5RayTracing && !geometry.manyLightDemo) {
+        constexpr std::size_t kMaxImportedLights = 128;
+        for (const Triangle3& tri : *triangles) {
+            if (tri.materialKind != MaterialKind::Emissive || geometry.lights.size() >= kMaxImportedLights) {
+                continue;
+            }
+            const Vec3 center = (tri.a + tri.b + tri.c) / 3.0f;
+            const float area = length(cross(tri.b - tri.a, tri.c - tri.a)) * 0.5f;
+            const float radius = std::clamp(std::sqrt(std::max(area, 0.01f)) * 5.0f, 4.0f, 38.0f);
+            const float intensity = std::clamp(luminance(tri.emission) * 0.10f, 2.0f, 24.0f);
+            const Vec3 color = luminance(tri.emission) > 0.0f
+                ? clamp01(tri.emission / std::max(luminance(tri.emission), 0.001f))
+                : Vec3{1.0f, 0.82f, 0.62f};
+            geometry.lights.push_back({
+                center.x,
+                center.y,
+                center.z,
+                radius,
+                color.x,
+                color.y,
+                color.z,
+                intensity,
+            });
+        }
+    }
     GpuPreviewGeometry::MaterialTextures fallbackMaterial;
     if (settings.enableV2Shading) {
         const std::filesystem::path sceneAssetRoot = settings.scenePath.parent_path();
@@ -2320,10 +2727,14 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
     auto materialIndexFor = [&](const Triangle3& tri) -> std::uint32_t {
         GpuPreviewGeometry::MaterialTextures material = fallbackMaterial;
         if (!tri.albedoTexturePath.empty()) {
-            material.albedoTexturePath = settings.scenePath.parent_path() / tri.albedoTexturePath;
+            material.albedoTexturePath = tri.albedoTexturePath.is_absolute()
+                ? tri.albedoTexturePath
+                : settings.scenePath.parent_path() / tri.albedoTexturePath;
         }
         if (!tri.roughnessTexturePath.empty()) {
-            material.roughnessTexturePath = settings.scenePath.parent_path() / tri.roughnessTexturePath;
+            material.roughnessTexturePath = tri.roughnessTexturePath.is_absolute()
+                ? tri.roughnessTexturePath
+                : settings.scenePath.parent_path() / tri.roughnessTexturePath;
         }
         for (std::uint32_t i = 0; i < geometry.materials.size(); ++i) {
             const GpuPreviewGeometry::MaterialTextures& existing = geometry.materials[i];
@@ -2363,7 +2774,10 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
         const float roughness = settings.enableV2Shading ? std::clamp(tri.roughness, 0.03f, 1.0f) : 0.7f;
         const float metalness = settings.enableV2Shading ? std::clamp(tri.metalness, 0.0f, 1.0f) : 0.0f;
         const float kind = settings.enableV2Shading ? gpuMaterialKind(tri.materialKind) : 0.0f;
-        const float textured = tri.hasAlbedoTexture ? 1.0f : 0.0f;
+        const GpuPreviewGeometry::MaterialTextures& gpuMaterial = geometry.materials[materialIndex];
+        const bool hasAlbedoTexture = tri.hasAlbedoTexture || !gpuMaterial.albedoTexturePath.empty();
+        const bool hasDetailTextures = !gpuMaterial.normalTexturePath.empty() || !gpuMaterial.displacementTexturePath.empty();
+        const float textured = hasDetailTextures ? 2.0f : (hasAlbedoTexture ? 1.0f : 0.0f);
         geometry.vertices.push_back({tri.a.x, tri.a.y, tri.a.z, normalA.x, normalA.y, normalA.z, color.x, color.y, color.z, tri.uvA.x, tri.uvA.y, textured, roughness, metalness, kind, tri.tangentA.x, tri.tangentA.y, tri.tangentA.z, tri.tangentA.w});
         geometry.vertices.push_back({tri.b.x, tri.b.y, tri.b.z, normalB.x, normalB.y, normalB.z, color.x, color.y, color.z, tri.uvB.x, tri.uvB.y, textured, roughness, metalness, kind, tri.tangentB.x, tri.tangentB.y, tri.tangentB.z, tri.tangentB.w});
         geometry.vertices.push_back({tri.c.x, tri.c.y, tri.c.z, normalC.x, normalC.y, normalC.z, color.x, color.y, color.z, tri.uvC.x, tri.uvC.y, textured, roughness, metalness, kind, tri.tangentC.x, tri.tangentC.y, tri.tangentC.z, tri.tangentC.w});

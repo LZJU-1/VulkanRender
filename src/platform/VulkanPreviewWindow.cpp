@@ -51,10 +51,14 @@ constexpr std::uint32_t kGBufferWorldBinding = 17;
 constexpr std::uint32_t kSsaoRawBinding = 18;
 constexpr std::uint32_t kSsaoBlurBinding = 19;
 constexpr std::uint32_t kV4ManyLightBufferBinding = 20;
+constexpr std::uint32_t kV5SceneTlasBinding = 21;
+constexpr std::uint32_t kV5HistoryInputBinding = 22;
+constexpr std::uint32_t kV5HistoryOutputBinding = 23;
 constexpr VkFormat kGBufferAlbedoFormat = VK_FORMAT_R8G8B8A8_UNORM;
 constexpr VkFormat kGBufferNormalFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 constexpr VkFormat kGBufferWorldFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
 constexpr VkFormat kSsaoFormat = VK_FORMAT_R32_SFLOAT;
+constexpr VkFormat kV5HistoryFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
 PFN_vkCreateInstance vkCreateInstance = nullptr;
@@ -64,6 +68,7 @@ PFN_vkDestroySurfaceKHR vkDestroySurfaceKHR = nullptr;
 PFN_vkEnumeratePhysicalDevices vkEnumeratePhysicalDevices = nullptr;
 PFN_vkGetPhysicalDeviceProperties vkGetPhysicalDeviceProperties = nullptr;
 PFN_vkGetPhysicalDeviceFeatures vkGetPhysicalDeviceFeatures = nullptr;
+PFN_vkGetPhysicalDeviceFeatures2 vkGetPhysicalDeviceFeatures2 = nullptr;
 PFN_vkGetPhysicalDeviceFormatProperties vkGetPhysicalDeviceFormatProperties = nullptr;
 PFN_vkGetPhysicalDeviceQueueFamilyProperties vkGetPhysicalDeviceQueueFamilyProperties = nullptr;
 PFN_vkGetPhysicalDeviceSurfaceSupportKHR vkGetPhysicalDeviceSurfaceSupportKHR = nullptr;
@@ -142,6 +147,12 @@ PFN_vkWaitForFences vkWaitForFences = nullptr;
 PFN_vkResetFences vkResetFences = nullptr;
 PFN_vkQueueSubmit vkQueueSubmit = nullptr;
 PFN_vkQueueWaitIdle vkQueueWaitIdle = nullptr;
+PFN_vkGetBufferDeviceAddressKHR vkGetBufferDeviceAddressKHR = nullptr;
+PFN_vkCreateAccelerationStructureKHR vkCreateAccelerationStructureKHR = nullptr;
+PFN_vkDestroyAccelerationStructureKHR vkDestroyAccelerationStructureKHR = nullptr;
+PFN_vkGetAccelerationStructureBuildSizesKHR vkGetAccelerationStructureBuildSizesKHR = nullptr;
+PFN_vkCmdBuildAccelerationStructuresKHR vkCmdBuildAccelerationStructuresKHR = nullptr;
+PFN_vkGetAccelerationStructureDeviceAddressKHR vkGetAccelerationStructureDeviceAddressKHR = nullptr;
 
 HMODULE vulkanLibraryHandle() {
     static HMODULE library = nullptr;
@@ -190,6 +201,13 @@ struct TextureResource {
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
     std::uint32_t mipLevels = 1;
+};
+
+struct AccelerationStructureResource {
+    VkAccelerationStructureKHR handle = VK_NULL_HANDLE;
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkDeviceAddress address = 0;
 };
 
 struct MaterialTextureResources {
@@ -382,13 +400,21 @@ Vec3 targetOf(const V1CameraSettings& camera) {
     return {camera.targetX, camera.targetY, camera.targetZ};
 }
 
+Vec3 upOf(const V1CameraSettings& camera) {
+    const Vec3 up{camera.upX, camera.upY, camera.upZ};
+    return dot(up, up) <= 0.00001f ? Vec3{0.0f, 0.0f, 1.0f} : normalize(up);
+}
+
 Vec3 forwardFor(float yaw, float pitch) {
     const float cp = std::cos(pitch);
     return normalize({cp * std::cos(yaw), cp * std::sin(yaw), std::sin(pitch)});
 }
 
-Vec3 rightFor(Vec3 forward) {
-    const Vec3 right = normalize(cross(forward, {0.0f, 0.0f, 1.0f}));
+Vec3 rightFor(Vec3 forward, Vec3 upHint = {0.0f, 0.0f, 1.0f}) {
+    Vec3 right = normalize(cross(forward, upHint));
+    if (dot(right, right) <= 0.00001f) {
+        right = normalize(cross(forward, {0.0f, 0.0f, 1.0f}));
+    }
     return dot(right, right) <= 0.00001f ? Vec3{1.0f, 0.0f, 0.0f} : right;
 }
 
@@ -553,9 +579,11 @@ public:
         createRenderPass();
         previewLog("VulkanGpuRenderer: createShadowRenderPass");
         createShadowRenderPass();
-        if (enableV4Ssao_) {
+        if (enableV4Ssao_ || enableV5RayTracing_) {
             previewLog("VulkanGpuRenderer: createGBufferRenderPass");
             createGBufferRenderPass();
+        }
+        if (enableV4Ssao_) {
             previewLog("VulkanGpuRenderer: createSsaoRenderPass");
             createSsaoRenderPass();
         }
@@ -563,11 +591,17 @@ public:
         createDepthResources();
         previewLog("VulkanGpuRenderer: createShadowResources");
         createShadowResources();
-        if (enableV4Ssao_) {
+        if (enableV4Ssao_ || enableV5RayTracing_) {
             previewLog("VulkanGpuRenderer: createGBufferResources");
             createGBufferResources();
+        }
+        if (enableV4Ssao_) {
             previewLog("VulkanGpuRenderer: createSsaoResources");
             createSsaoResources();
+        }
+        if (enableV5RayTracing_) {
+            previewLog("VulkanGpuRenderer: createV5HistoryResources");
+            createV5HistoryResources();
         }
         previewLog("VulkanGpuRenderer: createMsaaColorResources");
         createMsaaColorResources();
@@ -575,6 +609,10 @@ public:
         createFramebuffers();
         previewLog("VulkanGpuRenderer: createBuffers");
         createBuffers();
+        if (enableV5RayTracing_) {
+            previewLog("VulkanGpuRenderer: createV5AccelerationStructures");
+            createV5AccelerationStructures();
+        }
         previewLog("VulkanGpuRenderer: createTextureResources");
         createTextureResources();
         previewLog("VulkanGpuRenderer: createDescriptors");
@@ -634,6 +672,8 @@ public:
         if (device_ != VK_NULL_HANDLE && descriptorPool_ != VK_NULL_HANDLE) vkDestroyDescriptorPool(device_, descriptorPool_, nullptr);
         if (device_ != VK_NULL_HANDLE && descriptorSetLayout_ != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, descriptorSetLayout_, nullptr);
         if (device_ != VK_NULL_HANDLE && textureSampler_ != VK_NULL_HANDLE) vkDestroySampler(device_, textureSampler_, nullptr);
+        destroyAccelerationStructure(v5Tlas_);
+        destroyAccelerationStructure(v5Blas_);
         for (MaterialTextureResources& material : materialTextures_) {
             for (TextureResource& texture : material.textures) {
                 if (device_ != VK_NULL_HANDLE && texture.view != VK_NULL_HANDLE) vkDestroyImageView(device_, texture.view, nullptr);
@@ -677,6 +717,11 @@ public:
         if (device_ != VK_NULL_HANDLE && ssaoBlurTarget_.view != VK_NULL_HANDLE) vkDestroyImageView(device_, ssaoBlurTarget_.view, nullptr);
         if (device_ != VK_NULL_HANDLE && ssaoBlurTarget_.image != VK_NULL_HANDLE) vkDestroyImage(device_, ssaoBlurTarget_.image, nullptr);
         if (device_ != VK_NULL_HANDLE && ssaoBlurTarget_.memory != VK_NULL_HANDLE) vkFreeMemory(device_, ssaoBlurTarget_.memory, nullptr);
+        for (TextureResource& history : v5HistoryTargets_) {
+            if (device_ != VK_NULL_HANDLE && history.view != VK_NULL_HANDLE) vkDestroyImageView(device_, history.view, nullptr);
+            if (device_ != VK_NULL_HANDLE && history.image != VK_NULL_HANDLE) vkDestroyImage(device_, history.image, nullptr);
+            if (device_ != VK_NULL_HANDLE && history.memory != VK_NULL_HANDLE) vkFreeMemory(device_, history.memory, nullptr);
+        }
         if (device_ != VK_NULL_HANDLE && gbufferDepthView_ != VK_NULL_HANDLE) vkDestroyImageView(device_, gbufferDepthView_, nullptr);
         if (device_ != VK_NULL_HANDLE && gbufferDepthImage_ != VK_NULL_HANDLE) vkDestroyImage(device_, gbufferDepthImage_, nullptr);
         if (device_ != VK_NULL_HANDLE && gbufferDepthMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, gbufferDepthMemory_, nullptr);
@@ -762,7 +807,7 @@ private:
         appInfo.applicationVersion = VK_MAKE_VERSION(0, 2, 0);
         appInfo.pEngineName = "LZJU VulkanRender";
         appInfo.engineVersion = VK_MAKE_VERSION(0, 2, 0);
-        appInfo.apiVersion = VK_API_VERSION_1_0;
+        appInfo.apiVersion = VK_API_VERSION_1_2;
 
         const char* extensions[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME};
         VkInstanceCreateInfo createInfo{};
@@ -780,6 +825,7 @@ private:
         loadInstance(instance_, vkEnumeratePhysicalDevices, "vkEnumeratePhysicalDevices");
         loadInstance(instance_, vkGetPhysicalDeviceProperties, "vkGetPhysicalDeviceProperties");
         loadInstance(instance_, vkGetPhysicalDeviceFeatures, "vkGetPhysicalDeviceFeatures");
+        loadInstance(instance_, vkGetPhysicalDeviceFeatures2, "vkGetPhysicalDeviceFeatures2");
         loadInstance(instance_, vkGetPhysicalDeviceFormatProperties, "vkGetPhysicalDeviceFormatProperties");
         loadInstance(instance_, vkGetPhysicalDeviceQueueFamilyProperties, "vkGetPhysicalDeviceQueueFamilyProperties");
         loadInstance(instance_, vkGetPhysicalDeviceSurfaceSupportKHR, "vkGetPhysicalDeviceSurfaceSupportKHR");
@@ -861,6 +907,14 @@ private:
         loadDevice(device_, vkResetFences, "vkResetFences");
         loadDevice(device_, vkQueueSubmit, "vkQueueSubmit");
         loadDevice(device_, vkQueueWaitIdle, "vkQueueWaitIdle");
+        if (enableV5RayTracing_) {
+            loadDevice(device_, vkGetBufferDeviceAddressKHR, "vkGetBufferDeviceAddressKHR");
+            loadDevice(device_, vkCreateAccelerationStructureKHR, "vkCreateAccelerationStructureKHR");
+            loadDevice(device_, vkDestroyAccelerationStructureKHR, "vkDestroyAccelerationStructureKHR");
+            loadDevice(device_, vkGetAccelerationStructureBuildSizesKHR, "vkGetAccelerationStructureBuildSizesKHR");
+            loadDevice(device_, vkCmdBuildAccelerationStructuresKHR, "vkCmdBuildAccelerationStructuresKHR");
+            loadDevice(device_, vkGetAccelerationStructureDeviceAddressKHR, "vkGetAccelerationStructureDeviceAddressKHR");
+        }
     }
 
     void createSurface() {
@@ -915,11 +969,26 @@ private:
             vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
             std::vector<VkExtensionProperties> extensions(extensionCount);
             vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, extensions.data());
-            const bool hasSwapchain = std::any_of(extensions.begin(), extensions.end(), [](const VkExtensionProperties& ext) {
-                return std::strcmp(ext.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0;
-            });
-            if (!hasSwapchain) {
+            const auto hasExt = [&](const char* name) {
+                return std::any_of(extensions.begin(), extensions.end(), [name](const VkExtensionProperties& ext) {
+                    return std::strcmp(ext.extensionName, name) == 0;
+                });
+            };
+            if (!hasExt(VK_KHR_SWAPCHAIN_EXTENSION_NAME)) {
                 continue;
+            }
+            if (enableV5RayTracing_) {
+                const std::array<const char*, 6> required{
+                    VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+                    VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
+                    VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
+                    VK_KHR_RAY_QUERY_EXTENSION_NAME,
+                    VK_KHR_SPIRV_1_4_EXTENSION_NAME,
+                    VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
+                };
+                if (!std::all_of(required.begin(), required.end(), hasExt)) {
+                    continue;
+                }
             }
             VkSurfaceCapabilitiesKHR caps{};
             require(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface_, &caps), "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
@@ -941,6 +1010,23 @@ private:
             );
             samplerAnisotropy_ = features.samplerAnisotropy == VK_TRUE;
             maxSamplerAnisotropy_ = samplerAnisotropy_ ? std::min(16.0f, properties.limits.maxSamplerAnisotropy) : 1.0f;
+            if (enableV5RayTracing_) {
+                VkPhysicalDeviceBufferDeviceAddressFeatures bufferDeviceAddress{};
+                bufferDeviceAddress.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+                VkPhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructure{};
+                accelerationStructure.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+                VkPhysicalDeviceRayQueryFeaturesKHR rayQuery{};
+                rayQuery.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+                accelerationStructure.pNext = &rayQuery;
+                bufferDeviceAddress.pNext = &accelerationStructure;
+                VkPhysicalDeviceFeatures2 features2{};
+                features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+                features2.pNext = &bufferDeviceAddress;
+                vkGetPhysicalDeviceFeatures2(device, &features2);
+                if (bufferDeviceAddress.bufferDeviceAddress != VK_TRUE || accelerationStructure.accelerationStructure != VK_TRUE || rayQuery.rayQuery != VK_TRUE) {
+                    continue;
+                }
+            }
             previewLog(
                 "selectDevice: " + gpuName_
                 + " graphicsQueue=" + std::to_string(queueFamilies_.graphics)
@@ -970,13 +1056,35 @@ private:
             queues.push_back(queue);
         }
 
-        const char* extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+        std::vector<const char*> extensions{VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+        VkPhysicalDeviceBufferDeviceAddressFeatures bufferDeviceAddress{};
+        VkPhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructure{};
+        VkPhysicalDeviceRayQueryFeaturesKHR rayQuery{};
+        if (enableV5RayTracing_) {
+            extensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+            extensions.push_back(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
+            extensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+            extensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+            extensions.push_back(VK_KHR_SPIRV_1_4_EXTENSION_NAME);
+            extensions.push_back(VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME);
+
+            bufferDeviceAddress.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+            bufferDeviceAddress.bufferDeviceAddress = VK_TRUE;
+            accelerationStructure.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+            accelerationStructure.accelerationStructure = VK_TRUE;
+            rayQuery.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+            rayQuery.rayQuery = VK_TRUE;
+            accelerationStructure.pNext = &rayQuery;
+            bufferDeviceAddress.pNext = &accelerationStructure;
+        }
+
         VkDeviceCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+        createInfo.pNext = enableV5RayTracing_ ? &bufferDeviceAddress : nullptr;
         createInfo.queueCreateInfoCount = static_cast<std::uint32_t>(queues.size());
         createInfo.pQueueCreateInfos = queues.data();
-        createInfo.enabledExtensionCount = 1;
-        createInfo.ppEnabledExtensionNames = extensions;
+        createInfo.enabledExtensionCount = static_cast<std::uint32_t>(extensions.size());
+        createInfo.ppEnabledExtensionNames = extensions.data();
         VkPhysicalDeviceFeatures enabledFeatures{};
         enabledFeatures.samplerAnisotropy = samplerAnisotropy_ ? VK_TRUE : VK_FALSE;
         createInfo.pEnabledFeatures = &enabledFeatures;
@@ -1047,6 +1155,7 @@ private:
         vkGetSwapchainImagesKHR(device_, swapchain_, &actualCount, nullptr);
         swapchainImages_.resize(actualCount);
         vkGetSwapchainImagesKHR(device_, swapchain_, &actualCount, swapchainImages_.data());
+        v5SwapchainImageInitialized_.assign(swapchainImages_.size(), false);
         swapchainImageViews_.reserve(swapchainImages_.size());
         for (VkImage image : swapchainImages_) {
             swapchainImageViews_.push_back(createImageView(image, swapchainFormat_, VK_IMAGE_ASPECT_COLOR_BIT));
@@ -1393,6 +1502,32 @@ private:
         target.view = createImageView(target.image, format, VK_IMAGE_ASPECT_COLOR_BIT);
     }
 
+    void createStorageSampledTexture(TextureResource& target, VkFormat format, const char* label) {
+        VkImageCreateInfo image{};
+        image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        image.imageType = VK_IMAGE_TYPE_2D;
+        image.extent = {swapchainExtent_.width, swapchainExtent_.height, 1};
+        image.mipLevels = 1;
+        image.arrayLayers = 1;
+        image.format = format;
+        image.tiling = VK_IMAGE_TILING_OPTIMAL;
+        image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        image.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        image.samples = VK_SAMPLE_COUNT_1_BIT;
+        image.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        require(vkCreateImage(device_, &image, nullptr, &target.image), label);
+
+        VkMemoryRequirements requirements{};
+        vkGetImageMemoryRequirements(device_, target.image, &requirements);
+        VkMemoryAllocateInfo allocate{};
+        allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocate.allocationSize = requirements.size;
+        allocate.memoryTypeIndex = findMemoryType(physicalDevice_, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        require(vkAllocateMemory(device_, &allocate, nullptr, &target.memory), "vkAllocateMemory(storage sampled texture)");
+        require(vkBindImageMemory(device_, target.image, target.memory, 0), "vkBindImageMemory(storage sampled texture)");
+        target.view = createImageView(target.image, format, VK_IMAGE_ASPECT_COLOR_BIT);
+    }
+
     void createGBufferResources() {
         createColorAttachment(gbufferTargets_[0], kGBufferAlbedoFormat, "vkCreateImage(gbuffer albedo)");
         createColorAttachment(gbufferTargets_[1], kGBufferNormalFormat, "vkCreateImage(gbuffer normal)");
@@ -1437,6 +1572,12 @@ private:
         framebuffer.height = swapchainExtent_.height;
         framebuffer.layers = 1;
         require(vkCreateFramebuffer(device_, &framebuffer, nullptr, &gbufferFramebuffer_), "vkCreateFramebuffer(gbuffer)");
+    }
+
+    void createV5HistoryResources() {
+        createStorageSampledTexture(v5HistoryTargets_[0], kV5HistoryFormat, "vkCreateImage(v5 history 0)");
+        createStorageSampledTexture(v5HistoryTargets_[1], kV5HistoryFormat, "vkCreateImage(v5 history 1)");
+        v5HistoryInitialized_ = {false, false};
     }
 
     void createSsaoResources() {
@@ -1510,7 +1651,14 @@ private:
         }
     }
 
-    void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer, VkDeviceMemory& memory) {
+    void createBuffer(
+        VkDeviceSize size,
+        VkBufferUsageFlags usage,
+        VkBuffer& buffer,
+        VkDeviceMemory& memory,
+        VkMemoryPropertyFlags memoryProperties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        VkMemoryAllocateFlags allocationFlags = 0
+    ) {
         VkBufferCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         createInfo.size = size;
@@ -1523,10 +1671,16 @@ private:
         VkMemoryAllocateInfo allocate{};
         allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
         allocate.allocationSize = requirements.size;
+        VkMemoryAllocateFlagsInfo allocationFlagsInfo{};
+        if (allocationFlags != 0) {
+            allocationFlagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+            allocationFlagsInfo.flags = allocationFlags;
+            allocate.pNext = &allocationFlagsInfo;
+        }
         allocate.memoryTypeIndex = findMemoryType(
             physicalDevice_,
             requirements.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+            memoryProperties
         );
         require(vkAllocateMemory(device_, &allocate, nullptr, &memory), "vkAllocateMemory(buffer)");
         require(vkBindBufferMemory(device_, buffer, memory, 0), "vkBindBufferMemory");
@@ -1535,7 +1689,13 @@ private:
     void createBuffers() {
         vertexCount_ = static_cast<std::uint32_t>(geometry_.vertices.size());
         vertexBytes_ = std::max<VkDeviceSize>(1, sizeof(GpuPreviewVertex) * geometry_.vertices.size());
-        createBuffer(vertexBytes_, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vertexBuffer_, vertexMemory_);
+        VkBufferUsageFlags vertexUsage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        VkMemoryAllocateFlags vertexAllocationFlags = 0;
+        if (enableV5RayTracing_) {
+            vertexUsage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+            vertexAllocationFlags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+        }
+        createBuffer(vertexBytes_, vertexUsage, vertexBuffer_, vertexMemory_, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, vertexAllocationFlags);
         void* mapped = nullptr;
         require(vkMapMemory(device_, vertexMemory_, 0, vertexBytes_, 0, &mapped), "vkMapMemory(vertex)");
         std::memcpy(mapped, geometry_.vertices.data(), sizeof(GpuPreviewVertex) * geometry_.vertices.size());
@@ -1606,6 +1766,204 @@ private:
         vkFreeCommandBuffers(device_, uploadCommandPool_, 1, &commandBuffer);
         vkDestroyCommandPool(device_, uploadCommandPool_, nullptr);
         uploadCommandPool_ = VK_NULL_HANDLE;
+    }
+
+    VkDeviceAddress bufferDeviceAddress(VkBuffer buffer) const {
+        VkBufferDeviceAddressInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+        info.buffer = buffer;
+        return vkGetBufferDeviceAddressKHR(device_, &info);
+    }
+
+    void createAccelerationStorage(
+        VkAccelerationStructureTypeKHR type,
+        VkDeviceSize size,
+        AccelerationStructureResource& resource
+    ) {
+        createBuffer(
+            size,
+            VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+            resource.buffer,
+            resource.memory,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT
+        );
+
+        VkAccelerationStructureCreateInfoKHR createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+        createInfo.buffer = resource.buffer;
+        createInfo.size = size;
+        createInfo.type = type;
+        require(vkCreateAccelerationStructureKHR(device_, &createInfo, nullptr, &resource.handle), "vkCreateAccelerationStructureKHR");
+
+        VkAccelerationStructureDeviceAddressInfoKHR addressInfo{};
+        addressInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+        addressInfo.accelerationStructure = resource.handle;
+        resource.address = vkGetAccelerationStructureDeviceAddressKHR(device_, &addressInfo);
+    }
+
+    void destroyAccelerationStructure(AccelerationStructureResource& resource) {
+        if (device_ != VK_NULL_HANDLE && resource.handle != VK_NULL_HANDLE) {
+            vkDestroyAccelerationStructureKHR(device_, resource.handle, nullptr);
+            resource.handle = VK_NULL_HANDLE;
+        }
+        if (device_ != VK_NULL_HANDLE && resource.buffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device_, resource.buffer, nullptr);
+            resource.buffer = VK_NULL_HANDLE;
+        }
+        if (device_ != VK_NULL_HANDLE && resource.memory != VK_NULL_HANDLE) {
+            vkFreeMemory(device_, resource.memory, nullptr);
+            resource.memory = VK_NULL_HANDLE;
+        }
+        resource.address = 0;
+    }
+
+    void createV5AccelerationStructures() {
+        const std::uint32_t primitiveCount = vertexCount_ / 3u;
+        if (primitiveCount == 0) {
+            throw std::runtime_error("V5 realtime ray tracing requires triangle geometry for BLAS build");
+        }
+
+        VkDeviceOrHostAddressConstKHR vertexAddress{};
+        vertexAddress.deviceAddress = bufferDeviceAddress(vertexBuffer_);
+
+        VkAccelerationStructureGeometryKHR blasGeometry{};
+        blasGeometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+        blasGeometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+        blasGeometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+        blasGeometry.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+        blasGeometry.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+        blasGeometry.geometry.triangles.vertexData = vertexAddress;
+        blasGeometry.geometry.triangles.vertexStride = sizeof(GpuPreviewVertex);
+        blasGeometry.geometry.triangles.maxVertex = vertexCount_ - 1u;
+        blasGeometry.geometry.triangles.indexType = VK_INDEX_TYPE_NONE_KHR;
+
+        VkAccelerationStructureBuildGeometryInfoKHR blasBuildInfo{};
+        blasBuildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+        blasBuildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+        blasBuildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+        blasBuildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+        blasBuildInfo.geometryCount = 1;
+        blasBuildInfo.pGeometries = &blasGeometry;
+
+        VkAccelerationStructureBuildSizesInfoKHR blasSizes{};
+        blasSizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+        vkGetAccelerationStructureBuildSizesKHR(
+            device_,
+            VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+            &blasBuildInfo,
+            &primitiveCount,
+            &blasSizes
+        );
+        createAccelerationStorage(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, blasSizes.accelerationStructureSize, v5Blas_);
+
+        VkBuffer blasScratch = VK_NULL_HANDLE;
+        VkDeviceMemory blasScratchMemory = VK_NULL_HANDLE;
+        createBuffer(
+            blasSizes.buildScratchSize,
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+            blasScratch,
+            blasScratchMemory,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT
+        );
+        VkDeviceOrHostAddressKHR blasScratchAddress{};
+        blasScratchAddress.deviceAddress = bufferDeviceAddress(blasScratch);
+        blasBuildInfo.dstAccelerationStructure = v5Blas_.handle;
+        blasBuildInfo.scratchData = blasScratchAddress;
+
+        VkAccelerationStructureBuildRangeInfoKHR blasRange{};
+        blasRange.primitiveCount = primitiveCount;
+        const VkAccelerationStructureBuildRangeInfoKHR* blasRangePtr = &blasRange;
+        VkCommandBuffer commandBuffer = beginOneTimeCommands();
+        vkCmdBuildAccelerationStructuresKHR(commandBuffer, 1, &blasBuildInfo, &blasRangePtr);
+        endOneTimeCommands(commandBuffer);
+        vkDestroyBuffer(device_, blasScratch, nullptr);
+        vkFreeMemory(device_, blasScratchMemory, nullptr);
+
+        VkAccelerationStructureInstanceKHR instance{};
+        instance.transform.matrix[0][0] = 1.0f;
+        instance.transform.matrix[1][1] = 1.0f;
+        instance.transform.matrix[2][2] = 1.0f;
+        instance.instanceCustomIndex = 0;
+        instance.mask = 0xff;
+        instance.instanceShaderBindingTableRecordOffset = 0;
+        instance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+        instance.accelerationStructureReference = v5Blas_.address;
+
+        VkBuffer instanceBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory instanceMemory = VK_NULL_HANDLE;
+        createBuffer(
+            sizeof(instance),
+            VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+            instanceBuffer,
+            instanceMemory,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT
+        );
+        void* mapped = nullptr;
+        require(vkMapMemory(device_, instanceMemory, 0, sizeof(instance), 0, &mapped), "vkMapMemory(tlas instance)");
+        std::memcpy(mapped, &instance, sizeof(instance));
+        vkUnmapMemory(device_, instanceMemory);
+
+        VkDeviceOrHostAddressConstKHR instanceAddress{};
+        instanceAddress.deviceAddress = bufferDeviceAddress(instanceBuffer);
+        VkAccelerationStructureGeometryKHR tlasGeometry{};
+        tlasGeometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+        tlasGeometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+        tlasGeometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+        tlasGeometry.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+        tlasGeometry.geometry.instances.arrayOfPointers = VK_FALSE;
+        tlasGeometry.geometry.instances.data = instanceAddress;
+
+        const std::uint32_t instanceCount = 1;
+        VkAccelerationStructureBuildGeometryInfoKHR tlasBuildInfo{};
+        tlasBuildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+        tlasBuildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+        tlasBuildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+        tlasBuildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+        tlasBuildInfo.geometryCount = 1;
+        tlasBuildInfo.pGeometries = &tlasGeometry;
+
+        VkAccelerationStructureBuildSizesInfoKHR tlasSizes{};
+        tlasSizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+        vkGetAccelerationStructureBuildSizesKHR(
+            device_,
+            VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+            &tlasBuildInfo,
+            &instanceCount,
+            &tlasSizes
+        );
+        createAccelerationStorage(VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, tlasSizes.accelerationStructureSize, v5Tlas_);
+
+        VkBuffer tlasScratch = VK_NULL_HANDLE;
+        VkDeviceMemory tlasScratchMemory = VK_NULL_HANDLE;
+        createBuffer(
+            tlasSizes.buildScratchSize,
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+            tlasScratch,
+            tlasScratchMemory,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT
+        );
+        VkDeviceOrHostAddressKHR tlasScratchAddress{};
+        tlasScratchAddress.deviceAddress = bufferDeviceAddress(tlasScratch);
+        tlasBuildInfo.dstAccelerationStructure = v5Tlas_.handle;
+        tlasBuildInfo.scratchData = tlasScratchAddress;
+
+        VkAccelerationStructureBuildRangeInfoKHR tlasRange{};
+        tlasRange.primitiveCount = instanceCount;
+        const VkAccelerationStructureBuildRangeInfoKHR* tlasRangePtr = &tlasRange;
+        commandBuffer = beginOneTimeCommands();
+        vkCmdBuildAccelerationStructuresKHR(commandBuffer, 1, &tlasBuildInfo, &tlasRangePtr);
+        endOneTimeCommands(commandBuffer);
+
+        vkDestroyBuffer(device_, tlasScratch, nullptr);
+        vkFreeMemory(device_, tlasScratchMemory, nullptr);
+        vkDestroyBuffer(device_, instanceBuffer, nullptr);
+        vkFreeMemory(device_, instanceMemory, nullptr);
+
+        previewLog("createV5AccelerationStructures: triangles=" + std::to_string(primitiveCount) + " tlas=ready");
     }
 
     void transitionImage(
@@ -2336,27 +2694,80 @@ private:
         outputBinding.descriptorCount = 1;
         outputBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-        std::array<VkDescriptorSetLayoutBinding, 2> bindings{cameraBinding, outputBinding};
+        VkDescriptorSetLayoutBinding samplerBinding{};
+        samplerBinding.binding = 5;
+        samplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+        samplerBinding.descriptorCount = 1;
+        samplerBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+        VkDescriptorSetLayoutBinding albedoBinding{};
+        albedoBinding.binding = kGBufferAlbedoBinding;
+        albedoBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        albedoBinding.descriptorCount = 1;
+        albedoBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+        VkDescriptorSetLayoutBinding normalBinding = albedoBinding;
+        normalBinding.binding = kGBufferNormalBinding;
+        VkDescriptorSetLayoutBinding worldBinding = albedoBinding;
+        worldBinding.binding = kGBufferWorldBinding;
+        VkDescriptorSetLayoutBinding tlasBinding{};
+        tlasBinding.binding = kV5SceneTlasBinding;
+        tlasBinding.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+        tlasBinding.descriptorCount = 1;
+        tlasBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        VkDescriptorSetLayoutBinding historyInputBinding = albedoBinding;
+        historyInputBinding.binding = kV5HistoryInputBinding;
+        VkDescriptorSetLayoutBinding historyOutputBinding{};
+        historyOutputBinding.binding = kV5HistoryOutputBinding;
+        historyOutputBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        historyOutputBinding.descriptorCount = 1;
+        historyOutputBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        VkDescriptorSetLayoutBinding lightBinding{};
+        lightBinding.binding = kV4ManyLightBufferBinding;
+        lightBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        lightBinding.descriptorCount = 1;
+        lightBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+        std::array<VkDescriptorSetLayoutBinding, 10> bindings{
+            cameraBinding,
+            outputBinding,
+            samplerBinding,
+            albedoBinding,
+            normalBinding,
+            worldBinding,
+            tlasBinding,
+            historyInputBinding,
+            historyOutputBinding,
+            lightBinding,
+        };
         VkDescriptorSetLayoutCreateInfo layout{};
         layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
         layout.bindingCount = static_cast<std::uint32_t>(bindings.size());
         layout.pBindings = bindings.data();
         require(vkCreateDescriptorSetLayout(device_, &layout, nullptr, &v5DescriptorSetLayout_), "vkCreateDescriptorSetLayout(v5 rt)");
 
-        std::array<VkDescriptorPoolSize, 2> poolSizes{};
+        std::array<VkDescriptorPoolSize, 6> poolSizes{};
         poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        poolSizes[0].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size());
+        poolSizes[0].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 2u);
         poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        poolSizes[1].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size());
+        poolSizes[1].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 4u);
+        poolSizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+        poolSizes[2].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 2u);
+        poolSizes[3].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        poolSizes[3].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 8u);
+        poolSizes[4].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+        poolSizes[4].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 2u);
+        poolSizes[5].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        poolSizes[5].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 2u);
         VkDescriptorPoolCreateInfo pool{};
         pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         pool.poolSizeCount = static_cast<std::uint32_t>(poolSizes.size());
         pool.pPoolSizes = poolSizes.data();
-        pool.maxSets = static_cast<std::uint32_t>(swapchainImageViews_.size());
+        pool.maxSets = static_cast<std::uint32_t>(swapchainImageViews_.size() * 2u);
         require(vkCreateDescriptorPool(device_, &pool, nullptr, &v5DescriptorPool_), "vkCreateDescriptorPool(v5 rt)");
 
-        std::vector<VkDescriptorSetLayout> layouts(swapchainImageViews_.size(), v5DescriptorSetLayout_);
-        v5DescriptorSets_.resize(swapchainImageViews_.size());
+        std::vector<VkDescriptorSetLayout> layouts(swapchainImageViews_.size() * 2u, v5DescriptorSetLayout_);
+        v5DescriptorSets_.resize(swapchainImageViews_.size() * 2u);
         VkDescriptorSetAllocateInfo allocate{};
         allocate.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
         allocate.descriptorPool = v5DescriptorPool_;
@@ -2369,11 +2780,40 @@ private:
         bufferInfo.offset = 0;
         bufferInfo.range = sizeof(CameraUniform);
 
-        std::vector<VkDescriptorImageInfo> imageInfos(v5DescriptorSets_.size());
-        std::vector<std::array<VkWriteDescriptorSet, 2>> writes(v5DescriptorSets_.size());
+        VkDescriptorImageInfo samplerInfo{};
+        samplerInfo.sampler = textureSampler_;
+
+        VkDescriptorImageInfo albedoInfo{};
+        albedoInfo.imageView = gbufferTargets_[0].view;
+        albedoInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkDescriptorImageInfo normalInfo{};
+        normalInfo.imageView = gbufferTargets_[1].view;
+        normalInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkDescriptorImageInfo worldInfo{};
+        worldInfo.imageView = gbufferTargets_[2].view;
+        worldInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkDescriptorBufferInfo lightInfo{};
+        lightInfo.buffer = lightBuffer_;
+        lightInfo.offset = 0;
+        lightInfo.range = lightBytes_;
+
+        std::vector<VkDescriptorImageInfo> outputInfos(v5DescriptorSets_.size());
+        std::vector<VkDescriptorImageInfo> historyInputInfos(v5DescriptorSets_.size());
+        std::vector<VkDescriptorImageInfo> historyOutputInfos(v5DescriptorSets_.size());
+        std::vector<VkWriteDescriptorSetAccelerationStructureKHR> asInfos(v5DescriptorSets_.size());
+        std::vector<std::array<VkWriteDescriptorSet, 10>> writes(v5DescriptorSets_.size());
         for (std::size_t i = 0; i < v5DescriptorSets_.size(); ++i) {
-            imageInfos[i].imageView = swapchainImageViews_[i];
-            imageInfos[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            const std::size_t swapchainIndex = i / 2u;
+            const std::size_t pingPongIndex = i % 2u;
+            outputInfos[i].imageView = swapchainImageViews_[swapchainIndex];
+            outputInfos[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            historyInputInfos[i].imageView = v5HistoryTargets_[1u - pingPongIndex].view;
+            historyInputInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            historyOutputInfos[i].imageView = v5HistoryTargets_[pingPongIndex].view;
+            historyOutputInfos[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            asInfos[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+            asInfos[i].accelerationStructureCount = 1;
+            asInfos[i].pAccelerationStructures = &v5Tlas_.handle;
 
             writes[i][0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[i][0].dstSet = v5DescriptorSets_[i];
@@ -2387,7 +2827,63 @@ private:
             writes[i][1].dstBinding = 1;
             writes[i][1].descriptorCount = 1;
             writes[i][1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-            writes[i][1].pImageInfo = &imageInfos[i];
+            writes[i][1].pImageInfo = &outputInfos[i];
+
+            writes[i][2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i][2].dstSet = v5DescriptorSets_[i];
+            writes[i][2].dstBinding = 5;
+            writes[i][2].descriptorCount = 1;
+            writes[i][2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+            writes[i][2].pImageInfo = &samplerInfo;
+
+            writes[i][3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i][3].dstSet = v5DescriptorSets_[i];
+            writes[i][3].dstBinding = kGBufferAlbedoBinding;
+            writes[i][3].descriptorCount = 1;
+            writes[i][3].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            writes[i][3].pImageInfo = &albedoInfo;
+
+            writes[i][4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i][4].dstSet = v5DescriptorSets_[i];
+            writes[i][4].dstBinding = kGBufferNormalBinding;
+            writes[i][4].descriptorCount = 1;
+            writes[i][4].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            writes[i][4].pImageInfo = &normalInfo;
+
+            writes[i][5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i][5].dstSet = v5DescriptorSets_[i];
+            writes[i][5].dstBinding = kGBufferWorldBinding;
+            writes[i][5].descriptorCount = 1;
+            writes[i][5].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            writes[i][5].pImageInfo = &worldInfo;
+
+            writes[i][6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i][6].pNext = &asInfos[i];
+            writes[i][6].dstSet = v5DescriptorSets_[i];
+            writes[i][6].dstBinding = kV5SceneTlasBinding;
+            writes[i][6].descriptorCount = 1;
+            writes[i][6].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+
+            writes[i][7].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i][7].dstSet = v5DescriptorSets_[i];
+            writes[i][7].dstBinding = kV5HistoryInputBinding;
+            writes[i][7].descriptorCount = 1;
+            writes[i][7].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            writes[i][7].pImageInfo = &historyInputInfos[i];
+
+            writes[i][8].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i][8].dstSet = v5DescriptorSets_[i];
+            writes[i][8].dstBinding = kV5HistoryOutputBinding;
+            writes[i][8].descriptorCount = 1;
+            writes[i][8].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[i][8].pImageInfo = &historyOutputInfos[i];
+
+            writes[i][9].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i][9].dstSet = v5DescriptorSets_[i];
+            writes[i][9].dstBinding = kV4ManyLightBufferBinding;
+            writes[i][9].descriptorCount = 1;
+            writes[i][9].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[i][9].pBufferInfo = &lightInfo;
             vkUpdateDescriptorSets(device_, static_cast<std::uint32_t>(writes[i].size()), writes[i].data(), 0, nullptr);
         }
     }
@@ -2588,7 +3084,7 @@ private:
         skyCreateInfo.subpass = 0;
         require(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &skyCreateInfo, nullptr, &skyPipeline_), "vkCreateGraphicsPipelines(sky)");
 
-        if (enableV4Ssao_) {
+        if (enableV4Ssao_ || enableV5RayTracing_) {
             const VkShaderModule gbufferVertexShader = createShader("shaders/vulkan_gpu/simple_color.vert.spv");
             const VkShaderModule gbufferFragmentShader = createShader("shaders/vulkan_gpu/v4_gbuffer.frag.spv");
             VkPipelineShaderStageCreateInfo gbufferStages[2]{};
@@ -2669,6 +3165,7 @@ private:
             vkDestroyShaderModule(device_, instancedFragmentShader, nullptr);
             vkDestroyShaderModule(device_, instancedVertexShader, nullptr);
 
+            if (enableV4Ssao_) {
             VkPipelineLayoutCreateInfo composeLayout{};
             composeLayout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
             composeLayout.setLayoutCount = 1;
@@ -2728,6 +3225,7 @@ private:
             vkDestroyShaderModule(device_, ssaoBlurFragmentShader, nullptr);
             vkDestroyShaderModule(device_, ssaoFragmentShader, nullptr);
             vkDestroyShaderModule(device_, fullscreenVertexShader, nullptr);
+            }
         }
 
         if (enableV5RayTracing_) {
@@ -2782,10 +3280,29 @@ private:
         require(vkCreateFence(device_, &fence, nullptr, &inFlight_), "vkCreateFence");
     }
 
+    bool cameraChangedForHistory(const V1CameraSettings& camera) const {
+        if (!hasLastV5Camera_) {
+            return true;
+        }
+        const auto changed = [](float a, float b, float epsilon) {
+            return std::abs(a - b) > epsilon;
+        };
+        return changed(camera.eyeX, lastV5Camera_.eyeX, 0.0005f)
+            || changed(camera.eyeY, lastV5Camera_.eyeY, 0.0005f)
+            || changed(camera.eyeZ, lastV5Camera_.eyeZ, 0.0005f)
+            || changed(camera.targetX, lastV5Camera_.targetX, 0.0005f)
+            || changed(camera.targetY, lastV5Camera_.targetY, 0.0005f)
+            || changed(camera.targetZ, lastV5Camera_.targetZ, 0.0005f)
+            || changed(camera.upX, lastV5Camera_.upX, 0.0005f)
+            || changed(camera.upY, lastV5Camera_.upY, 0.0005f)
+            || changed(camera.upZ, lastV5Camera_.upZ, 0.0005f)
+            || changed(camera.fovY, lastV5Camera_.fovY, 0.0005f);
+    }
+
     void updateUniform(const V1CameraSettings& cameraSettings, std::uint32_t v4DebugMode) {
         const Vec3 eye = eyeOf(cameraSettings);
         const Vec3 forward = normalize(targetOf(cameraSettings) - eye);
-        const Vec3 right = rightFor(forward);
+        const Vec3 right = rightFor(forward, upOf(cameraSettings));
         const Vec3 up = normalize(cross(right, forward));
         const float nearPlane = cameraSettings.nearPlane > 0.0f ? cameraSettings.nearPlane : 0.05f;
         const float farPlane = cameraSettings.farPlane > 0.0f ? cameraSettings.farPlane : 200.0f;
@@ -2861,7 +3378,18 @@ private:
         uniform.v4Flags[0] = geometry_.manyLightDemo ? 1.0f : 0.0f;
         uniform.v4Flags[1] = static_cast<float>(lightCount_);
         uniform.v4Flags[2] = static_cast<float>(v4DebugMode);
-        uniform.v4Flags[3] = static_cast<float>(frameIndex_);
+        if (enableV5RayTracing_) {
+            if (cameraChangedForHistory(cameraSettings)) {
+                v5HistoryFrameCount_ = 0;
+            } else {
+                v5HistoryFrameCount_ = std::min<std::uint32_t>(v5HistoryFrameCount_ + 1u, 240u);
+            }
+            lastV5Camera_ = cameraSettings;
+            hasLastV5Camera_ = true;
+            uniform.v4Flags[3] = static_cast<float>(v5HistoryFrameCount_);
+        } else {
+            uniform.v4Flags[3] = static_cast<float>(frameIndex_);
+        }
 
         void* mapped = nullptr;
         require(vkMapMemory(device_, uniformMemory_, 0, sizeof(uniform), 0, &mapped), "vkMapMemory(uniform)");
@@ -2910,6 +3438,7 @@ private:
                 vkCmdDraw(commandBuffer, vertexCount_, 1, 0, shadowIndex);
             }
             vkCmdEndRenderPass(commandBuffer);
+
         }
 
         VkViewport viewport{};
@@ -2921,9 +3450,125 @@ private:
         scissor.extent = swapchainExtent_;
 
         if (enableV5RayTracing_) {
+            if (frameIndex_ < 4) previewLog("record v5: begin gbuffer pass");
+            std::array<VkClearValue, 4> gbufferClears{};
+            gbufferClears[0].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
+            gbufferClears[1].color = {{0.5f, 0.5f, 1.0f, 1.0f}};
+            gbufferClears[2].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
+            gbufferClears[3].depthStencil = {1.0f, 0};
+            VkRenderPassBeginInfo gbufferPass{};
+            gbufferPass.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            gbufferPass.renderPass = gbufferRenderPass_;
+            gbufferPass.framebuffer = gbufferFramebuffer_;
+            gbufferPass.renderArea.extent = swapchainExtent_;
+            gbufferPass.clearValueCount = static_cast<std::uint32_t>(gbufferClears.size());
+            gbufferPass.pClearValues = gbufferClears.data();
+            vkCmdBeginRenderPass(commandBuffer, &gbufferPass, VK_SUBPASS_CONTENTS_INLINE);
+            vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+            vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, gbufferPipeline_);
+            VkDeviceSize gbufferOffset = 0;
+            vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer_, &gbufferOffset);
+            const VkDescriptorSet fallbackDescriptorSet = descriptorSets_.empty() ? VK_NULL_HANDLE : descriptorSets_.front();
+            if (geometry_.batches.empty()) {
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &fallbackDescriptorSet, 0, nullptr);
+                vkCmdDraw(commandBuffer, vertexCount_, 1, 0, 0);
+            } else {
+                if (frameIndex_ < 4) previewLog("record v5: draw batches");
+                for (const GpuPreviewGeometry::Batch& batch : geometry_.batches) {
+                    if (batch.vertexCount == 0) {
+                        continue;
+                    }
+                    const std::uint32_t materialIndex = batch.materialIndex < descriptorSets_.size() ? batch.materialIndex : 0u;
+                    const VkDescriptorSet descriptorSet = descriptorSets_[materialIndex];
+                    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &descriptorSet, 0, nullptr);
+                    vkCmdDraw(commandBuffer, batch.vertexCount, 1, batch.firstVertex, 0);
+                }
+            }
+            if (sphereVertexCount_ > 0 && sphereInstanceCount_ > 0) {
+                vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, instancedGBufferPipeline_);
+                const VkDescriptorSet instancedDescriptorSet = descriptorSets_.empty() ? VK_NULL_HANDLE : descriptorSets_.front();
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &instancedDescriptorSet, 0, nullptr);
+                std::array<VkBuffer, 2> sphereBuffers{sphereVertexBuffer_, sphereInstanceBuffer_};
+                std::array<VkDeviceSize, 2> sphereOffsets{0, 0};
+                vkCmdBindVertexBuffers(commandBuffer, 0, static_cast<std::uint32_t>(sphereBuffers.size()), sphereBuffers.data(), sphereOffsets.data());
+                vkCmdDraw(commandBuffer, sphereVertexCount_, sphereInstanceCount_, 0, 0);
+            }
+            if (frameIndex_ < 4) previewLog("record v5: end gbuffer pass");
+            vkCmdEndRenderPass(commandBuffer);
+
+            if (frameIndex_ < 4) previewLog("record v5: gbuffer compute barrier");
+            std::array<VkImageMemoryBarrier, 3> gbufferReadBarriers{};
+            for (std::size_t i = 0; i < gbufferReadBarriers.size(); ++i) {
+                VkImageMemoryBarrier& barrier = gbufferReadBarriers[i];
+                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                barrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.image = gbufferTargets_[i].image;
+                barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                barrier.subresourceRange.levelCount = 1;
+                barrier.subresourceRange.layerCount = 1;
+                barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            }
+            vkCmdPipelineBarrier(
+                commandBuffer,
+                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                0,
+                0,
+                nullptr,
+                0,
+                nullptr,
+                static_cast<std::uint32_t>(gbufferReadBarriers.size()),
+                gbufferReadBarriers.data()
+            );
+
+            const std::uint32_t historyWriteIndex = frameIndex_ & 1u;
+            const std::uint32_t historyReadIndex = 1u - historyWriteIndex;
+            std::array<VkImageMemoryBarrier, 2> historyBeforeCompute{};
+            historyBeforeCompute[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            historyBeforeCompute[0].oldLayout = v5HistoryInitialized_[historyReadIndex] ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+            historyBeforeCompute[0].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            historyBeforeCompute[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            historyBeforeCompute[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            historyBeforeCompute[0].image = v5HistoryTargets_[historyReadIndex].image;
+            historyBeforeCompute[0].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            historyBeforeCompute[0].subresourceRange.levelCount = 1;
+            historyBeforeCompute[0].subresourceRange.layerCount = 1;
+            historyBeforeCompute[0].srcAccessMask = v5HistoryInitialized_[historyReadIndex] ? VK_ACCESS_SHADER_READ_BIT : 0;
+            historyBeforeCompute[0].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            historyBeforeCompute[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            historyBeforeCompute[1].oldLayout = v5HistoryInitialized_[historyWriteIndex] ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+            historyBeforeCompute[1].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            historyBeforeCompute[1].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            historyBeforeCompute[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            historyBeforeCompute[1].image = v5HistoryTargets_[historyWriteIndex].image;
+            historyBeforeCompute[1].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            historyBeforeCompute[1].subresourceRange.levelCount = 1;
+            historyBeforeCompute[1].subresourceRange.layerCount = 1;
+            historyBeforeCompute[1].srcAccessMask = v5HistoryInitialized_[historyWriteIndex] ? VK_ACCESS_SHADER_READ_BIT : 0;
+            historyBeforeCompute[1].dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            vkCmdPipelineBarrier(
+                commandBuffer,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                0,
+                0,
+                nullptr,
+                0,
+                nullptr,
+                static_cast<std::uint32_t>(historyBeforeCompute.size()),
+                historyBeforeCompute.data()
+            );
+
+            if (frameIndex_ < 4) previewLog("record v5: swapchain to general");
             VkImageMemoryBarrier toGeneral{};
             toGeneral.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            toGeneral.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            const bool firstSwapchainUse = imageIndex >= v5SwapchainImageInitialized_.size() || !v5SwapchainImageInitialized_[imageIndex];
+            toGeneral.oldLayout = firstSwapchainUse ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
             toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
             toGeneral.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             toGeneral.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -2945,11 +3590,40 @@ private:
                 &toGeneral
             );
 
+            if (frameIndex_ < 4) previewLog("record v5: dispatch compute");
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, v5RayTracingPipeline_);
-            const VkDescriptorSet descriptorSet = v5DescriptorSets_[imageIndex];
+            const std::size_t descriptorIndex = static_cast<std::size_t>(imageIndex) * 2u + historyWriteIndex;
+            const VkDescriptorSet descriptorSet = v5DescriptorSets_[descriptorIndex];
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, v5RayTracingPipelineLayout_, 0, 1, &descriptorSet, 0, nullptr);
             vkCmdDispatch(commandBuffer, (swapchainExtent_.width + 7u) / 8u, (swapchainExtent_.height + 7u) / 8u, 1);
 
+            VkImageMemoryBarrier historyAfterCompute{};
+            historyAfterCompute.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            historyAfterCompute.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+            historyAfterCompute.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            historyAfterCompute.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            historyAfterCompute.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            historyAfterCompute.image = v5HistoryTargets_[historyWriteIndex].image;
+            historyAfterCompute.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            historyAfterCompute.subresourceRange.levelCount = 1;
+            historyAfterCompute.subresourceRange.layerCount = 1;
+            historyAfterCompute.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            historyAfterCompute.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            vkCmdPipelineBarrier(
+                commandBuffer,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                0,
+                0,
+                nullptr,
+                0,
+                nullptr,
+                1,
+                &historyAfterCompute
+            );
+            v5HistoryInitialized_[historyWriteIndex] = true;
+
+            if (frameIndex_ < 4) previewLog("record v5: swapchain to present");
             VkImageMemoryBarrier toPresent = toGeneral;
             toPresent.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
             toPresent.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
@@ -2968,7 +3642,11 @@ private:
                 &toPresent
             );
 
+            if (frameIndex_ < 4) previewLog("record v5: end command buffer");
             require(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer");
+            if (imageIndex < v5SwapchainImageInitialized_.size()) {
+                v5SwapchainImageInitialized_[imageIndex] = true;
+            }
             return;
         }
 
@@ -3137,6 +3815,7 @@ private:
     VkExtent2D swapchainExtent_{};
     std::vector<VkImage> swapchainImages_;
     std::vector<VkImageView> swapchainImageViews_;
+    std::vector<bool> v5SwapchainImageInitialized_;
     VkRenderPass renderPass_ = VK_NULL_HANDLE;
     VkRenderPass shadowRenderPass_ = VK_NULL_HANDLE;
     VkRenderPass gbufferRenderPass_ = VK_NULL_HANDLE;
@@ -3159,6 +3838,8 @@ private:
     VkFramebuffer gbufferFramebuffer_ = VK_NULL_HANDLE;
     TextureResource ssaoTarget_{};
     TextureResource ssaoBlurTarget_{};
+    std::array<TextureResource, 2> v5HistoryTargets_{};
+    std::array<bool, 2> v5HistoryInitialized_{false, false};
     VkFramebuffer ssaoFramebuffer_ = VK_NULL_HANDLE;
     VkFramebuffer ssaoBlurFramebuffer_ = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> framebuffers_;
@@ -3180,6 +3861,8 @@ private:
     VkDeviceMemory lightMemory_ = VK_NULL_HANDLE;
     VkDeviceSize lightBytes_ = 0;
     std::uint32_t lightCount_ = 0;
+    AccelerationStructureResource v5Blas_{};
+    AccelerationStructureResource v5Tlas_{};
     std::vector<MaterialTextureResources> materialTextures_;
     std::array<TextureResource, kSharedTextureCount> sharedTextures_{};
     VkSampler textureSampler_ = VK_NULL_HANDLE;
@@ -3214,6 +3897,9 @@ private:
     VkSemaphore renderFinished_ = VK_NULL_HANDLE;
     VkFence inFlight_ = VK_NULL_HANDLE;
     std::uint32_t frameIndex_ = 0;
+    std::uint32_t v5HistoryFrameCount_ = 0;
+    V1CameraSettings lastV5Camera_{};
+    bool hasLastV5Camera_ = false;
     bool enableV4Ssao_ = false;
 };
 
@@ -3246,7 +3932,8 @@ void deriveAnglesFromCamera(PreviewState& state) {
 
 void writeCameraPose(PreviewState& state, Vec3 eye) {
     const Vec3 forward = forwardFor(state.yaw, state.pitch);
-    const Vec3 right = rightFor(forward);
+    const Vec3 sceneUp = upOf(state.geometry.camera);
+    const Vec3 right = rightFor(forward, sceneUp);
     const Vec3 up = normalize(cross(right, forward));
     state.camera.enabled = true;
     state.camera.eyeX = eye.x;
@@ -3284,6 +3971,7 @@ void updateCamera(PreviewState& state, float dt) {
         state.camera = state.geometry.camera;
         return;
     }
+    const Vec3 sceneUp = upOf(state.geometry.camera);
     const float lookSpeed = 1.85f;
     if (keyDown(state, VK_LEFT) || keyDown(state, 'J')) state.yaw += lookSpeed * dt;
     if (keyDown(state, VK_RIGHT) || keyDown(state, 'L')) state.yaw -= lookSpeed * dt;
@@ -3291,8 +3979,8 @@ void updateCamera(PreviewState& state, float dt) {
     if (keyDown(state, VK_DOWN) || keyDown(state, 'K')) state.pitch = std::clamp(state.pitch - lookSpeed * dt, -1.45f, 1.45f);
 
     const Vec3 forward = forwardFor(state.yaw, state.pitch);
-    const Vec3 right = rightFor(forward);
-    const Vec3 up{0.0f, 0.0f, 1.0f};
+    const Vec3 right = rightFor(forward, sceneUp);
+    const Vec3 up = sceneUp;
     Vec3 movement{};
     if (keyDown(state, 'W')) movement = movement + forward;
     if (keyDown(state, 'S')) movement = movement - forward;
