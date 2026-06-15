@@ -1,6 +1,6 @@
 #pragma once
 
-#include "platform/VulkanRenderPassBuilder.hpp"
+#include "vulkan/VulkanRenderPassBuilder.hpp"
 
 namespace vr {
 

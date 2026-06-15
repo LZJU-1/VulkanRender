@@ -1,4 +1,4 @@
-#include "platform/VulkanCommandRecorder.hpp"
+#include "vulkan/VulkanCommandRecorder.hpp"
 
 namespace vr {
 

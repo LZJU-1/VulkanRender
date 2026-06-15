@@ -1,4 +1,4 @@
-#include "platform/VulkanRenderPassBuilder.hpp"
+#include "vulkan/VulkanRenderPassBuilder.hpp"
 
 #include <array>
 #include <cstdint>

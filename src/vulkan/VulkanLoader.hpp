@@ -1,6 +1,6 @@
 #pragma once
 
-#include "platform/VulkanTypes.hpp"
+#include "vulkan/VulkanTypes.hpp"
 
 #include <stdexcept>
 #include <string>

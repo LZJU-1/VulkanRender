@@ -1,6 +1,6 @@
 #pragma once
 
-#include "platform/VulkanLoader.hpp"
+#include "vulkan/VulkanLoader.hpp"
 
 namespace vr {
 
