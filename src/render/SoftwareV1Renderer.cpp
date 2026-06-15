@@ -1525,9 +1525,9 @@ void appendSphere(
             const Vec2 uv10{static_cast<float>(segment) / static_cast<float>(segments), static_cast<float>(ring + 1u) / static_cast<float>(rings)};
             const Vec2 uv11{static_cast<float>(segment + 1u) / static_cast<float>(segments), static_cast<float>(ring + 1u) / static_cast<float>(rings)};
             if (ring == 0) {
-                makeSphereTri(p00, p11, p10, uv00, uv11, uv10);
+                makeSphereTri(p00, p10, p11, uv00, uv10, uv11);
             } else if (ring + 1u == rings) {
-                makeSphereTri(p00, p01, p10, uv00, uv01, uv10);
+                makeSphereTri(p00, p10, p01, uv00, uv10, uv01);
             } else {
                 makeSphereTri(p00, p10, p11, uv00, uv10, uv11);
                 makeSphereTri(p00, p11, p01, uv00, uv11, uv01);

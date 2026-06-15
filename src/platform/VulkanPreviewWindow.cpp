@@ -318,9 +318,9 @@ std::vector<GpuPreviewVertex> makeUnitSphereVertices(std::uint32_t rings = 8, st
             const RgFloat uv10{static_cast<float>(segment) / static_cast<float>(segments), static_cast<float>(ring + 1u) / static_cast<float>(rings)};
             const RgFloat uv11{static_cast<float>(segment + 1u) / static_cast<float>(segments), static_cast<float>(ring + 1u) / static_cast<float>(rings)};
             if (ring == 0) {
-                pushTriangle(vertices, p00, p11, p10, uv00, uv11, uv10);
+                pushTriangle(vertices, p00, p10, p11, uv00, uv10, uv11);
             } else if (ring + 1u == rings) {
-                pushTriangle(vertices, p00, p01, p10, uv00, uv01, uv10);
+                pushTriangle(vertices, p00, p10, p01, uv00, uv10, uv01);
             } else {
                 pushTriangle(vertices, p00, p10, p11, uv00, uv10, uv11);
                 pushTriangle(vertices, p00, p11, p01, uv00, uv11, uv01);
@@ -2525,6 +2525,9 @@ private:
             gbufferBlend.attachmentCount = static_cast<std::uint32_t>(gbufferColorBlends.size());
             gbufferBlend.pAttachments = gbufferColorBlends.data();
 
+            VkPipelineRasterizationStateCreateInfo gbufferRaster = raster;
+            gbufferRaster.cullMode = VK_CULL_MODE_NONE;
+
             VkGraphicsPipelineCreateInfo gbufferCreateInfo{};
             gbufferCreateInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
             gbufferCreateInfo.stageCount = 2;
@@ -2532,7 +2535,7 @@ private:
             gbufferCreateInfo.pVertexInputState = &vertexInput;
             gbufferCreateInfo.pInputAssemblyState = &inputAssembly;
             gbufferCreateInfo.pViewportState = &viewportState;
-            gbufferCreateInfo.pRasterizationState = &raster;
+            gbufferCreateInfo.pRasterizationState = &gbufferRaster;
             gbufferCreateInfo.pMultisampleState = &gbufferMultisample;
             gbufferCreateInfo.pDepthStencilState = &depth;
             gbufferCreateInfo.pColorBlendState = &gbufferBlend;
