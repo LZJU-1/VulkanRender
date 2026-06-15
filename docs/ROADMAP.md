@@ -14,10 +14,10 @@
 - v2 GPU material path for the official `materials.s72` demo, including material families, texture descriptors, normal/POM detail, IBL, MSAA, mipmaps, anisotropic filtering, mesh tangents, and tone mapping.
 - Native Vulkan GPU preview window for mesh scenes: Win32 surface, swapchain, graphics pipeline, depth buffer, vertex buffer upload, uniform camera, and roaming controls.
 - v3 GPU shadow/light path: depth shadow atlas with directional cascades, spot shadow map, point/sphere omni shadow faces, realtime PBR lighting, and a dedicated procedural shadow demo scene.
-- v4 GPU deferred/SSAO path: offscreen G-buffer attachments, independent SSAO and blur targets, fullscreen deferred composition, and SSAO contact occlusion.
+- v4 GPU deferred/SSAO path: offscreen G-buffer attachments, independent SSAO and blur targets, fullscreen deferred composition, SSAO contact occlusion, and a procedural many-light demo scene.
 
 ## Next Engineering Steps
 
-1. Add v4 deferred debug views and the Renderer72-style many-light benchmark scene.
+1. Replace the current procedural v4 many-light loop with a Renderer72-style light buffer/SSBO path and add debug views.
 2. Implement RT resources: BLAS/TLAS build inputs, scratch buffers, shader binding table, and ray tracing dispatch.
 3. Port selected offline path tracing material/sampling ideas into realtime-friendly shader code.

@@ -8,7 +8,7 @@ V4 对齐 Renderer72 的 Deferred Shading & SSAO 阶段。当前实时 Vulkan pr
 4. SSAO blur pass
 5. fullscreen deferred composition pass
 
-默认演示场景仍使用 `assets\third_party\s72_examples\v3_shadow_demo.shadowdemo`，因为它有地面、柱体、台阶和遮挡物，比较容易观察阴影和 SSAO 接触压暗。
+默认演示场景使用 `assets\third_party\s72_examples\v4_many_lights.manylights`，用于观察 deferred many-light composition。阴影/SSAO 回归仍可显式使用 `assets\third_party\s72_examples\v3_shadow_demo.shadowdemo`。
 
 ## Feature: V4 Profile And Preview Entry
 
@@ -16,12 +16,13 @@ V4 对齐 Renderer72 的 Deferred Shading & SSAO 阶段。当前实时 Vulkan pr
 
 - `--profile v4` 选择 `v4 deferred and ssao` profile。
 - `RendererApp` 为 v4 打开 `enableV2Shading`、`enableV3Shadows` 和 `enableV4Ssao`。
-- 不传 `--scene` 时，v4 preview 默认加载 `assets\third_party\s72_examples\v3_shadow_demo.shadowdemo`。
+- 不传 `--scene` 时，v4 preview 默认加载 `assets\third_party\s72_examples\v4_many_lights.manylights`。
 - v4 使用 native Vulkan realtime preview，不走旧的 CPU 预览路径。
 
 素材要求：
 
-- 推荐：`assets\third_party\s72_examples\v3_shadow_demo.shadowdemo`。
+- 推荐默认：`assets\third_party\s72_examples\v4_many_lights.manylights`。
+- 阴影/SSAO 回归：`assets\third_party\s72_examples\v3_shadow_demo.shadowdemo`。
 - 可选回归：`assets\third_party\s72_examples\materials.s72`，用于观察材质球在 deferred path 下是否正常。
 
 演示方式：
@@ -63,6 +64,36 @@ build\nmake-debug\src\vulkan_render.exe --profile v4 --preview --width 1280 --he
 
 - 几何应该由 deferred composition 产生最终颜色，而不是 forward material pass。
 - 漫游时 G-buffer 结果应随相机稳定更新。
+
+## Feature: Many-Light Deferred Demo
+
+实现方式：
+
+- 新增 marker 文件 `assets\third_party\s72_examples\v4_many_lights.manylights`。
+- `buildGpuPreviewGeometry` 识别 `.manylights` 扩展后程序化生成：
+  - 16x16 PBR sphere grid
+  - 一组可见彩色 light marker
+  - floor/wall receiver
+- `GpuPreviewGeometry::manyLightDemo` 标记该场景。
+- Vulkan camera uniform 中的 `v4Flags` 将 many-light 模式传给 shader。
+- `v4_ssao_compose.frag.hlsl` 在 deferred composition 阶段循环 256 个 procedural point lights，并用 G-buffer position/normal/material 数据计算局部 PBR 光照。
+
+素材要求：
+
+- 不需要下载外部 mesh；marker 文件触发程序化生成。
+- 仍复用 `s72_examples` 目录中的 Ox Bridge IBL 贴图。
+
+演示方式：
+
+```powershell
+build\nmake-debug\src\vulkan_render.exe --profile v4 --preview --width 1280 --height 720
+```
+
+观察点：
+
+- 应看到一片 PBR 球阵列和悬浮的彩色 light marker。
+- 球面应出现多点光造成的局部彩色高光/明暗变化。
+- 这个版本是 procedural many-light 演示，下一步会升级为 Renderer72 风格的 light buffer/SSBO benchmark。
 
 ## Feature: SSAO Raw Pass
 
@@ -159,5 +190,6 @@ build\nmake-debug\src\vulkan_render.exe --profile v4 --preview --width 1280 --he
 ## Current V4 Notes
 
 - 已实现：G-buffer fill、独立 SSAO raw pass、独立 SSAO blur pass、deferred composition、v3 shadow atlas 复用、漫游相机。
-- 与 Renderer72 v4 的主要剩余差距：many-light benchmark/debug view 还没完全对齐，Renderer72 README 里的 `1024 sphere lights + 10000 PBR spheres` 仍是下一步重点。
+- 已新增：v4 many-light procedural demo，默认 `--profile v4 --preview` 会打开。
+- 与 Renderer72 v4 的主要剩余差距：当前 many-light 是 shader procedural loop，不是 Renderer72 风格 light buffer/SSBO；Renderer72 README 里的 `1024 sphere lights + 10000 PBR spheres` 压力测试仍是下一步重点。
 - 当前 SSAO 是 fullscreen graphics pass，不是 compute pass；RenderGraph 里的 `ssao.generate`/`ssao.blur` 语义已经对应实际 pass，但底层执行队列仍是 raster fullscreen。

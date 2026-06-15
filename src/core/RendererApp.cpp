@@ -88,6 +88,7 @@ int RendererApp::run() {
     graph.describe(std::cout);
     const std::filesystem::path defaultV2Scene = "assets/third_party/s72_examples/materials.s72";
     const std::filesystem::path defaultV3Scene = "assets/third_party/s72_examples/v3_shadow_demo.shadowdemo";
+    const std::filesystem::path defaultV4Scene = "assets/third_party/s72_examples/v4_many_lights.manylights";
 
     if (!config_.scenePath.empty()) {
         config_.scenePath = resolveInputPath(config_.scenePath).string();
@@ -145,7 +146,7 @@ int RendererApp::run() {
         settings.enableV3Shadows = profile->id == ProfileId::V3LightsShadows || profile->id == ProfileId::V4DeferredSsao;
         settings.enableV4Ssao = profile->id == ProfileId::V4DeferredSsao;
         settings.scenePath = config_.scenePath.empty()
-            ? ((profile->id == ProfileId::V3LightsShadows || profile->id == ProfileId::V4DeferredSsao) ? defaultV3Scene : (settings.enableV2Shading ? defaultV2Scene : "assets/scenes/v1.scene"))
+            ? (profile->id == ProfileId::V4DeferredSsao ? defaultV4Scene : (profile->id == ProfileId::V3LightsShadows ? defaultV3Scene : (settings.enableV2Shading ? defaultV2Scene : "assets/scenes/v1.scene")))
             : config_.scenePath;
         settings.scenePath = resolveInputPath(settings.scenePath);
         settings.outputPath = config_.outputPath;

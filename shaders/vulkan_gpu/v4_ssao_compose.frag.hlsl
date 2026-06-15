@@ -18,6 +18,7 @@ cbuffer Camera : register(b0) {
     float4 spotDirOuter;
     float4 spotColorIntensity;
     float4 v3Flags;
+    float4 v4Flags;
 };
 
 [[vk::binding(5, 0)]] SamplerState materialSampler;
@@ -38,6 +39,70 @@ float3 skyRadiance(float3 dir) {
     float3 lowSky = float3(1.05, 0.82, 0.55);
     float3 highSky = float3(0.22, 0.42, 0.82);
     return lerp(ground, lerp(lowSky, highSky, horizon), horizon) * 1.05;
+}
+
+float3 manyLightColor(uint index) {
+    float phase = (float)index * 0.61803399;
+    return float3(
+        0.45 + 0.55 * (0.5 + 0.5 * sin(phase * 6.28318 + 0.1)),
+        0.45 + 0.55 * (0.5 + 0.5 * sin(phase * 6.28318 + 2.2)),
+        0.45 + 0.55 * (0.5 + 0.5 * sin(phase * 6.28318 + 4.3))
+    );
+}
+
+float3 manyLightPosition(uint index) {
+    uint col = index % 16;
+    uint row = index / 16;
+    float x = ((float)col - 7.5) * 1.45;
+    float y = ((float)row - 7.5) * 0.92;
+    float z = 2.05 + 0.30 * sin((float)index * 0.37);
+    return float3(x, y, z);
+}
+
+float3 pointPbr(float3 lightPos, float3 lightColor, float3 worldPos, float3 normal, float3 view, float3 base, float roughness, float metalness, float3 f0) {
+    float3 toLight = lightPos - worldPos;
+    float distanceToLight = length(toLight);
+    float radius = max(0.1, v4Flags.z);
+    if (distanceToLight >= radius) {
+        return 0.0.xxx;
+    }
+    float3 lightDir = toLight / max(distanceToLight, 0.001);
+    float ndotl = saturate(dot(normal, lightDir));
+    if (ndotl <= 0.0) {
+        return 0.0.xxx;
+    }
+
+    float falloff = saturate(1.0 - distanceToLight / radius);
+    falloff = falloff * falloff;
+    float3 halfVector = normalize(lightDir + view);
+    float ndotv = max(0.04, saturate(dot(normal, view)));
+    float ndoth = saturate(dot(normal, halfVector));
+    float alpha = max(0.035, roughness * roughness);
+    float alpha2 = alpha * alpha;
+    float denom = ndoth * ndoth * (alpha2 - 1.0) + 1.0;
+    float distribution = alpha2 / max(0.001, 3.14159265 * denom * denom);
+    float k = (roughness + 1.0) * (roughness + 1.0) * 0.125;
+    float geometry = ndotl / max(0.001, ndotl * (1.0 - k) + k);
+    geometry *= ndotv / max(0.001, ndotv * (1.0 - k) + k);
+    float3 fresnel = f0 + (1.0.xxx - f0) * pow(1.0 - ndotv, 5.0);
+    float3 specular = distribution * geometry * fresnel / max(0.001, 4.0 * ndotl * ndotv);
+    float3 diffuse = base * (1.0 - metalness) * (1.0.xxx - fresnel) * 0.31830988;
+    return lightColor * falloff * ndotl * (diffuse + specular);
+}
+
+float3 manyLightsRadiance(float3 worldPos, float3 normal, float3 view, float3 base, float roughness, float metalness, float3 f0) {
+    if (v4Flags.x <= 0.5) {
+        return 0.0.xxx;
+    }
+
+    float3 radiance = 0.0.xxx;
+    [loop]
+    for (uint i = 0; i < 256; ++i) {
+        float3 lightPos = manyLightPosition(i);
+        float3 lightColor = manyLightColor(i) * (0.42 * v4Flags.w);
+        radiance += pointPbr(lightPos, lightColor, worldPos, normal, view, base, roughness, metalness, f0);
+    }
+    return radiance;
 }
 
 float4 main(FragmentIn input) : SV_Target0 {
@@ -68,7 +133,8 @@ float4 main(FragmentIn input) : SV_Target0 {
     float3 ambient = base * lerp(0.15, 0.42, ao) * ao;
     float3 direct = base * (1.0 - metalness) * float3(1.10, 1.04, 0.92) * ndotl;
     float3 highlight = fresnel * specular * 0.75;
+    float3 localLights = manyLightsRadiance(worldPos, normal, view, base, roughness, metalness, f0);
     float contact = pow(1.0 - ao, 2.0);
     float3 debugTint = contact.xxx * float3(0.02, 0.035, 0.055);
-    return float4(toneMap(ambient + direct + highlight - debugTint), 1.0);
+    return float4(toneMap(ambient + direct + highlight + localLights * ao - debugTint), 1.0);
 }

@@ -1462,6 +1462,78 @@ void appendBox(std::vector<Triangle3>& triangles, Vec3 center, Vec3 half, Vec3 c
     appendQuad(triangles, p010, p011, p001, p000, color, kind);
 }
 
+Vec3 proceduralManyLightColor(std::uint32_t index) {
+    const float phase = static_cast<float>(index) * 0.61803398875f;
+    return {
+        0.45f + 0.55f * (0.5f + 0.5f * std::sin(phase * 6.28318f + 0.1f)),
+        0.45f + 0.55f * (0.5f + 0.5f * std::sin(phase * 6.28318f + 2.2f)),
+        0.45f + 0.55f * (0.5f + 0.5f * std::sin(phase * 6.28318f + 4.3f)),
+    };
+}
+
+void appendSphere(
+    std::vector<Triangle3>& triangles,
+    Vec3 center,
+    float radius,
+    Vec3 color,
+    MaterialKind kind = MaterialKind::Pbr,
+    std::uint32_t rings = 8,
+    std::uint32_t segments = 12,
+    float roughness = 0.45f,
+    float metalness = 0.0f
+) {
+    const auto spherePoint = [&](std::uint32_t ring, std::uint32_t segment) {
+        const float v = static_cast<float>(ring) / static_cast<float>(rings);
+        const float u = static_cast<float>(segment) / static_cast<float>(segments);
+        const float theta = v * kPi;
+        const float phi = u * kPi * 2.0f;
+        const float sinTheta = std::sin(theta);
+        return Vec3{
+            center.x + radius * sinTheta * std::cos(phi),
+            center.y + radius * sinTheta * std::sin(phi),
+            center.z + radius * std::cos(theta),
+        };
+    };
+
+    const auto makeSphereTri = [&](Vec3 a, Vec3 b, Vec3 c, Vec2 uvA, Vec2 uvB, Vec2 uvC) {
+        Triangle3 tri = makeProceduralTriangle(a, b, c, color, kind);
+        tri.normalA = normalize(a - center);
+        tri.normalB = normalize(b - center);
+        tri.normalC = normalize(c - center);
+        tri.uvA = uvA;
+        tri.uvB = uvB;
+        tri.uvC = uvC;
+        tri.uv = {(uvA.x + uvB.x + uvC.x) / 3.0f, (uvA.y + uvB.y + uvC.y) / 3.0f};
+        const Vec4 tangent = triangleTangent(a, b, c, uvA, uvB, uvC, tri.normal);
+        tri.tangentA = tangent;
+        tri.tangentB = tangent;
+        tri.tangentC = tangent;
+        tri.roughness = roughness;
+        tri.metalness = metalness;
+        triangles.push_back(tri);
+    };
+
+    for (std::uint32_t ring = 0; ring < rings; ++ring) {
+        for (std::uint32_t segment = 0; segment < segments; ++segment) {
+            const std::uint32_t nextSegment = (segment + 1u) % segments;
+            const Vec3 p00 = spherePoint(ring, segment);
+            const Vec3 p01 = spherePoint(ring, nextSegment);
+            const Vec3 p10 = spherePoint(ring + 1u, segment);
+            const Vec3 p11 = spherePoint(ring + 1u, nextSegment);
+            const Vec2 uv00{static_cast<float>(segment) / static_cast<float>(segments), static_cast<float>(ring) / static_cast<float>(rings)};
+            const Vec2 uv01{static_cast<float>(segment + 1u) / static_cast<float>(segments), static_cast<float>(ring) / static_cast<float>(rings)};
+            const Vec2 uv10{static_cast<float>(segment) / static_cast<float>(segments), static_cast<float>(ring + 1u) / static_cast<float>(rings)};
+            const Vec2 uv11{static_cast<float>(segment + 1u) / static_cast<float>(segments), static_cast<float>(ring + 1u) / static_cast<float>(rings)};
+            if (ring > 0) {
+                makeSphereTri(p00, p10, p11, uv00, uv10, uv11);
+            }
+            if (ring + 1u < rings) {
+                makeSphereTri(p00, p11, p01, uv00, uv11, uv01);
+            }
+        }
+    }
+}
+
 ProceduralScene makeV3ShadowDemoScene() {
     ProceduralScene scene;
     std::vector<Triangle3>& tris = scene.triangles;
@@ -1483,6 +1555,55 @@ ProceduralScene makeV3ShadowDemoScene() {
     scene.camera.fovY = 48.0f * kPi / 180.0f;
     scene.camera.nearPlane = 0.05f;
     scene.camera.farPlane = 60.0f;
+    return scene;
+}
+
+ProceduralScene makeV4ManyLightDemoScene() {
+    ProceduralScene scene;
+    std::vector<Triangle3>& tris = scene.triangles;
+
+    appendQuad(tris, {-13.0f, -9.0f, 0.0f}, {13.0f, -9.0f, 0.0f}, {13.0f, 9.0f, 0.0f}, {-13.0f, 9.0f, 0.0f}, {0.36f, 0.38f, 0.36f}, MaterialKind::Pbr);
+    appendBox(tris, {0.0f, 0.0f, -0.32f}, {13.2f, 9.2f, 0.30f}, {0.22f, 0.23f, 0.22f}, MaterialKind::Lambertian, false);
+    appendBox(tris, {-13.0f, 0.0f, 2.8f}, {0.18f, 9.0f, 2.8f}, {0.32f, 0.34f, 0.38f}, MaterialKind::Lambertian, false);
+    appendBox(tris, {13.0f, 0.0f, 2.8f}, {0.18f, 9.0f, 2.8f}, {0.30f, 0.33f, 0.36f}, MaterialKind::Lambertian, false);
+    appendBox(tris, {0.0f, 9.0f, 2.4f}, {13.0f, 0.18f, 2.4f}, {0.30f, 0.31f, 0.34f}, MaterialKind::Lambertian, false);
+
+    const std::uint32_t rows = 16;
+    const std::uint32_t cols = 16;
+    for (std::uint32_t row = 0; row < rows; ++row) {
+        for (std::uint32_t col = 0; col < cols; ++col) {
+            const std::uint32_t index = row * cols + col;
+            const float x = (static_cast<float>(col) - 7.5f) * 1.45f;
+            const float y = (static_cast<float>(row) - 7.5f) * 0.92f;
+            const float wave = 0.12f * std::sin(static_cast<float>(index) * 0.73f);
+            const float radius = 0.26f + 0.035f * static_cast<float>((row + col) % 4);
+            const Vec3 baseColor{
+                0.32f + 0.045f * static_cast<float>(col),
+                0.34f + 0.035f * static_cast<float>(row),
+                0.78f - 0.018f * static_cast<float>((row + col) % 12),
+            };
+            const float roughness = 0.16f + 0.74f * static_cast<float>(row) / static_cast<float>(rows - 1u);
+            const float metalness = static_cast<float>(col) / static_cast<float>(cols - 1u);
+            appendSphere(tris, {x, y, radius + wave + 0.02f}, radius, clamp01(baseColor), MaterialKind::Pbr, 8, 12, roughness, metalness);
+        }
+    }
+
+    for (std::uint32_t row = 0; row < 8; ++row) {
+        for (std::uint32_t col = 0; col < 16; ++col) {
+            const std::uint32_t index = row * 16u + col;
+            const float x = (static_cast<float>(col) - 7.5f) * 1.45f;
+            const float y = (static_cast<float>(row) - 3.5f) * 1.78f;
+            const Vec3 color = proceduralManyLightColor(index);
+            appendSphere(tris, {x, y, 2.15f + 0.28f * std::sin(static_cast<float>(index) * 0.37f)}, 0.07f, color, MaterialKind::Simple, 5, 8, 0.2f, 0.0f);
+        }
+    }
+
+    scene.camera.eye = {8.6f, -11.4f, 6.2f};
+    scene.camera.target = {0.0f, 0.0f, 0.75f};
+    scene.camera.up = {0.0f, 0.0f, 1.0f};
+    scene.camera.fovY = 47.0f * kPi / 180.0f;
+    scene.camera.nearPlane = 0.05f;
+    scene.camera.farPlane = 80.0f;
     return scene;
 }
 
@@ -2104,6 +2225,10 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
         ProceduralScene scene = makeV3ShadowDemoScene();
         ownedTriangles = std::move(scene.triangles);
         camera = scene.camera;
+    } else if (extension == ".manylights") {
+        ProceduralScene scene = makeV4ManyLightDemoScene();
+        ownedTriangles = std::move(scene.triangles);
+        camera = scene.camera;
     } else if (extension == ".s72") {
         if (settings.enableV2Shading) {
             const CachedS72Scene& scene = cachedStaticS72Scene(settings.scenePath);
@@ -2119,12 +2244,13 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
         ownedTriangles = std::move(scene.triangles);
         camera = scene.camera;
     } else {
-        throw std::runtime_error("GPU preview currently supports .s72, .gltf, and .glb scenes");
+        throw std::runtime_error("GPU preview currently supports .shadowdemo, .manylights, .s72, .gltf, and .glb scenes");
     }
 
     camera = cameraFromSettings(settings.camera, camera);
 
     GpuPreviewGeometry geometry;
+    geometry.manyLightDemo = extension == ".manylights";
     GpuPreviewGeometry::MaterialTextures fallbackMaterial;
     if (settings.enableV2Shading) {
         const std::filesystem::path sceneAssetRoot = settings.scenePath.parent_path();

@@ -87,7 +87,13 @@ Realtime preview:
 build\nmake-debug\src\vulkan_render.exe --profile v4 --preview --width 1280 --height 720
 ```
 
-This opens the dedicated shadow/occlusion demo scene by default. Press `R` for roaming; hold right mouse and drag to look.
+This opens the dedicated many-light deferred demo scene by default. It contains a 16x16 PBR sphere field and 256 procedural point lights in the v4 fullscreen composition shader. Press `R` for roaming; hold right mouse and drag to look.
+
+Shadow/SSAO regression scene:
+
+```powershell
+build\nmake-debug\src\vulkan_render.exe --profile v4 --preview --scene assets\third_party\s72_examples\v3_shadow_demo.shadowdemo --width 1280 --height 720
+```
 
 ## v5 Realtime Ray Tracing
 

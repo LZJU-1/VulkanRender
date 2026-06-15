@@ -75,6 +75,7 @@ struct GpuPreviewVertex {
 struct GpuPreviewGeometry {
     std::vector<GpuPreviewVertex> vertices;
     V1CameraSettings camera;
+    bool manyLightDemo = false;
     struct MaterialTextures {
         std::filesystem::path albedoTexturePath;
         std::filesystem::path normalTexturePath;

@@ -1,5 +1,24 @@
 # Development Log
 
+## 2026-06-15 - V4 Many-Light Demo Scene
+
+- Added `assets/third_party/s72_examples/v4_many_lights.manylights` as a procedural v4 deferred demo marker.
+- Added a many-light procedural geometry path:
+  - 16x16 PBR sphere grid for roughness/metalness variation.
+  - visible colored light markers above the sphere field.
+  - room walls and a floor receiver for SSAO and light falloff.
+- Changed the default v4 preview scene to the many-light marker.
+- Added a v4 uniform flag so the deferred composition shader only enables the procedural many-light loop for the `.manylights` scene.
+- Added 256 procedural point lights in `v4_ssao_compose.frag.hlsl` as the first many-light deferred demo path.
+- Saved a validation screenshot at `out\v4_many_lights_window_final.png`.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v4 --preview --width 1280 --height 720
+```
+
 ## 2026-06-15 - V4 Independent SSAO And Blur Passes
 
 - Split v4 SSAO out of the final composition shader.

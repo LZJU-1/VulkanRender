@@ -172,6 +172,7 @@ struct CameraUniform {
     float spotDirOuter[4]{};
     float spotColorIntensity[4]{};
     float v3Flags[4]{};
+    float v4Flags[4]{};
 };
 
 struct QueueFamilies {
@@ -2597,6 +2598,10 @@ private:
         uniform.v3Flags[1] = 2.4f;
         uniform.v3Flags[2] = 4.5f;
         uniform.v3Flags[3] = 7.2f;
+        uniform.v4Flags[0] = geometry_.manyLightDemo ? 1.0f : 0.0f;
+        uniform.v4Flags[1] = 256.0f;
+        uniform.v4Flags[2] = 4.8f;
+        uniform.v4Flags[3] = 1.35f;
 
         void* mapped = nullptr;
         require(vkMapMemory(device_, uniformMemory_, 0, sizeof(uniform), 0, &mapped), "vkMapMemory(uniform)");
