@@ -2,6 +2,7 @@ add_executable(vulkan_render_tests
     profile_tests.cpp
     ../src/core/FeatureProfile.cpp
     ../src/core/RenderGraph.cpp
+    ../src/core/ValidationPipeline.cpp
 )
 
 target_include_directories(vulkan_render_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
@@ -14,4 +15,3 @@ else()
 endif()
 
 add_test(NAME profile_graph_tests COMMAND vulkan_render_tests)
-

@@ -1,5 +1,6 @@
 #include "core/FeatureProfile.hpp"
 #include "core/RenderGraph.hpp"
+#include "core/ValidationPipeline.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -37,7 +38,15 @@ int main() {
     require(rtGraph.containsRayTracingPass(), "v5 should contain ray tracing passes");
     require(rtGraph.passes().front().name == "scene.upload", "all graphs start with scene upload");
 
+    require(vr::validationProfiles().size() == 5, "expected validation plans for v1 through v5");
+    const auto v2Plan = vr::findValidationProfile(vr::ProfileId::V2PbrIbl);
+    require(v2Plan.has_value(), "v2 validation plan should exist");
+    require(v2Plan->renderer72Version == "Renderer72 v2.0", "v2 plan should map to Renderer72 v2.0");
+    require(v2Plan->referenceFeatures.size() >= 6, "v2 plan should track material feature list");
+    const auto v4Plan = vr::findValidationProfile(vr::ProfileId::V4DeferredSsao);
+    require(v4Plan.has_value(), "v4 validation plan should exist");
+    require(v4Plan->steps.front().expectedEvidence.size() >= 5, "v4 plan should include benchmark evidence markers");
+
     std::cout << "profile graph tests passed\n";
     return 0;
 }
-

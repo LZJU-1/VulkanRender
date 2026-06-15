@@ -2,6 +2,15 @@
 
 This is the project-facing version map for testing and demos.
 
+For the executable version of the Renderer72-aligned checklist, run:
+
+```powershell
+build\nmake-debug\src\vulkan_render.exe --validation-pipeline
+build\nmake-debug\src\vulkan_render.exe --validation-pipeline v3
+```
+
+See `docs/VALIDATION_PIPELINE.md` for the compact version-to-reference map.
+
 ## v1 Scene Forward
 
 Target behavior: load a scene, advance animation time, cull objects against the camera frustum, and draw simple forward materials.

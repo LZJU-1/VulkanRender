@@ -2,6 +2,7 @@
 
 #include "core/FeatureProfile.hpp"
 #include "core/RenderGraph.hpp"
+#include "core/ValidationPipeline.hpp"
 #include "platform/PreviewWindow.hpp"
 #include "platform/VulkanPreviewWindow.hpp"
 #include "render/SoftwareV1Renderer.hpp"
@@ -9,6 +10,7 @@
 
 #include <iostream>
 #include <filesystem>
+#include <cmath>
 #include <stdexcept>
 #include <utility>
 
@@ -54,6 +56,25 @@ std::filesystem::path resolveInputPath(const std::filesystem::path& path) {
     return path;
 }
 
+void applyCameraOverride(const AppConfig& config, V1RenderSettings& settings) {
+    if (!config.camera.enabled) {
+        return;
+    }
+    settings.camera.enabled = true;
+    settings.camera.eyeX = config.camera.eyeX;
+    settings.camera.eyeY = config.camera.eyeY;
+    settings.camera.eyeZ = config.camera.eyeZ;
+    settings.camera.targetX = config.camera.targetX;
+    settings.camera.targetY = config.camera.targetY;
+    settings.camera.targetZ = config.camera.targetZ;
+    settings.camera.upX = 0.0f;
+    settings.camera.upY = 0.0f;
+    settings.camera.upZ = 1.0f;
+    settings.camera.fovY = config.camera.fovYDegrees > 0.0f
+        ? config.camera.fovYDegrees * 3.14159265358979323846f / 180.0f
+        : 0.0f;
+}
+
 } // namespace
 
 RendererApp::RendererApp(AppConfig config) : config_(std::move(config)) {}
@@ -62,6 +83,15 @@ int RendererApp::run() {
     const auto profile = findProfile(config_.profile);
     if (!profile) {
         throw std::runtime_error("Profile disappeared after command line validation.");
+    }
+
+    if (config_.printValidationPipeline) {
+        std::optional<ProfileId> onlyProfile;
+        if (!config_.validationPipelineProfile.empty() && config_.validationPipelineProfile != "all") {
+            onlyProfile = findProfile(config_.validationPipelineProfile)->id;
+        }
+        printValidationPipelines(std::cout, onlyProfile);
+        return 0;
     }
 
     auto device = createRenderDevice(true, config_.enableValidation);
@@ -123,6 +153,7 @@ int RendererApp::run() {
             : config_.scenePath;
         settings.scenePath = resolveInputPath(settings.scenePath);
         settings.outputPath = config_.outputPath;
+        applyCameraOverride(config_, settings);
 
         const V1RenderStats stats = renderSoftwareV1(settings);
         std::cout
@@ -151,6 +182,7 @@ int RendererApp::run() {
             : config_.scenePath;
         settings.scenePath = resolveInputPath(settings.scenePath);
         settings.outputPath = config_.outputPath;
+        applyCameraOverride(config_, settings);
         if (settings.scenePath.extension() == ".scene") {
             std::cout << "GPU preview needs mesh geometry; falling back to the legacy CPU preview for .scene files.\n";
             return runV1PreviewWindow(settings);

@@ -6,6 +6,17 @@
 
 namespace vr {
 
+struct CameraOverride {
+    bool enabled = false;
+    float eyeX = 0.0f;
+    float eyeY = 0.0f;
+    float eyeZ = 0.0f;
+    float targetX = 0.0f;
+    float targetY = 0.0f;
+    float targetZ = 0.0f;
+    float fovYDegrees = 0.0f;
+};
+
 struct AppConfig {
     std::string profile = "v1";
     std::string scenePath;
@@ -20,6 +31,9 @@ struct AppConfig {
     bool enableRayTracing = false;
     bool requireRayTracing = false;
     bool headless = false;
+    bool printValidationPipeline = false;
+    std::string validationPipelineProfile;
+    CameraOverride camera;
 };
 
 class CommandLine {

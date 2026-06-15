@@ -2,6 +2,7 @@ set(VR_SOURCES
     core/FeatureProfile.cpp
     core/RenderGraph.cpp
     core/RendererApp.cpp
+    core/ValidationPipeline.cpp
     platform/CommandLine.cpp
     platform/PreviewWindow.cpp
     platform/VulkanPreviewWindow.cpp

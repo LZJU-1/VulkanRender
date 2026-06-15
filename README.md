@@ -46,3 +46,14 @@ Asset formats:
 - Skinned animation, alpha blending, full glTF PBR texture import, and the real Vulkan PBR shader path are planned for later profiles.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/RENDER_ME.md](docs/RENDER_ME.md).
+
+## Validation Pipeline
+
+Print the Renderer72-aligned per-version validation plan:
+
+```powershell
+build\nmake-debug\src\vulkan_render.exe --validation-pipeline
+build\nmake-debug\src\vulkan_render.exe --validation-pipeline v4
+```
+
+The plan maps local profiles to the public Renderer72 README stages one by one. See [docs/VALIDATION_PIPELINE.md](docs/VALIDATION_PIPELINE.md).
