@@ -48,9 +48,12 @@ constexpr std::uint32_t kDirectionalShadowTextureBinding = 14;
 constexpr std::uint32_t kGBufferAlbedoBinding = 15;
 constexpr std::uint32_t kGBufferNormalBinding = 16;
 constexpr std::uint32_t kGBufferWorldBinding = 17;
+constexpr std::uint32_t kSsaoRawBinding = 18;
+constexpr std::uint32_t kSsaoBlurBinding = 19;
 constexpr VkFormat kGBufferAlbedoFormat = VK_FORMAT_R8G8B8A8_UNORM;
 constexpr VkFormat kGBufferNormalFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 constexpr VkFormat kGBufferWorldFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
+constexpr VkFormat kSsaoFormat = VK_FORMAT_R32_SFLOAT;
 
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
 PFN_vkCreateInstance vkCreateInstance = nullptr;
@@ -493,6 +496,8 @@ public:
         if (enableV4Ssao_) {
             previewLog("VulkanGpuRenderer: createGBufferRenderPass");
             createGBufferRenderPass();
+            previewLog("VulkanGpuRenderer: createSsaoRenderPass");
+            createSsaoRenderPass();
         }
         previewLog("VulkanGpuRenderer: createDepthResources");
         createDepthResources();
@@ -501,6 +506,8 @@ public:
         if (enableV4Ssao_) {
             previewLog("VulkanGpuRenderer: createGBufferResources");
             createGBufferResources();
+            previewLog("VulkanGpuRenderer: createSsaoResources");
+            createSsaoResources();
         }
         previewLog("VulkanGpuRenderer: createMsaaColorResources");
         createMsaaColorResources();
@@ -539,7 +546,11 @@ public:
         if (device_ != VK_NULL_HANDLE && commandPool_ != VK_NULL_HANDLE) vkDestroyCommandPool(device_, commandPool_, nullptr);
         if (device_ != VK_NULL_HANDLE && shadowFramebuffer_ != VK_NULL_HANDLE) vkDestroyFramebuffer(device_, shadowFramebuffer_, nullptr);
         if (device_ != VK_NULL_HANDLE && gbufferFramebuffer_ != VK_NULL_HANDLE) vkDestroyFramebuffer(device_, gbufferFramebuffer_, nullptr);
+        if (device_ != VK_NULL_HANDLE && ssaoFramebuffer_ != VK_NULL_HANDLE) vkDestroyFramebuffer(device_, ssaoFramebuffer_, nullptr);
+        if (device_ != VK_NULL_HANDLE && ssaoBlurFramebuffer_ != VK_NULL_HANDLE) vkDestroyFramebuffer(device_, ssaoBlurFramebuffer_, nullptr);
         if (device_ != VK_NULL_HANDLE && v4ComposePipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, v4ComposePipeline_, nullptr);
+        if (device_ != VK_NULL_HANDLE && ssaoBlurPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, ssaoBlurPipeline_, nullptr);
+        if (device_ != VK_NULL_HANDLE && ssaoPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, ssaoPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && gbufferPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, gbufferPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && shadowPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, shadowPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && skyPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, skyPipeline_, nullptr);
@@ -582,9 +593,16 @@ public:
             if (device_ != VK_NULL_HANDLE && target.image != VK_NULL_HANDLE) vkDestroyImage(device_, target.image, nullptr);
             if (device_ != VK_NULL_HANDLE && target.memory != VK_NULL_HANDLE) vkFreeMemory(device_, target.memory, nullptr);
         }
+        if (device_ != VK_NULL_HANDLE && ssaoTarget_.view != VK_NULL_HANDLE) vkDestroyImageView(device_, ssaoTarget_.view, nullptr);
+        if (device_ != VK_NULL_HANDLE && ssaoTarget_.image != VK_NULL_HANDLE) vkDestroyImage(device_, ssaoTarget_.image, nullptr);
+        if (device_ != VK_NULL_HANDLE && ssaoTarget_.memory != VK_NULL_HANDLE) vkFreeMemory(device_, ssaoTarget_.memory, nullptr);
+        if (device_ != VK_NULL_HANDLE && ssaoBlurTarget_.view != VK_NULL_HANDLE) vkDestroyImageView(device_, ssaoBlurTarget_.view, nullptr);
+        if (device_ != VK_NULL_HANDLE && ssaoBlurTarget_.image != VK_NULL_HANDLE) vkDestroyImage(device_, ssaoBlurTarget_.image, nullptr);
+        if (device_ != VK_NULL_HANDLE && ssaoBlurTarget_.memory != VK_NULL_HANDLE) vkFreeMemory(device_, ssaoBlurTarget_.memory, nullptr);
         if (device_ != VK_NULL_HANDLE && gbufferDepthView_ != VK_NULL_HANDLE) vkDestroyImageView(device_, gbufferDepthView_, nullptr);
         if (device_ != VK_NULL_HANDLE && gbufferDepthImage_ != VK_NULL_HANDLE) vkDestroyImage(device_, gbufferDepthImage_, nullptr);
         if (device_ != VK_NULL_HANDLE && gbufferDepthMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, gbufferDepthMemory_, nullptr);
+        if (device_ != VK_NULL_HANDLE && ssaoRenderPass_ != VK_NULL_HANDLE) vkDestroyRenderPass(device_, ssaoRenderPass_, nullptr);
         if (device_ != VK_NULL_HANDLE && gbufferRenderPass_ != VK_NULL_HANDLE) vkDestroyRenderPass(device_, gbufferRenderPass_, nullptr);
         if (device_ != VK_NULL_HANDLE && shadowRenderPass_ != VK_NULL_HANDLE) vkDestroyRenderPass(device_, shadowRenderPass_, nullptr);
         if (device_ != VK_NULL_HANDLE && renderPass_ != VK_NULL_HANDLE) vkDestroyRenderPass(device_, renderPass_, nullptr);
@@ -1155,6 +1173,51 @@ private:
         require(vkCreateRenderPass(device_, &createInfo, nullptr, &gbufferRenderPass_), "vkCreateRenderPass(gbuffer)");
     }
 
+    void createSsaoRenderPass() {
+        VkAttachmentDescription ssao{};
+        ssao.format = kSsaoFormat;
+        ssao.samples = VK_SAMPLE_COUNT_1_BIT;
+        ssao.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        ssao.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        ssao.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        ssao.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkAttachmentReference colorRef{};
+        colorRef.attachment = 0;
+        colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &colorRef;
+
+        std::array<VkSubpassDependency, 2> dependencies{};
+        dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+        dependencies[0].dstSubpass = 0;
+        dependencies[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+        dependencies[1].srcSubpass = 0;
+        dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+        dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+        VkRenderPassCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        createInfo.attachmentCount = 1;
+        createInfo.pAttachments = &ssao;
+        createInfo.subpassCount = 1;
+        createInfo.pSubpasses = &subpass;
+        createInfo.dependencyCount = static_cast<std::uint32_t>(dependencies.size());
+        createInfo.pDependencies = dependencies.data();
+        require(vkCreateRenderPass(device_, &createInfo, nullptr, &ssaoRenderPass_), "vkCreateRenderPass(ssao)");
+    }
+
     void createDepthResources() {
         VkImageCreateInfo image{};
         image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -1288,6 +1351,25 @@ private:
         framebuffer.height = swapchainExtent_.height;
         framebuffer.layers = 1;
         require(vkCreateFramebuffer(device_, &framebuffer, nullptr, &gbufferFramebuffer_), "vkCreateFramebuffer(gbuffer)");
+    }
+
+    void createSsaoResources() {
+        createColorAttachment(ssaoTarget_, kSsaoFormat, "vkCreateImage(ssao raw)");
+        createColorAttachment(ssaoBlurTarget_, kSsaoFormat, "vkCreateImage(ssao blur)");
+
+        VkFramebufferCreateInfo framebuffer{};
+        framebuffer.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebuffer.renderPass = ssaoRenderPass_;
+        framebuffer.attachmentCount = 1;
+        framebuffer.width = swapchainExtent_.width;
+        framebuffer.height = swapchainExtent_.height;
+        framebuffer.layers = 1;
+
+        framebuffer.pAttachments = &ssaoTarget_.view;
+        require(vkCreateFramebuffer(device_, &framebuffer, nullptr, &ssaoFramebuffer_), "vkCreateFramebuffer(ssao)");
+
+        framebuffer.pAttachments = &ssaoBlurTarget_.view;
+        require(vkCreateFramebuffer(device_, &framebuffer, nullptr, &ssaoBlurFramebuffer_), "vkCreateFramebuffer(ssao blur)");
     }
 
     void createMsaaColorResources() {
@@ -1999,13 +2081,19 @@ private:
         normalBinding.binding = kGBufferNormalBinding;
         VkDescriptorSetLayoutBinding worldBinding = albedoBinding;
         worldBinding.binding = kGBufferWorldBinding;
+        VkDescriptorSetLayoutBinding ssaoBinding = albedoBinding;
+        ssaoBinding.binding = kSsaoRawBinding;
+        VkDescriptorSetLayoutBinding ssaoBlurBinding = albedoBinding;
+        ssaoBlurBinding.binding = kSsaoBlurBinding;
 
-        std::array<VkDescriptorSetLayoutBinding, 5> bindings{
+        std::array<VkDescriptorSetLayoutBinding, 7> bindings{
             cameraBinding,
             samplerBinding,
             albedoBinding,
             normalBinding,
             worldBinding,
+            ssaoBinding,
+            ssaoBlurBinding,
         };
         VkDescriptorSetLayoutCreateInfo layout{};
         layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -2019,7 +2107,7 @@ private:
         poolSizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLER;
         poolSizes[1].descriptorCount = 1;
         poolSizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-        poolSizes[2].descriptorCount = 3;
+        poolSizes[2].descriptorCount = 5;
         VkDescriptorPoolCreateInfo pool{};
         pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         pool.poolSizeCount = static_cast<std::uint32_t>(poolSizes.size());
@@ -2049,8 +2137,14 @@ private:
         VkDescriptorImageInfo worldInfo{};
         worldInfo.imageView = gbufferTargets_[2].view;
         worldInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkDescriptorImageInfo ssaoInfo{};
+        ssaoInfo.imageView = ssaoTarget_.view;
+        ssaoInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkDescriptorImageInfo ssaoBlurInfo{};
+        ssaoBlurInfo.imageView = ssaoBlurTarget_.view;
+        ssaoBlurInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-        std::array<VkWriteDescriptorSet, 5> writes{};
+        std::array<VkWriteDescriptorSet, 7> writes{};
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet = v4DescriptorSet_;
         writes[0].dstBinding = 0;
@@ -2081,6 +2175,18 @@ private:
         writes[4].descriptorCount = 1;
         writes[4].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
         writes[4].pImageInfo = &worldInfo;
+        writes[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[5].dstSet = v4DescriptorSet_;
+        writes[5].dstBinding = kSsaoRawBinding;
+        writes[5].descriptorCount = 1;
+        writes[5].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        writes[5].pImageInfo = &ssaoInfo;
+        writes[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[6].dstSet = v4DescriptorSet_;
+        writes[6].dstBinding = kSsaoBlurBinding;
+        writes[6].descriptorCount = 1;
+        writes[6].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        writes[6].pImageInfo = &ssaoBlurInfo;
         vkUpdateDescriptorSets(device_, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
     }
 
@@ -2330,42 +2436,59 @@ private:
             composeLayout.pSetLayouts = &v4DescriptorSetLayout_;
             require(vkCreatePipelineLayout(device_, &composeLayout, nullptr, &v4ComposePipelineLayout_), "vkCreatePipelineLayout(v4 compose)");
 
-            const VkShaderModule composeVertexShader = createShader("shaders/vulkan_gpu/v4_fullscreen.vert.spv");
+            const VkShaderModule fullscreenVertexShader = createShader("shaders/vulkan_gpu/v4_fullscreen.vert.spv");
+            const VkShaderModule ssaoFragmentShader = createShader("shaders/vulkan_gpu/v4_ssao.frag.spv");
+            const VkShaderModule ssaoBlurFragmentShader = createShader("shaders/vulkan_gpu/v4_ssao_blur.frag.spv");
             const VkShaderModule composeFragmentShader = createShader("shaders/vulkan_gpu/v4_ssao_compose.frag.spv");
-            VkPipelineShaderStageCreateInfo composeStages[2]{};
-            composeStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-            composeStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-            composeStages[0].module = composeVertexShader;
-            composeStages[0].pName = "main";
-            composeStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-            composeStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-            composeStages[1].module = composeFragmentShader;
-            composeStages[1].pName = "main";
             VkPipelineDepthStencilStateCreateInfo composeDepth{};
             composeDepth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
             composeDepth.depthTestEnable = VK_FALSE;
             composeDepth.depthWriteEnable = VK_FALSE;
             VkPipelineRasterizationStateCreateInfo composeRaster = skyRaster;
             composeRaster.cullMode = VK_CULL_MODE_NONE;
+            VkPipelineMultisampleStateCreateInfo fullscreenMultisample{};
+            fullscreenMultisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+            fullscreenMultisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-            VkGraphicsPipelineCreateInfo composeCreateInfo{};
-            composeCreateInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-            composeCreateInfo.stageCount = 2;
-            composeCreateInfo.pStages = composeStages;
-            composeCreateInfo.pVertexInputState = &skyVertexInput;
-            composeCreateInfo.pInputAssemblyState = &inputAssembly;
-            composeCreateInfo.pViewportState = &viewportState;
-            composeCreateInfo.pRasterizationState = &composeRaster;
-            composeCreateInfo.pMultisampleState = &multisample;
-            composeCreateInfo.pDepthStencilState = &composeDepth;
-            composeCreateInfo.pColorBlendState = &blend;
-            composeCreateInfo.pDynamicState = &dynamic;
-            composeCreateInfo.layout = v4ComposePipelineLayout_;
-            composeCreateInfo.renderPass = renderPass_;
-            composeCreateInfo.subpass = 0;
-            require(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &composeCreateInfo, nullptr, &v4ComposePipeline_), "vkCreateGraphicsPipelines(v4 compose)");
+            auto createFullscreenPipeline = [&](VkShaderModule fragmentShader, VkRenderPass targetRenderPass, VkSampleCountFlagBits samples, const char* label) {
+                VkPipelineShaderStageCreateInfo stages[2]{};
+                stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+                stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+                stages[0].module = fullscreenVertexShader;
+                stages[0].pName = "main";
+                stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+                stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+                stages[1].module = fragmentShader;
+                stages[1].pName = "main";
+                VkPipelineMultisampleStateCreateInfo passMultisample = fullscreenMultisample;
+                passMultisample.rasterizationSamples = samples;
+                VkGraphicsPipelineCreateInfo createInfo{};
+                createInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+                createInfo.stageCount = 2;
+                createInfo.pStages = stages;
+                createInfo.pVertexInputState = &skyVertexInput;
+                createInfo.pInputAssemblyState = &inputAssembly;
+                createInfo.pViewportState = &viewportState;
+                createInfo.pRasterizationState = &composeRaster;
+                createInfo.pMultisampleState = &passMultisample;
+                createInfo.pDepthStencilState = &composeDepth;
+                createInfo.pColorBlendState = &blend;
+                createInfo.pDynamicState = &dynamic;
+                createInfo.layout = v4ComposePipelineLayout_;
+                createInfo.renderPass = targetRenderPass;
+                createInfo.subpass = 0;
+                VkPipeline created = VK_NULL_HANDLE;
+                require(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &createInfo, nullptr, &created), label);
+                return created;
+            };
+
+            ssaoPipeline_ = createFullscreenPipeline(ssaoFragmentShader, ssaoRenderPass_, VK_SAMPLE_COUNT_1_BIT, "vkCreateGraphicsPipelines(v4 ssao)");
+            ssaoBlurPipeline_ = createFullscreenPipeline(ssaoBlurFragmentShader, ssaoRenderPass_, VK_SAMPLE_COUNT_1_BIT, "vkCreateGraphicsPipelines(v4 ssao blur)");
+            v4ComposePipeline_ = createFullscreenPipeline(composeFragmentShader, renderPass_, msaaSamples_, "vkCreateGraphicsPipelines(v4 compose)");
             vkDestroyShaderModule(device_, composeFragmentShader, nullptr);
-            vkDestroyShaderModule(device_, composeVertexShader, nullptr);
+            vkDestroyShaderModule(device_, ssaoBlurFragmentShader, nullptr);
+            vkDestroyShaderModule(device_, ssaoFragmentShader, nullptr);
+            vkDestroyShaderModule(device_, fullscreenVertexShader, nullptr);
         }
 
         vkDestroyShaderModule(device_, skyFragmentShader, nullptr);
@@ -2568,6 +2691,40 @@ private:
             }
             vkCmdEndRenderPass(commandBuffer);
 
+            VkClearValue ssaoClear{};
+            ssaoClear.color = {{1.0f, 0.0f, 0.0f, 0.0f}};
+            VkRenderPassBeginInfo ssaoPass{};
+            ssaoPass.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            ssaoPass.renderPass = ssaoRenderPass_;
+            ssaoPass.framebuffer = ssaoFramebuffer_;
+            ssaoPass.renderArea.extent = swapchainExtent_;
+            ssaoPass.clearValueCount = 1;
+            ssaoPass.pClearValues = &ssaoClear;
+            vkCmdBeginRenderPass(commandBuffer, &ssaoPass, VK_SUBPASS_CONTENTS_INLINE);
+            vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+            vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssaoPipeline_);
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, v4ComposePipelineLayout_, 0, 1, &v4DescriptorSet_, 0, nullptr);
+            vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+            vkCmdEndRenderPass(commandBuffer);
+
+            VkClearValue blurClear{};
+            blurClear.color = {{1.0f, 0.0f, 0.0f, 0.0f}};
+            VkRenderPassBeginInfo blurPass{};
+            blurPass.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            blurPass.renderPass = ssaoRenderPass_;
+            blurPass.framebuffer = ssaoBlurFramebuffer_;
+            blurPass.renderArea.extent = swapchainExtent_;
+            blurPass.clearValueCount = 1;
+            blurPass.pClearValues = &blurClear;
+            vkCmdBeginRenderPass(commandBuffer, &blurPass, VK_SUBPASS_CONTENTS_INLINE);
+            vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+            vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ssaoBlurPipeline_);
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, v4ComposePipelineLayout_, 0, 1, &v4DescriptorSet_, 0, nullptr);
+            vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+            vkCmdEndRenderPass(commandBuffer);
+
             std::array<VkClearValue, 2> composeClears{};
             composeClears[0].color = {{0.58f, 0.62f, 0.68f, 1.0f}};
             composeClears[1].depthStencil = {1.0f, 0};
@@ -2652,6 +2809,7 @@ private:
     VkRenderPass renderPass_ = VK_NULL_HANDLE;
     VkRenderPass shadowRenderPass_ = VK_NULL_HANDLE;
     VkRenderPass gbufferRenderPass_ = VK_NULL_HANDLE;
+    VkRenderPass ssaoRenderPass_ = VK_NULL_HANDLE;
     VkSampleCountFlagBits msaaSamples_ = VK_SAMPLE_COUNT_1_BIT;
     VkImage msaaColorImage_ = VK_NULL_HANDLE;
     VkDeviceMemory msaaColorMemory_ = VK_NULL_HANDLE;
@@ -2668,6 +2826,10 @@ private:
     VkDeviceMemory gbufferDepthMemory_ = VK_NULL_HANDLE;
     VkImageView gbufferDepthView_ = VK_NULL_HANDLE;
     VkFramebuffer gbufferFramebuffer_ = VK_NULL_HANDLE;
+    TextureResource ssaoTarget_{};
+    TextureResource ssaoBlurTarget_{};
+    VkFramebuffer ssaoFramebuffer_ = VK_NULL_HANDLE;
+    VkFramebuffer ssaoBlurFramebuffer_ = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> framebuffers_;
     VkBuffer vertexBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory vertexMemory_ = VK_NULL_HANDLE;
@@ -2693,6 +2855,8 @@ private:
     VkPipeline skyPipeline_ = VK_NULL_HANDLE;
     VkPipeline shadowPipeline_ = VK_NULL_HANDLE;
     VkPipeline gbufferPipeline_ = VK_NULL_HANDLE;
+    VkPipeline ssaoPipeline_ = VK_NULL_HANDLE;
+    VkPipeline ssaoBlurPipeline_ = VK_NULL_HANDLE;
     VkPipeline v4ComposePipeline_ = VK_NULL_HANDLE;
     VkCommandPool uploadCommandPool_ = VK_NULL_HANDLE;
     VkCommandPool commandPool_ = VK_NULL_HANDLE;

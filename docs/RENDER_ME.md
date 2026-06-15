@@ -79,7 +79,7 @@ This opens the dedicated v3 shadow demo scene by default. To be explicit, pass `
 
 Target behavior: render G-buffer data, apply SSAO, and compose many lights efficiently.
 
-Current implementation: see `docs/V4_FEATURES.md`. The realtime Vulkan preview fills an offscreen G-buffer, then runs a fullscreen deferred composition pass with SSAO.
+Current implementation: see `docs/V4_FEATURES.md`. The realtime Vulkan preview fills an offscreen G-buffer, generates an `R32_SFLOAT` SSAO texture, blurs it into a second `R32_SFLOAT` target, then runs fullscreen deferred composition.
 
 Realtime preview:
 

@@ -1,5 +1,22 @@
 # Development Log
 
+## 2026-06-15 - V4 Independent SSAO And Blur Passes
+
+- Split v4 SSAO out of the final composition shader.
+- Added an `R32_SFLOAT` raw SSAO target and an `R32_SFLOAT` blurred SSAO target.
+- Added a dedicated fullscreen SSAO pass that reads G-buffer normal/world-position data.
+- Added a dedicated fullscreen SSAO blur pass that reads raw AO and applies a light depth-aware 5x5 blur.
+- Extended the v4 descriptor layout with raw AO and blurred AO sampled-image bindings.
+- Updated final deferred composition to read blurred SSAO instead of recomputing AO inline.
+- Captured a window-only preview screenshot at `out\v4_ssao_blur_window_blt.png` to confirm the Vulkan swapchain is presenting a visible scene.
+
+Validation commands:
+
+```powershell
+scripts\build_msvc.bat
+C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v4 --preview --width 1280 --height 720
+```
+
 ## 2026-06-15 - V4 Deferred G-buffer And SSAO Preview
 
 - Enabled realtime preview for `--profile v4`.

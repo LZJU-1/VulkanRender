@@ -24,6 +24,7 @@ cbuffer Camera : register(b0) {
 [[vk::binding(15, 0)]] Texture2D<float4> gbufferAlbedo;
 [[vk::binding(16, 0)]] Texture2D<float4> gbufferNormal;
 [[vk::binding(17, 0)]] Texture2D<float4> gbufferWorld;
+[[vk::binding(19, 0)]] Texture2D<float> ssaoBlur;
 
 float3 toneMap(float3 hdr) {
     float3 mapped = hdr / (hdr + 1.0.xxx);
@@ -37,46 +38,6 @@ float3 skyRadiance(float3 dir) {
     float3 lowSky = float3(1.05, 0.82, 0.55);
     float3 highSky = float3(0.22, 0.42, 0.82);
     return lerp(ground, lerp(lowSky, highSky, horizon), horizon) * 1.05;
-}
-
-float viewDepth(float3 worldPos) {
-    return dot(worldPos - eyeNear.xyz, forwardAspect.xyz);
-}
-
-float ssao(float2 uv, float3 worldPos, float3 normal) {
-    uint width = 1;
-    uint height = 1;
-    gbufferWorld.GetDimensions(width, height);
-    float2 texel = 1.0 / float2(max(width, 1), max(height, 1));
-    float centerDepth = viewDepth(worldPos);
-    float radius = lerp(0.35, 1.20, saturate(centerDepth / 18.0));
-    float occlusion = 0.0;
-    float weightSum = 0.0;
-
-    static const float2 offsets[12] = {
-        float2( 1.0,  0.0), float2(-1.0,  0.0), float2( 0.0,  1.0), float2( 0.0, -1.0),
-        float2( 0.7,  0.7), float2(-0.7,  0.7), float2( 0.7, -0.7), float2(-0.7, -0.7),
-        float2( 1.8,  0.4), float2(-1.8, -0.4), float2( 0.4, -1.8), float2(-0.4,  1.8)
-    };
-
-    [unroll]
-    for (int i = 0; i < 12; ++i) {
-        float2 sampleUv = uv + offsets[i] * texel * 7.0;
-        float4 sampleWorld = gbufferWorld.SampleLevel(materialSampler, sampleUv, 0.0);
-        if (sampleWorld.w <= 0.5) {
-            continue;
-        }
-        float3 delta = sampleWorld.xyz - worldPos;
-        float distanceWeight = saturate(1.0 - length(delta) / radius);
-        float facingWeight = saturate(dot(normal, normalize(delta + normal * 0.05)) * 0.65 + 0.35);
-        float sampleDepth = viewDepth(sampleWorld.xyz);
-        float depthOccluder = sampleDepth < centerDepth - 0.035 ? 1.0 : 0.0;
-        occlusion += depthOccluder * distanceWeight * facingWeight;
-        weightSum += distanceWeight;
-    }
-
-    float ao = 1.0 - saturate(occlusion / max(weightSum, 0.001)) * 0.72;
-    return saturate(ao);
 }
 
 float4 main(FragmentIn input) : SV_Target0 {
@@ -101,7 +62,7 @@ float4 main(FragmentIn input) : SV_Target0 {
     float3 halfVector = normalize(lightDir + view);
     float specPower = max(4.0, (1.0 - roughness) * 96.0);
     float specular = pow(saturate(dot(normal, halfVector)), specPower) * (1.0 - roughness * 0.65);
-    float ao = ssao(input.uv, worldPos, normal);
+    float ao = saturate(ssaoBlur.SampleLevel(materialSampler, input.uv, 0.0));
     float3 f0 = lerp(0.04.xxx, base, metalness);
     float3 fresnel = f0 + (1.0.xxx - f0) * pow(1.0 - ndotv, 5.0);
     float3 ambient = base * lerp(0.15, 0.42, ao) * ao;
