@@ -14,6 +14,7 @@
   - `v4_ssao_compose.frag.hlsl`
 - Compiled the v4 shaders with `C:\Users\lzju\Desktop\NTC\bin\x64\dxc.exe`.
 - Added fullscreen deferred composition with SSAO contact darkening.
+- Fixed the fullscreen composition UV orientation so the v4 G-buffer image is not vertically flipped.
 - Updated v4 docs and render commands.
 
 Validation commands:
