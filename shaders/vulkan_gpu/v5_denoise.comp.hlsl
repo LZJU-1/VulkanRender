@@ -635,7 +635,7 @@ void writeAccumulatedColor(uint2 pixel, uint width, uint height, float3 currentC
         }
     }
     float3 neighborhoodMean = neighborhoodSum / 9.0;
-    float3 clipPadding = max(0.012.xxx, abs(neighborhoodMean - currentColor) * 0.55 + 0.018.xxx);
+    float3 clipPadding = max(0.018.xxx, abs(neighborhoodMean - currentColor) * 0.65 + 0.022.xxx);
     neighborhoodMin -= clipPadding;
     neighborhoodMax += clipPadding;
     float2 previousUv;
@@ -653,11 +653,12 @@ void writeAccumulatedColor(uint2 pixel, uint width, uint height, float3 currentC
     float lumaPrevious = dot(previousColor, float3(0.2126, 0.7152, 0.0722));
     float historyFrames = max(v4Flags.w, 0.0);
     float edge = hasSurface ? surfaceEdgeConfidence(pixel, width, height, surface) : 0.0;
-    float baseHistoryWeight = lerp(0.91, 0.965, edge);
-    float historyWeight = (historyFrames < 1.0 || !hasPrevious) ? 0.0 : min(baseHistoryWeight, historyFrames / (historyFrames + 0.65));
+    // Faster convergence for temporal supersampling: higher base weight, quicker ramp
+    float baseHistoryWeight = lerp(0.94, 0.975, edge);
+    float historyWeight = (historyFrames < 1.0 || !hasPrevious) ? 0.0 : min(baseHistoryWeight, historyFrames / (historyFrames + 0.45));
     historyWeight *= saturate(previousSupport);
     float lumaDisagreement = abs(lumaCurrent - lumaPrevious);
-    historyWeight *= 1.0 - saturate(lumaDisagreement * lerp(4.0, 1.85, edge));
+    historyWeight *= 1.0 - saturate(lumaDisagreement * lerp(3.5, 1.5, edge));
     float3 accumulated = lerp(currentColor, previousColor, historyWeight);
     float viewDepth = hasSurface ? max(0.0, depthOf(surface)) : 0.0;
     historyOutput[pixel] = float4(accumulated, viewDepth);

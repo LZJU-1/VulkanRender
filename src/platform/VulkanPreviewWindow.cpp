@@ -52,8 +52,8 @@ public:
         createSwapchain();
         previewLog("VulkanGpuRenderer: createRenderPasses (factory)");
         const bool enableGBuffer = enableV4Ssao_ || enableV5RayTracing_;
-        gbufferSamples_ = enableV5RayTracing_ ? msaaSamples_ : VK_SAMPLE_COUNT_1_BIT;
-        previewLog("G-buffer samples: " + std::to_string(sampleCountValue(gbufferSamples_)) + "x");
+        gbufferSamples_ = VK_SAMPLE_COUNT_1_BIT;  // pure temporal supersampling — MSAA interferes with TAA resolve
+        previewLog("G-buffer: 1x (temporal supersampling via Halton jitter)");
         RenderPasses renderPasses = createRenderPasses(device_, swapchainFormat_, msaaSamples_, enableGBuffer, enableV4Ssao_, gbufferSamples_);
         renderPass_ = renderPasses.forward;
         shadowRenderPass_ = renderPasses.shadow;
@@ -2453,8 +2453,12 @@ private:
             // samples — prevents shimmer on static views
             const bool freezeJitter = v5HistoryFrameCount_ >= 16u;
             const std::uint32_t jitterIndex = freezeJitter ? 1u : ((frameIndex_ % 16u) + 1u);
-            const float jitterPixelX = freezeJitter ? 0.0f : (halton(jitterIndex, 2u) - 0.5f);
-            const float jitterPixelY = freezeJitter ? 0.0f : (halton(jitterIndex, 3u) - 0.5f);
+            // Scrambled Halton for less visible patterns: offset by golden-ratio per-frame
+            const float scrambleX = fmod(frameIndex_ * 0.6180339887f, 1.0f);
+            const float scrambleY = fmod(frameIndex_ * 0.3819660113f, 1.0f);
+            const float jitterPixelX = freezeJitter ? 0.0f : (fmod(halton(jitterIndex, 2u) + scrambleX, 1.0f) - 0.5f);
+            const float jitterPixelY = freezeJitter ? 0.0f : (fmod(halton(jitterIndex, 3u) + scrambleY, 1.0f) - 0.5f);
+            // Full-pixel jitter range gives 1 sample/pixel temporal supersampling coverage
             uniform.taaJitter[0] = (2.0f * jitterPixelX) / static_cast<float>(std::max<std::uint32_t>(renderExtent.width, 1u));
             uniform.taaJitter[1] = (2.0f * jitterPixelY) / static_cast<float>(std::max<std::uint32_t>(renderExtent.height, 1u));
             uniform.taaJitter[2] = jitterPixelX;
