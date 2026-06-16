@@ -1,4 +1,5 @@
 #include "platform/VulkanPreviewWindow.hpp"
+#include "platform/CommandLine.hpp"
 #include "vulkan/VulkanTypes.hpp"
 #include "vulkan/VulkanLoader.hpp"
 #include "vulkan/VulkanRenderPassBuilder.hpp"
@@ -30,8 +31,8 @@ namespace {
 
 class VulkanGpuRenderer {
 public:
-    VulkanGpuRenderer(HWND hwnd, std::uint32_t width, std::uint32_t height, const GpuPreviewGeometry& geometry, bool enableV3Shadows, bool enableV4Ssao, bool enableV5RayTracing)
-        : hwnd_(hwnd), width_(width), height_(height), geometry_(geometry), enableV3Shadows_(enableV3Shadows), enableV4Ssao_(enableV4Ssao), enableV5RayTracing_(enableV5RayTracing) {
+    VulkanGpuRenderer(HWND hwnd, std::uint32_t width, std::uint32_t height, const GpuPreviewGeometry& geometry, bool enableV3Shadows, bool enableV4Ssao, bool enableV5RayTracing, std::uint32_t v5QualityLevel = 1)
+        : hwnd_(hwnd), width_(width), height_(height), geometry_(geometry), enableV3Shadows_(enableV3Shadows), enableV4Ssao_(enableV4Ssao), enableV5RayTracing_(enableV5RayTracing), v5QualitySamples_(AppConfig::v5QualitySampleCount(v5QualityLevel)) {
         previewLog("VulkanGpuRenderer: loadVulkanLibrary");
         loadVulkanLibrary();
         previewLog("VulkanGpuRenderer: createInstance");
@@ -2471,18 +2472,18 @@ private:
             if (!hasLastV5Camera_) {
                 v5HistoryFrameCount_ = 0;
             } else if (cameraChanged) {
-                v5HistoryFrameCount_ = std::min<std::uint32_t>(v5HistoryFrameCount_ + 1u, 8u);
+                v5HistoryFrameCount_ = std::min<std::uint32_t>(v5HistoryFrameCount_ + 1u, v5QualitySamples_ / 2u);
             } else {
-                v5HistoryFrameCount_ = std::min<std::uint32_t>(v5HistoryFrameCount_ + 1u, 240u);
+                v5HistoryFrameCount_ = std::min<std::uint32_t>(v5HistoryFrameCount_ + 1u, v5QualitySamples_ * 8u);
             }
             lastV5Camera_ = cameraSettings;
             hasLastV5Camera_ = true;
             uniform.v4Flags[3] = static_cast<float>(v5HistoryFrameCount_);
 
-            // Freeze jitter when camera is still and history has accumulated enough
-            // samples — prevents shimmer on static views
-            const bool freezeJitter = v5HistoryFrameCount_ >= 16u;
-            const std::uint32_t jitterIndex = freezeJitter ? 1u : ((frameIndex_ % 16u) + 1u);
+            // Freeze jitter when history has accumulated enough temporal samples
+            const bool freezeJitter = v5HistoryFrameCount_ >= v5QualitySamples_;
+            const std::uint32_t maxJitterIndex = std::min<std::uint32_t>(v5QualitySamples_, 64u);
+            const std::uint32_t jitterIndex = freezeJitter ? 1u : ((frameIndex_ % maxJitterIndex) + 1u);
             // Scrambled Halton for less visible patterns: offset by golden-ratio per-frame
             const float scrambleX = fmod(frameIndex_ * 0.6180339887f, 1.0f);
             const float scrambleY = fmod(frameIndex_ * 0.3819660113f, 1.0f);
@@ -3154,6 +3155,7 @@ private:
     VkFence inFlight_ = VK_NULL_HANDLE;
     std::uint32_t frameIndex_ = 0;
     std::uint32_t v5HistoryFrameCount_ = 0;
+    std::uint32_t v5QualitySamples_ = 16;
     V1CameraSettings lastV5Camera_{};
     std::array<float, 2> lastV5Jitter_{0.0f, 0.0f};
     bool hasLastV5Camera_ = false;
@@ -3423,7 +3425,7 @@ int runVulkanPreviewWindow(V1RenderSettings settings) {
 
     try {
         previewLog("runVulkanPreviewWindow: create renderer");
-        state.renderer = std::make_unique<VulkanGpuRenderer>(hwnd, state.settings.width, state.settings.height, state.geometry, state.settings.enableV3Shadows, state.settings.enableV4Ssao, state.settings.enableV5RayTracing);
+        state.renderer = std::make_unique<VulkanGpuRenderer>(hwnd, state.settings.width, state.settings.height, state.geometry, state.settings.enableV3Shadows, state.settings.enableV4Ssao, state.settings.enableV5RayTracing, state.settings.v5QualityLevel);
     } catch (const std::exception& error) {
         std::cerr << "Could not initialize Vulkan GPU preview: " << error.what() << '\n';
         previewLog(std::string("runVulkanPreviewWindow: renderer init failed: ") + error.what());

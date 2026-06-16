@@ -34,6 +34,10 @@ struct AppConfig {
     bool printValidationPipeline = false;
     std::string validationPipelineProfile;
     CameraOverride camera;
+    std::uint32_t v5QualityLevel = 1;  // 0=low(8spp), 1=medium(16spp), 2=high(32spp), 3=ultra(64spp)
+    static std::uint32_t v5QualitySampleCount(std::uint32_t level) {
+        return 8u << std::min<std::uint32_t>(level, 3u);  // 8, 16, 32, 64
+    }
 };
 
 class CommandLine {
