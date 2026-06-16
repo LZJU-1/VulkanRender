@@ -2488,9 +2488,10 @@ private:
             const float scrambleY = fmod(frameIndex_ * 0.3819660113f, 1.0f);
             const float jitterPixelX = freezeJitter ? 0.0f : (fmod(halton(jitterIndex, 2u) + scrambleX, 1.0f) - 0.5f);
             const float jitterPixelY = freezeJitter ? 0.0f : (fmod(halton(jitterIndex, 3u) + scrambleY, 1.0f) - 0.5f);
-            // Full-pixel jitter range gives 1 sample/pixel temporal supersampling coverage
-            uniform.taaJitter[0] = (2.0f * jitterPixelX) / static_cast<float>(std::max<std::uint32_t>(renderExtent.width, 1u));
-            uniform.taaJitter[1] = (2.0f * jitterPixelY) / static_cast<float>(std::max<std::uint32_t>(renderExtent.height, 1u));
+            // 2-pixel jitter range: wider subpixel coverage for thin geometry edges
+            // MSAA 4x handles intra-pixel edges; temporal jitter handles inter-pixel coverage
+            uniform.taaJitter[0] = (3.0f * jitterPixelX) / static_cast<float>(std::max<std::uint32_t>(renderExtent.width, 1u));
+            uniform.taaJitter[1] = (3.0f * jitterPixelY) / static_cast<float>(std::max<std::uint32_t>(renderExtent.height, 1u));
             uniform.taaJitter[2] = jitterPixelX;
             uniform.taaJitter[3] = jitterPixelY;
             uniform.prevEyeNear[0] = prevEye.x;
