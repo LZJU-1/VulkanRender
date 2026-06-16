@@ -2449,9 +2449,12 @@ private:
             hasLastV5Camera_ = true;
             uniform.v4Flags[3] = static_cast<float>(v5HistoryFrameCount_);
 
-            const std::uint32_t jitterIndex = (frameIndex_ % 16u) + 1u;
-            const float jitterPixelX = halton(jitterIndex, 2u) - 0.5f;
-            const float jitterPixelY = halton(jitterIndex, 3u) - 0.5f;
+            // Freeze jitter when camera is still and history has accumulated enough
+            // samples — prevents shimmer on static views
+            const bool freezeJitter = v5HistoryFrameCount_ >= 16u;
+            const std::uint32_t jitterIndex = freezeJitter ? 1u : ((frameIndex_ % 16u) + 1u);
+            const float jitterPixelX = freezeJitter ? 0.0f : (halton(jitterIndex, 2u) - 0.5f);
+            const float jitterPixelY = freezeJitter ? 0.0f : (halton(jitterIndex, 3u) - 0.5f);
             uniform.taaJitter[0] = (2.0f * jitterPixelX) / static_cast<float>(std::max<std::uint32_t>(renderExtent.width, 1u));
             uniform.taaJitter[1] = (2.0f * jitterPixelY) / static_cast<float>(std::max<std::uint32_t>(renderExtent.height, 1u));
             uniform.taaJitter[2] = jitterPixelX;
