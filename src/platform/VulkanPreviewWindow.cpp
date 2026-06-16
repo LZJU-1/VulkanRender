@@ -2481,7 +2481,7 @@ private:
 
             // Freeze jitter when camera is still and history has accumulated enough
             // samples — prevents shimmer on static views
-            const bool freezeJitter = v5HistoryFrameCount_ >= 32u;
+            const bool freezeJitter = v5HistoryFrameCount_ >= 16u;
             const std::uint32_t jitterIndex = freezeJitter ? 1u : ((frameIndex_ % 32u) + 1u);
             // Scrambled Halton for less visible patterns: offset by golden-ratio per-frame
             const float scrambleX = fmod(frameIndex_ * 0.6180339887f, 1.0f);
