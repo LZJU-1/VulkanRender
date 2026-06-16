@@ -157,14 +157,6 @@ bool validatedPreviousPixel(Surface surface, float2 previousUv, float projectedD
     return true;
 }
 
-// Catmull-Rom 1D kernel: sharper than bilinear, standard for modern TAA
-float catmullRom(float x) {
-    float ax = abs(x);
-    if (ax < 1.0) return (1.5 * ax - 2.5) * ax * ax + 1.0;
-    if (ax < 2.0) return ((-0.5 * ax + 2.5) * ax - 4.0) * ax + 2.0;
-    return 0.0;
-}
-
 bool sampleValidatedColorHistory(Surface surface, float2 previousUv, float projectedDepth, out float3 color, out float support) {
     uint width;
     uint height;
@@ -178,38 +170,39 @@ bool sampleValidatedColorHistory(Surface surface, float2 previousUv, float proje
         return false;
     }
 
-    // Catmull-Rom 4x4 filter: 16-tap reconstruction, much sharper than bilinear
-    float totalWeight = 0.0;
+    float weights[4] = {
+        (1.0 - fracPixel.x) * (1.0 - fracPixel.y),
+        fracPixel.x * (1.0 - fracPixel.y),
+        (1.0 - fracPixel.x) * fracPixel.y,
+        fracPixel.x * fracPixel.y
+    };
+    int2 offsets[4] = {
+        int2(0, 0),
+        int2(1, 0),
+        int2(0, 1),
+        int2(1, 1)
+    };
+
     [unroll]
-    for (int y = -1; y <= 2; ++y) {
-        [unroll]
-        for (int x = -1; x <= 2; ++x) {
-            int2 tap = basePixel + int2(x, y);
-            float valid = validatedTapWeight(surface, tap, width, height, projectedDepth);
-            if (valid > 0.0) {
-                float wx = catmullRom(float(x) - fracPixel.x);
-                float wy = catmullRom(float(y) - fracPixel.y);
-                float w = wx * wy;
-                color += historyColor.Load(int3(tap, 0)).rgb * w;
-                totalWeight += w;
-                support += w;
-            }
+    for (int i = 0; i < 4; ++i) {
+        int2 tap = basePixel + offsets[i];
+        float valid = validatedTapWeight(surface, tap, width, height, projectedDepth);
+        if (valid > 0.0) {
+            color += historyColor.Load(int3(tap, 0)).rgb * weights[i];
+            support += weights[i];
         }
     }
-    if (totalWeight > 0.0001) {
-        color /= totalWeight;
+    if (support > 0.0001) {
+        color /= support;
         return true;
     }
 
-    // Fallback: 3x3 box search
     int2 center = int2(round(previousPixelFloat));
-    support = 0.0;
-    color = 0.0.xxx;
     [unroll]
-    for (int fy = -1; fy <= 1; ++fy) {
+    for (int y = -1; y <= 1; ++y) {
         [unroll]
-        for (int fx = -1; fx <= 1; ++fx) {
-            int2 tap = center + int2(fx, fy);
+        for (int x = -1; x <= 1; ++x) {
+            int2 tap = center + int2(x, y);
             float valid = validatedTapWeight(surface, tap, width, height, projectedDepth);
             if (valid > 0.0) {
                 color += historyColor.Load(int3(tap, 0)).rgb;
@@ -223,19 +216,6 @@ bool sampleValidatedColorHistory(Surface surface, float2 previousUv, float proje
         return true;
     }
     return false;
-}
-
-// RGB → YCoCg: better temporal resolve (chroma artifacts less visible to human eye)
-float3 rgbToYCoCg(float3 rgb) {
-    float y  = dot(rgb, float3(0.25, 0.50, 0.25));
-    float co = dot(rgb, float3(0.50, 0.00, -0.50));
-    float cg = dot(rgb, float3(-0.25, 0.50, -0.25));
-    return float3(y, co, cg);
-}
-
-float3 yCoCgToRgb(float3 ycocg) {
-    float t = ycocg.x - ycocg.z;
-    return float3(t + ycocg.y, ycocg.x + ycocg.z, t - ycocg.y);
 }
 
 bool sampleValidatedShadowHistory(Surface surface, float2 previousUv, float projectedDepth, out float4 signal, out float support) {
@@ -659,8 +639,6 @@ void writeAccumulatedColor(uint2 pixel, uint width, uint height, float3 currentC
         }
     }
     float3 neighborhoodMean = neighborhoodSum / 9.0;
-    // YCoCg temporal resolve: luma resolves faster, chroma more conservative
-    float3 currentYCoCg = rgbToYCoCg(currentColor);
     float3 clipPadding = max(0.018.xxx, abs(neighborhoodMean - currentColor) * 0.65 + 0.022.xxx);
     neighborhoodMin -= clipPadding;
     neighborhoodMax += clipPadding;
@@ -675,26 +653,17 @@ void writeAccumulatedColor(uint2 pixel, uint width, uint height, float3 currentC
     if (hasPrevious) {
         previousColor = clamp(previousColor, neighborhoodMin, neighborhoodMax);
     }
-    float3 previousYCoCg = rgbToYCoCg(previousColor);
-
+    float lumaCurrent = dot(currentColor, float3(0.2126, 0.7152, 0.0722));
+    float lumaPrevious = dot(previousColor, float3(0.2126, 0.7152, 0.0722));
     float historyFrames = max(v4Flags.w, 0.0);
     float edge = hasSurface ? surfaceEdgeConfidence(pixel, width, height, surface) : 0.0;
+    // Faster convergence for temporal supersampling: higher base weight, quicker ramp
     float baseHistoryWeight = lerp(0.94, 0.975, edge);
-    float historyWeightLuma = (historyFrames < 1.0 || !hasPrevious) ? 0.0 : min(baseHistoryWeight, historyFrames / (historyFrames + 0.45));
-    historyWeightLuma *= saturate(previousSupport);
-    float lumaDisagreement = abs(currentYCoCg.x - previousYCoCg.x);
-    historyWeightLuma *= 1.0 - saturate(lumaDisagreement * lerp(3.5, 1.5, edge));
-
-    // Chroma: slower convergence = less ghosting on color edges
-    float historyWeightChroma = historyWeightLuma * 0.85;
-    float chromaDisagreement = abs(currentYCoCg.y - previousYCoCg.y) + abs(currentYCoCg.z - previousYCoCg.z);
-    historyWeightChroma *= 1.0 - saturate(chromaDisagreement * 5.0);
-
-    float3 accumulatedYCoCg;
-    accumulatedYCoCg.x = lerp(currentYCoCg.x, previousYCoCg.x, historyWeightLuma);
-    accumulatedYCoCg.y = lerp(currentYCoCg.y, previousYCoCg.y, historyWeightChroma);
-    accumulatedYCoCg.z = lerp(currentYCoCg.z, previousYCoCg.z, historyWeightChroma);
-    float3 accumulated = yCoCgToRgb(accumulatedYCoCg);
+    float historyWeight = (historyFrames < 1.0 || !hasPrevious) ? 0.0 : min(baseHistoryWeight, historyFrames / (historyFrames + 0.45));
+    historyWeight *= saturate(previousSupport);
+    float lumaDisagreement = abs(lumaCurrent - lumaPrevious);
+    historyWeight *= 1.0 - saturate(lumaDisagreement * lerp(3.5, 1.5, edge));
+    float3 accumulated = lerp(currentColor, previousColor, historyWeight);
     float viewDepth = hasSurface ? max(0.0, depthOf(surface)) : 0.0;
     historyOutput[pixel] = float4(accumulated, viewDepth);
     float3 antialiased = applyEdgeAntialias(pixel, width, height, accumulated);
