@@ -273,23 +273,32 @@ public:
             return;
         }
 
-        if (logFrame) previewLog("draw: update uniform");
-        updateUniform(camera, v4DebugMode);
-        if (logFrame) previewLog("draw: record command buffer");
-        recordCommandBuffer(commandBuffer_, imageIndex);
+        const bool multiSpp = enableV5RayTracing_;
+        const std::uint32_t sppCount = multiSpp ? 2u : 1u;
+        const VkPipelineStageFlags waitStage = multiSpp ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 
-        if (logFrame) previewLog("draw: submit");
-        const VkPipelineStageFlags waitStage = enableV5RayTracing_ ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        VkSubmitInfo submit{};
-        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submit.waitSemaphoreCount = 1;
-        submit.pWaitSemaphores = &imageAvailable_;
-        submit.pWaitDstStageMask = &waitStage;
-        submit.commandBufferCount = 1;
-        submit.pCommandBuffers = &commandBuffer_;
-        submit.signalSemaphoreCount = 1;
-        submit.pSignalSemaphores = &renderFinished_;
-        require(vkQueueSubmit(graphicsQueue_, 1, &submit, inFlight_), "vkQueueSubmit");
+        for (std::uint32_t spp = 0; spp < sppCount; ++spp) {
+            if (logFrame && multiSpp) previewLog("draw: spp " + std::to_string(spp));
+            updateUniform(camera, v4DebugMode, spp);
+
+            if (logFrame) previewLog("draw: record command buffer");
+            recordCommandBuffer(commandBuffer_, imageIndex);
+
+            if (logFrame) previewLog("draw: submit");
+            VkSubmitInfo submit{};
+            submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            submit.waitSemaphoreCount = (spp == 0) ? 1u : 0u;
+            submit.pWaitSemaphores = (spp == 0) ? &imageAvailable_ : nullptr;
+            submit.pWaitDstStageMask = (spp == 0) ? &waitStage : nullptr;
+            submit.commandBufferCount = 1;
+            submit.pCommandBuffers = &commandBuffer_;
+            submit.signalSemaphoreCount = (spp == sppCount - 1) ? 1u : 0u;
+            submit.pSignalSemaphores = (spp == sppCount - 1) ? &renderFinished_ : nullptr;
+            require(vkQueueSubmit(graphicsQueue_, 1, &submit, inFlight_), "vkQueueSubmit");
+
+            vkWaitForFences(device_, 1, &inFlight_, VK_TRUE, UINT64_MAX);
+            vkResetFences(device_, 1, &inFlight_);
+        }
 
         if (logFrame) previewLog("draw: present");
         VkPresentInfoKHR present{};
@@ -2377,7 +2386,7 @@ private:
         return result;
     }
 
-    void updateUniform(const V1CameraSettings& cameraSettings, std::uint32_t v4DebugMode) {
+    void updateUniform(const V1CameraSettings& cameraSettings, std::uint32_t v4DebugMode, std::uint32_t spp = 0) {
         const V1CameraSettings previousCamera = hasLastV5Camera_ ? lastV5Camera_ : cameraSettings;
         const std::array<float, 2> previousJitter = lastV5Jitter_;
         const Vec3 eye = eyeOf(cameraSettings);
@@ -2482,7 +2491,8 @@ private:
             // Freeze jitter when camera is still and history has accumulated enough
             // samples — prevents shimmer on static views
             const bool freezeJitter = v5HistoryFrameCount_ >= 16u;
-            const std::uint32_t jitterIndex = freezeJitter ? 1u : ((frameIndex_ % 32u) + 1u);
+            const std::uint32_t globalSampleIndex = freezeJitter ? 0u : (frameIndex_ * 2u + spp);
+            const std::uint32_t jitterIndex = (globalSampleIndex % 32u) + 1u;
             // Scrambled Halton for less visible patterns: offset by golden-ratio per-frame
             const float scrambleX = fmod(frameIndex_ * 0.6180339887f, 1.0f);
             const float scrambleY = fmod(frameIndex_ * 0.3819660113f, 1.0f);
