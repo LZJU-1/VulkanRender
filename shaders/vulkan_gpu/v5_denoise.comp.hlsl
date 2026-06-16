@@ -347,13 +347,23 @@ float4 temporalShadowAt(uint2 pixel, uint width, uint height, Surface surface) {
         previous = clamp(previous, lo, hi);
     }
     float historyFrames = max(v4Flags.w, 0.0);
-    float historyWeight = (historyFrames < 1.0 || !hasPrevious) ? 0.0 : min(0.96, historyFrames / (historyFrames + 1.0));
+    float historyWeight = (historyFrames < 1.0 || !hasPrevious) ? 0.0 : min(0.95, historyFrames / (historyFrames + 0.8));
     historyWeight *= saturate(previousSupport);
+    // Variance-guided refinement: high-variance signals need more temporal blending
+    float2 moments = previous.zw;
+    float varMax = max(0.0, moments.y - moments.x * moments.x);
+    float varAdjust = saturate(varMax * 18.0);
+    historyWeight = lerp(historyWeight, min(0.97, historyWeight + 0.12), varAdjust);
     float localCurrent = dot(current.gba, float3(0.2126, 0.7152, 0.0722));
     float localPrevious = dot(previous.gba, float3(0.2126, 0.7152, 0.0722));
     float disagreement = abs(current.r - previous.r) + abs(localCurrent - localPrevious) * 0.25;
     historyWeight *= 1.0 - saturate(disagreement * 1.8);
-    return lerp(current, previous, historyWeight);
+    // Pack moments: luminance + luminance² for next frame's variance
+    float4 result = lerp(current, previous, historyWeight);
+    float lum = dot(result.gba, float3(0.2126, 0.7152, 0.0722));
+    float2 newMoments = lerp(previous.zw, float2(lum, lum * lum), 0.15);
+    result.zw = newMoments;
+    return result;
 }
 
 float4 temporalReflectionAt(uint2 pixel, uint width, uint height, Surface surface) {
@@ -379,12 +389,22 @@ float4 temporalReflectionAt(uint2 pixel, uint width, uint height, Surface surfac
         previous = clamp(previous, lo, hi);
     }
     float historyFrames = max(v4Flags.w, 0.0);
-    float historyWeight = (historyFrames < 1.0 || !hasPrevious) ? 0.0 : min(0.94, historyFrames / (historyFrames + 2.0));
+    float historyWeight = (historyFrames < 1.0 || !hasPrevious) ? 0.0 : min(0.93, historyFrames / (historyFrames + 1.2));
     historyWeight *= saturate(previousSupport);
+    // Variance-guided refinement for reflection
+    float2 moments = previous.zw;
+    float varMax = max(0.0, moments.y - moments.x * moments.x);
+    float varAdjust = saturate(varMax * 22.0);
+    historyWeight = lerp(historyWeight, min(0.96, historyWeight + 0.10), varAdjust);
     float lumaCurrent = dot(current.rgb, float3(0.2126, 0.7152, 0.0722));
     float lumaPrevious = dot(previous.rgb, float3(0.2126, 0.7152, 0.0722));
     historyWeight *= 1.0 - saturate(abs(lumaCurrent - lumaPrevious) * 2.0);
-    return lerp(current, previous, historyWeight);
+    // Pack moments for next frame
+    float4 result = lerp(current, previous, historyWeight);
+    float lum = dot(result.rgb, float3(0.2126, 0.7152, 0.0722));
+    float2 newMoments = lerp(previous.zw, float2(lum, lum * lum), 0.15);
+    result.zw = newMoments;
+    return result;
 }
 
 void filterSignals(uint2 pixel, uint width, uint height, Surface center, out float4 shadow, out float4 reflection) {
@@ -423,6 +443,48 @@ void filterSignals(uint2 pixel, uint width, uint height, Surface center, out flo
     shadow.r = saturate(shadow.r);
     shadow.gba = max(shadow.gba, 0.0.xxx);
     reflection = max(reflection, 0.0.xxxx);
+}
+
+// À-trous spatial iteration: filter with given step size, reading from previous-filtered shadow/reflection.
+// The input signals (shadowIn/reflectionIn) are the step-(N-1) output; this function produces step-N output.
+void atrousIteration(uint2 pixel, uint width, uint height, Surface center, float4 shadowIn, float4 reflectionIn,
+                     out float4 shadowOut, out float4 reflectionOut, int stepSize) {
+    float4 shadowSum = shadowIn;
+    float reflectionWeightSum = 1.0;
+    float4 reflectionSum = reflectionIn;
+    float weightSum = 1.0;
+
+    // 5×5 kernel with stride = stepSize, giving effective radius ≈ stepSize * 2
+    [unroll]
+    for (int y = -2; y <= 2; ++y) {
+        [unroll]
+        for (int x = -2; x <= 2; ++x) {
+            if (x == 0 && y == 0) continue;
+            uint2 samplePixel = clampPixel(int2(pixel) + int2(x, y) * stepSize, width, height);
+            Surface sampleSurface;
+            if (!readSurfacePixel(samplePixel, sampleSurface)) continue;
+
+            float distance2 = (float)(x * x + y * y);
+            float spatialWeight = exp(-distance2 * 0.18);
+            float weight = spatialWeight * bilateralWeight(center, sampleSurface);
+            if (weight <= 0.0005) continue;
+
+            float4 sampleShadow = temporalShadowAt(samplePixel, width, height, sampleSurface);
+            shadowSum += sampleShadow * weight;
+            weightSum += weight;
+
+            float4 sampleReflection = temporalReflectionAt(samplePixel, width, height, sampleSurface);
+            float reflectionGuide = saturate(sampleReflection.a * 3.0 + (1.0 - sampleSurface.roughness) * 0.25);
+            reflectionSum += sampleReflection * weight * reflectionGuide;
+            reflectionWeightSum += weight * reflectionGuide;
+        }
+    }
+
+    shadowOut = weightSum > 0.0 ? shadowSum / weightSum : shadowIn;
+    shadowOut.r = saturate(shadowOut.r);
+    shadowOut.gba = max(shadowOut.gba, 0.0.xxx);
+    reflectionOut = reflectionWeightSum > 0.0 ? reflectionSum / reflectionWeightSum : reflectionIn;
+    reflectionOut = max(reflectionOut, 0.0.xxxx);
 }
 
 float3 composeLinear(Surface surface, float4 shadow, float3 reflection) {
@@ -626,8 +688,18 @@ void main(uint3 id : SV_DispatchThreadID) {
     float4 filteredShadow;
     float4 filteredReflection;
     filterSignals(pixel, width, height, surface, filteredShadow, filteredReflection);
-    shadowHistoryOutput[pixel] = filteredShadow;
-    reflectionHistoryOutput[pixel] = float4(filteredReflection.rgb, saturate(filteredReflection.a));
+
+    // À-trous multi-scale spatial refinement (step=2, step=4)
+    float4 shadowStep2, reflectionStep2;
+    atrousIteration(pixel, width, height, surface, filteredShadow, filteredReflection,
+                    shadowStep2, reflectionStep2, 2);
+
+    float4 shadowStep4, reflectionStep4;
+    atrousIteration(pixel, width, height, surface, shadowStep2, reflectionStep2,
+                    shadowStep4, reflectionStep4, 4);
+
+    shadowHistoryOutput[pixel] = shadowStep4;
+    reflectionHistoryOutput[pixel] = float4(reflectionStep4.rgb, saturate(reflectionStep4.a));
     writeSurfaceHistory(pixel, surface, true);
-    writeAccumulatedColor(pixel, width, height, toneMap(composeLinear(surface, filteredShadow, filteredReflection.rgb)), surface, true);
+    writeAccumulatedColor(pixel, width, height, toneMap(composeLinear(surface, shadowStep4, reflectionStep4.rgb)), surface, true);
 }
