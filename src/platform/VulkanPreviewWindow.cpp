@@ -52,8 +52,8 @@ public:
         createSwapchain();
         previewLog("VulkanGpuRenderer: createRenderPasses (factory)");
         const bool enableGBuffer = enableV4Ssao_ || enableV5RayTracing_;
-        gbufferSamples_ = VK_SAMPLE_COUNT_1_BIT;  // pure temporal supersampling — MSAA interferes with TAA resolve
-        previewLog("G-buffer: 1x (temporal supersampling via Halton jitter)");
+        gbufferSamples_ = enableV5RayTracing_ ? msaaSamples_ : VK_SAMPLE_COUNT_1_BIT;
+        previewLog("G-buffer samples: " + std::to_string(sampleCountValue(gbufferSamples_)) + "x");
         RenderPasses renderPasses = createRenderPasses(device_, swapchainFormat_, msaaSamples_, enableGBuffer, enableV4Ssao_, gbufferSamples_);
         renderPass_ = renderPasses.forward;
         shadowRenderPass_ = renderPasses.shadow;
@@ -235,6 +235,9 @@ public:
         if (device_ != VK_NULL_HANDLE && v5ResolvedColor_.view != VK_NULL_HANDLE) vkDestroyImageView(device_, v5ResolvedColor_.view, nullptr);
         if (device_ != VK_NULL_HANDLE && v5ResolvedColor_.image != VK_NULL_HANDLE) vkDestroyImage(device_, v5ResolvedColor_.image, nullptr);
         if (device_ != VK_NULL_HANDLE && v5ResolvedColor_.memory != VK_NULL_HANDLE) vkFreeMemory(device_, v5ResolvedColor_.memory, nullptr);
+        if (device_ != VK_NULL_HANDLE && v5MotionVector_.view != VK_NULL_HANDLE) vkDestroyImageView(device_, v5MotionVector_.view, nullptr);
+        if (device_ != VK_NULL_HANDLE && v5MotionVector_.image != VK_NULL_HANDLE) vkDestroyImage(device_, v5MotionVector_.image, nullptr);
+        if (device_ != VK_NULL_HANDLE && v5MotionVector_.memory != VK_NULL_HANDLE) vkFreeMemory(device_, v5MotionVector_.memory, nullptr);
         if (device_ != VK_NULL_HANDLE && v5ShadowSignal_.view != VK_NULL_HANDLE) vkDestroyImageView(device_, v5ShadowSignal_.view, nullptr);
         if (device_ != VK_NULL_HANDLE && v5ShadowSignal_.image != VK_NULL_HANDLE) vkDestroyImage(device_, v5ShadowSignal_.image, nullptr);
         if (device_ != VK_NULL_HANDLE && v5ShadowSignal_.memory != VK_NULL_HANDLE) vkFreeMemory(device_, v5ShadowSignal_.memory, nullptr);
@@ -844,6 +847,7 @@ private:
         createStorageSampledTexture(v5ShadowHistoryTargets_[1], kV5ShadowSignalFormat, "vkCreateImage(v5 shadow history 1)", extent);
         createStorageSampledTexture(v5ReflectionHistoryTargets_[0], kV5ReflectionSignalFormat, "vkCreateImage(v5 reflection history 0)", extent);
         createStorageSampledTexture(v5ReflectionHistoryTargets_[1], kV5ReflectionSignalFormat, "vkCreateImage(v5 reflection history 1)", extent);
+        createStorageSampledTexture(v5MotionVector_, kV5MotionVectorFormat, "vkCreateImage(v5 motion vector)", extent);
         createStorageSampledTexture(v5SurfaceHistoryTargets_[0], kV5SurfaceHistoryFormat, "vkCreateImage(v5 surface history 0)", extent);
         createStorageSampledTexture(v5SurfaceHistoryTargets_[1], kV5SurfaceHistoryFormat, "vkCreateImage(v5 surface history 1)", extent);
         createStorageSampledTexture(v5ResolvedColor_, kV5HistoryFormat, "vkCreateImage(v5 resolved color)", extent);
@@ -2026,13 +2030,17 @@ private:
         surfaceHistoryOutputBinding.binding = kV5SurfaceHistoryOutputBinding;
         VkDescriptorSetLayoutBinding resolvedColorBinding = historyOutputBinding;
         resolvedColorBinding.binding = kV5ResolvedColorBinding;
+        VkDescriptorSetLayoutBinding motionVectorBinding = historyOutputBinding;
+        motionVectorBinding.binding = kV5MotionVectorBinding;
+        VkDescriptorSetLayoutBinding motionVectorHistoryBinding = historyOutputBinding;
+        motionVectorHistoryBinding.binding = kV5MotionVectorHistoryBinding;
         VkDescriptorSetLayoutBinding lightBinding{};
         lightBinding.binding = kV4ManyLightBufferBinding;
         lightBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         lightBinding.descriptorCount = 1;
         lightBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-        std::array<VkDescriptorSetLayoutBinding, 19> bindings{
+        std::array<VkDescriptorSetLayoutBinding, 21> bindings{
             cameraBinding,
             outputBinding,
             samplerBinding,
@@ -2052,6 +2060,8 @@ private:
             surfaceHistoryInputBinding,
             surfaceHistoryOutputBinding,
             resolvedColorBinding,
+            motionVectorBinding,
+            motionVectorHistoryBinding,
         };
         VkDescriptorSetLayoutCreateInfo layout{};
         layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -2063,7 +2073,7 @@ private:
         poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         poolSizes[0].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 2u);
         poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        poolSizes[1].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 16u);
+        poolSizes[1].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 18u);
         poolSizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLER;
         poolSizes[2].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 2u);
         poolSizes[3].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
@@ -2122,8 +2132,10 @@ private:
         std::vector<VkDescriptorImageInfo> surfaceHistoryInputInfos(v5DescriptorSets_.size());
         std::vector<VkDescriptorImageInfo> surfaceHistoryOutputInfos(v5DescriptorSets_.size());
         std::vector<VkDescriptorImageInfo> resolvedColorInfos(v5DescriptorSets_.size());
+        std::vector<VkDescriptorImageInfo> motionVectorInfos(v5DescriptorSets_.size());
+        std::vector<VkDescriptorImageInfo> motionVectorHistoryInfos(v5DescriptorSets_.size());
         std::vector<VkWriteDescriptorSetAccelerationStructureKHR> asInfos(v5DescriptorSets_.size());
-        std::vector<std::array<VkWriteDescriptorSet, 19>> writes(v5DescriptorSets_.size());
+        std::vector<std::array<VkWriteDescriptorSet, 21>> writes(v5DescriptorSets_.size());
         for (std::size_t i = 0; i < v5DescriptorSets_.size(); ++i) {
             const std::size_t swapchainIndex = i / 2u;
             const std::size_t pingPongIndex = i % 2u;
@@ -2151,6 +2163,10 @@ private:
             surfaceHistoryOutputInfos[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
             resolvedColorInfos[i].imageView = v5ResolvedColor_.view;
             resolvedColorInfos[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            motionVectorInfos[i].imageView = v5MotionVector_.view;
+            motionVectorInfos[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            motionVectorHistoryInfos[i].imageView = v5MotionVector_.view;
+            motionVectorHistoryInfos[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
             asInfos[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
             asInfos[i].accelerationStructureCount = 1;
             asInfos[i].pAccelerationStructures = &v5Tlas_.handle;
@@ -2287,6 +2303,20 @@ private:
             writes[i][18].descriptorCount = 1;
             writes[i][18].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
             writes[i][18].pImageInfo = &resolvedColorInfos[i];
+
+            writes[i][19].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i][19].dstSet = v5DescriptorSets_[i];
+            writes[i][19].dstBinding = kV5MotionVectorBinding;
+            writes[i][19].descriptorCount = 1;
+            writes[i][19].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[i][19].pImageInfo = &motionVectorInfos[i];
+
+            writes[i][20].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i][20].dstSet = v5DescriptorSets_[i];
+            writes[i][20].dstBinding = kV5MotionVectorHistoryBinding;
+            writes[i][20].descriptorCount = 1;
+            writes[i][20].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[i][20].pImageInfo = &motionVectorHistoryInfos[i];
             vkUpdateDescriptorSets(device_, static_cast<std::uint32_t>(writes[i].size()), writes[i].data(), 0, nullptr);
         }
     }
@@ -3057,6 +3087,7 @@ private:
     std::array<TextureResource, 2> v5ReflectionHistoryTargets_{};
     std::array<TextureResource, 2> v5SurfaceHistoryTargets_{};
     TextureResource v5ResolvedColor_{};
+    TextureResource v5MotionVector_{};
     std::array<bool, 2> v5ShadowHistoryInitialized_{false, false};
     std::array<bool, 2> v5ReflectionHistoryInitialized_{false, false};
     std::array<bool, 2> v5SurfaceHistoryInitialized_{false, false};

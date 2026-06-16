@@ -47,6 +47,10 @@ RWTexture2D<float4> reflectionHistoryOutput : register(u29);
 RWTexture2D<float4> surfaceHistoryOutput : register(u31);
 [[vk::binding(32, 0), vk::image_format("rgba16f")]]
 RWTexture2D<float4> resolvedColor : register(u32);
+[[vk::binding(33, 0), vk::image_format("rg16f")]]
+RWTexture2D<float2> motionVector : register(u33);
+[[vk::binding(34, 0), vk::image_format("rg16f")]]
+RWTexture2D<float2> motionVectorHistory : register(u34);
 
 #include "v5_shared.hlsl"
 
@@ -692,6 +696,16 @@ void main(uint3 id : SV_DispatchThreadID) {
         writeSurfaceHistory(pixel, surface, true);
         writeAccumulatedColor(pixel, width, height, toneMap(surface.base * 18.0), surface, true);
         return;
+    }
+
+    // Motion vector: current UV → previous UV for FSR 2.0 / temporal resolve
+    float2 currentUv = (float2(pixel) + 0.5) / float2(width, height);
+    float2 prevUv;
+    float prevDepth;
+    if (projectPrevWorldToUv(surface.worldPos, prevUv, prevDepth)) {
+        motionVector[pixel] = currentUv - prevUv;
+    } else {
+        motionVector[pixel] = float2(0.0, 0.0);
     }
 
     float4 filteredShadow;
