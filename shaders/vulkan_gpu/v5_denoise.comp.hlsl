@@ -454,6 +454,11 @@ void atrousIteration(uint2 pixel, uint width, uint height, Surface center, float
     float4 reflectionSum = reflectionIn;
     float weightSum = 1.0;
 
+    // Mirror or near-mirror surfaces keep sharp reflections — skip spatial filtering
+    float centerSmoothness = saturate((0.58 - center.roughness) / 0.58);
+    bool mirrorMaterial = abs(center.materialKind - 2.0) < 0.25;
+    float reflectionFilterStrength = mirrorMaterial ? 0.0 : saturate(1.0 - centerSmoothness * 0.92);
+
     // 5×5 kernel with stride = stepSize, giving effective radius ≈ stepSize * 2
     [unroll]
     for (int y = -2; y <= 2; ++y) {
@@ -483,8 +488,11 @@ void atrousIteration(uint2 pixel, uint width, uint height, Surface center, float
     shadowOut = weightSum > 0.0 ? shadowSum / weightSum : shadowIn;
     shadowOut.r = saturate(shadowOut.r);
     shadowOut.gba = max(shadowOut.gba, 0.0.xxx);
-    reflectionOut = reflectionWeightSum > 0.0 ? reflectionSum / reflectionWeightSum : reflectionIn;
-    reflectionOut = max(reflectionOut, 0.0.xxxx);
+
+    // Blend spatially-filtered reflection with input based on roughness: mirrors stay sharp
+    float4 spatialReflection = reflectionWeightSum > 0.0 ? reflectionSum / reflectionWeightSum : reflectionIn;
+    spatialReflection = max(spatialReflection, 0.0.xxxx);
+    reflectionOut = lerp(reflectionIn, spatialReflection, reflectionFilterStrength);
 }
 
 float3 composeLinear(Surface surface, float4 shadow, float3 reflection) {
