@@ -29,7 +29,8 @@ Pipelines createPipelines(
     VkDescriptorSetLayout v4DescriptorLayout,
     VkDescriptorSetLayout v5DescriptorLayout,
     bool enableV4,
-    bool enableV5
+    bool enableV5,
+    VkSampleCountFlagBits gbufferSamples = VK_SAMPLE_COUNT_1_BIT
 );
 
 } // namespace vr

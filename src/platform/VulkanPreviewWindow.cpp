@@ -52,7 +52,9 @@ public:
         createSwapchain();
         previewLog("VulkanGpuRenderer: createRenderPasses (factory)");
         const bool enableGBuffer = enableV4Ssao_ || enableV5RayTracing_;
-        RenderPasses renderPasses = createRenderPasses(device_, swapchainFormat_, msaaSamples_, enableGBuffer, enableV4Ssao_);
+        gbufferSamples_ = enableV5RayTracing_ ? msaaSamples_ : VK_SAMPLE_COUNT_1_BIT;
+        previewLog("G-buffer samples: " + std::to_string(sampleCountValue(gbufferSamples_)) + "x");
+        RenderPasses renderPasses = createRenderPasses(device_, swapchainFormat_, msaaSamples_, enableGBuffer, enableV4Ssao_, gbufferSamples_);
         renderPass_ = renderPasses.forward;
         shadowRenderPass_ = renderPasses.shadow;
         gbufferRenderPass_ = renderPasses.gbuffer;
@@ -105,7 +107,7 @@ public:
         previewLog("VulkanGpuRenderer: createPipelines (factory)");
         auto pipelines = createPipelines(device_, msaaSamples_, renderPasses,
             descriptorSetLayout_, v4DescriptorSetLayout_, v5DescriptorSetLayout_,
-            enableV4Ssao_, enableV5RayTracing_);
+            enableV4Ssao_, enableV5RayTracing_, gbufferSamples_);
         pipelineLayout_ = pipelines.forwardLayout;
         v4ComposePipelineLayout_ = pipelines.v4ComposeLayout;
         v5RayTracingPipelineLayout_ = pipelines.v5RayTracingLayout;
@@ -195,6 +197,11 @@ public:
         if (device_ != VK_NULL_HANDLE && shadowDepthImage_ != VK_NULL_HANDLE) vkDestroyImage(device_, shadowDepthImage_, nullptr);
         if (device_ != VK_NULL_HANDLE && shadowDepthMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, shadowDepthMemory_, nullptr);
         for (TextureResource& target : gbufferTargets_) {
+            if (device_ != VK_NULL_HANDLE && target.view != VK_NULL_HANDLE) vkDestroyImageView(device_, target.view, nullptr);
+            if (device_ != VK_NULL_HANDLE && target.image != VK_NULL_HANDLE) vkDestroyImage(device_, target.image, nullptr);
+            if (device_ != VK_NULL_HANDLE && target.memory != VK_NULL_HANDLE) vkFreeMemory(device_, target.memory, nullptr);
+        }
+        for (TextureResource& target : gbufferMsColor_) {
             if (device_ != VK_NULL_HANDLE && target.view != VK_NULL_HANDLE) vkDestroyImageView(device_, target.view, nullptr);
             if (device_ != VK_NULL_HANDLE && target.image != VK_NULL_HANDLE) vkDestroyImage(device_, target.image, nullptr);
             if (device_ != VK_NULL_HANDLE && target.memory != VK_NULL_HANDLE) vkFreeMemory(device_, target.memory, nullptr);
@@ -701,6 +708,31 @@ private:
         target.view = createImageView(target.image, format, VK_IMAGE_ASPECT_COLOR_BIT);
     }
 
+    void createColorAttachmentMs(TextureResource& target, VkFormat format, const char* label, VkExtent2D extent, VkSampleCountFlagBits samples) {
+        VkImageCreateInfo image{};
+        image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        image.imageType = VK_IMAGE_TYPE_2D;
+        image.extent = {extent.width, extent.height, 1};
+        image.mipLevels = 1;
+        image.arrayLayers = 1;
+        image.format = format;
+        image.tiling = VK_IMAGE_TILING_OPTIMAL;
+        image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        image.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        image.samples = samples;
+        image.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        require(vkCreateImage(device_, &image, nullptr, &target.image), label);
+        VkMemoryRequirements requirements{};
+        vkGetImageMemoryRequirements(device_, target.image, &requirements);
+        VkMemoryAllocateInfo allocate{};
+        allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocate.allocationSize = requirements.size;
+        allocate.memoryTypeIndex = findMemoryType(physicalDevice_, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        require(vkAllocateMemory(device_, &allocate, nullptr, &target.memory), label);
+        require(vkBindImageMemory(device_, target.image, target.memory, 0), label);
+        target.view = createImageView(target.image, format, VK_IMAGE_ASPECT_COLOR_BIT);
+    }
+
     void createStorageSampledTexture(TextureResource& target, VkFormat format, const char* label, VkExtent2D extent = {}) {
         if (extent.width == 0 || extent.height == 0) {
             extent = swapchainExtent_;
@@ -732,45 +764,70 @@ private:
 
     void createGBufferResources() {
         const VkExtent2D extent = v5RenderExtent();
+        const bool useMsaa = enableV5RayTracing_ && gbufferSamples_ != VK_SAMPLE_COUNT_1_BIT;
+
+        // Resolved images (single-sample) — used by compute shader descriptors
         createColorAttachment(gbufferTargets_[0], kGBufferAlbedoFormat, "vkCreateImage(gbuffer albedo)", extent);
         createColorAttachment(gbufferTargets_[1], kGBufferNormalFormat, "vkCreateImage(gbuffer normal)", extent);
         createColorAttachment(gbufferTargets_[2], kGBufferWorldFormat, "vkCreateImage(gbuffer world)", extent);
 
-        VkImageCreateInfo depth{};
-        depth.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        depth.imageType = VK_IMAGE_TYPE_2D;
-        depth.extent = {extent.width, extent.height, 1};
-        depth.mipLevels = 1;
-        depth.arrayLayers = 1;
-        depth.format = VK_FORMAT_D32_SFLOAT;
-        depth.tiling = VK_IMAGE_TILING_OPTIMAL;
-        depth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        depth.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-        depth.samples = VK_SAMPLE_COUNT_1_BIT;
-        depth.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        require(vkCreateImage(device_, &depth, nullptr, &gbufferDepthImage_), "vkCreateImage(gbuffer depth)");
+        // Multisampled images for render pass attachments (when MSAA enabled)
+        if (useMsaa) {
+            createColorAttachmentMs(gbufferMsColor_[0], kGBufferAlbedoFormat, "vkCreateImage(gbuffer ms albedo)", extent, gbufferSamples_);
+            createColorAttachmentMs(gbufferMsColor_[1], kGBufferNormalFormat, "vkCreateImage(gbuffer ms normal)", extent, gbufferSamples_);
+            createColorAttachmentMs(gbufferMsColor_[2], kGBufferWorldFormat, "vkCreateImage(gbuffer ms world)", extent, gbufferSamples_);
+        }
 
-        VkMemoryRequirements requirements{};
-        vkGetImageMemoryRequirements(device_, gbufferDepthImage_, &requirements);
-        VkMemoryAllocateInfo allocate{};
-        allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocate.allocationSize = requirements.size;
-        allocate.memoryTypeIndex = findMemoryType(physicalDevice_, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        require(vkAllocateMemory(device_, &allocate, nullptr, &gbufferDepthMemory_), "vkAllocateMemory(gbuffer depth)");
-        require(vkBindImageMemory(device_, gbufferDepthImage_, gbufferDepthMemory_, 0), "vkBindImageMemory(gbuffer depth)");
-        gbufferDepthView_ = createImageView(gbufferDepthImage_, VK_FORMAT_D32_SFLOAT, VK_IMAGE_ASPECT_DEPTH_BIT);
+        // Depth (multisampled or single-sample)
+        {
+            VkImageCreateInfo depth{};
+            depth.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+            depth.imageType = VK_IMAGE_TYPE_2D;
+            depth.extent = {extent.width, extent.height, 1};
+            depth.mipLevels = 1;
+            depth.arrayLayers = 1;
+            depth.format = VK_FORMAT_D32_SFLOAT;
+            depth.tiling = VK_IMAGE_TILING_OPTIMAL;
+            depth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            depth.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+            depth.samples = useMsaa ? gbufferSamples_ : VK_SAMPLE_COUNT_1_BIT;
+            depth.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            require(vkCreateImage(device_, &depth, nullptr, &gbufferDepthImage_), "vkCreateImage(gbuffer depth)");
 
-        std::array<VkImageView, 4> attachments{
-            gbufferTargets_[0].view,
-            gbufferTargets_[1].view,
-            gbufferTargets_[2].view,
-            gbufferDepthView_,
-        };
+            VkMemoryRequirements requirements{};
+            vkGetImageMemoryRequirements(device_, gbufferDepthImage_, &requirements);
+            VkMemoryAllocateInfo allocate{};
+            allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            allocate.allocationSize = requirements.size;
+            allocate.memoryTypeIndex = findMemoryType(physicalDevice_, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            require(vkAllocateMemory(device_, &allocate, nullptr, &gbufferDepthMemory_), "vkAllocateMemory(gbuffer depth)");
+            require(vkBindImageMemory(device_, gbufferDepthImage_, gbufferDepthMemory_, 0), "vkBindImageMemory(gbuffer depth)");
+            gbufferDepthView_ = createImageView(gbufferDepthImage_, VK_FORMAT_D32_SFLOAT, VK_IMAGE_ASPECT_DEPTH_BIT);
+        }
+
+        // Framebuffer: multisampled views first, then resolved
+        std::vector<VkImageView> fbViews;
+        fbViews.reserve(7);
+        if (useMsaa) {
+            fbViews.push_back(gbufferMsColor_[0].view);
+            fbViews.push_back(gbufferMsColor_[1].view);
+            fbViews.push_back(gbufferMsColor_[2].view);
+        } else {
+            fbViews.push_back(gbufferTargets_[0].view);
+            fbViews.push_back(gbufferTargets_[1].view);
+            fbViews.push_back(gbufferTargets_[2].view);
+        }
+        fbViews.push_back(gbufferDepthView_);
+        if (useMsaa) {
+            fbViews.push_back(gbufferTargets_[0].view);
+            fbViews.push_back(gbufferTargets_[1].view);
+            fbViews.push_back(gbufferTargets_[2].view);
+        }
         VkFramebufferCreateInfo framebuffer{};
         framebuffer.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         framebuffer.renderPass = gbufferRenderPass_;
-        framebuffer.attachmentCount = static_cast<std::uint32_t>(attachments.size());
-        framebuffer.pAttachments = attachments.data();
+        framebuffer.attachmentCount = static_cast<std::uint32_t>(fbViews.size());
+        framebuffer.pAttachments = fbViews.data();
         framebuffer.width = extent.width;
         framebuffer.height = extent.height;
         framebuffer.layers = 1;
@@ -2977,6 +3034,8 @@ private:
     VkImageView shadowDepthView_ = VK_NULL_HANDLE;
     VkFramebuffer shadowFramebuffer_ = VK_NULL_HANDLE;
     std::array<TextureResource, 3> gbufferTargets_{};
+    std::array<TextureResource, 3> gbufferMsColor_{};
+    VkSampleCountFlagBits gbufferSamples_ = VK_SAMPLE_COUNT_1_BIT;
     VkImage gbufferDepthImage_ = VK_NULL_HANDLE;
     VkDeviceMemory gbufferDepthMemory_ = VK_NULL_HANDLE;
     VkImageView gbufferDepthView_ = VK_NULL_HANDLE;

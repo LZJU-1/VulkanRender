@@ -29,7 +29,8 @@ Pipelines createPipelines(
     VkDescriptorSetLayout v4DescriptorLayout,
     VkDescriptorSetLayout v5DescriptorLayout,
     bool enableV4,
-    bool enableV5
+    bool enableV5,
+    VkSampleCountFlagBits gbufferSamples
 ) {
     Pipelines p;
 
@@ -250,7 +251,7 @@ Pipelines createPipelines(
 
         VkPipelineMultisampleStateCreateInfo gbufferMultisample{};
         gbufferMultisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-        gbufferMultisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        gbufferMultisample.rasterizationSamples = gbufferSamples;
 
         std::array<VkPipelineColorBlendAttachmentState, 3> gbufferColorBlends{};
         for (auto& attachment : gbufferColorBlends) {

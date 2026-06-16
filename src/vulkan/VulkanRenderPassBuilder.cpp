@@ -114,34 +114,36 @@ void createShadowRenderPass(VkDevice device, VkRenderPass& outRenderPass) {
     require(vkCreateRenderPass(device, &createInfo, nullptr, &outRenderPass), "vkCreateRenderPass(shadow)");
 }
 
-void createGBufferRenderPass(VkDevice device, VkRenderPass& outRenderPass) {
+void createGBufferRenderPass(VkDevice device, VkSampleCountFlagBits gbufferSamples, VkRenderPass& outRenderPass) {
+    const bool useMsaa = gbufferSamples != VK_SAMPLE_COUNT_1_BIT;
+
     VkAttachmentDescription albedo{};
     albedo.format = kGBufferAlbedoFormat;
-    albedo.samples = VK_SAMPLE_COUNT_1_BIT;
+    albedo.samples = gbufferSamples;
     albedo.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    albedo.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    albedo.storeOp = useMsaa ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
     albedo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    albedo.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    albedo.finalLayout = useMsaa ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
     VkAttachmentDescription normal{};
     normal.format = kGBufferNormalFormat;
-    normal.samples = VK_SAMPLE_COUNT_1_BIT;
+    normal.samples = gbufferSamples;
     normal.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    normal.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    normal.storeOp = useMsaa ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
     normal.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    normal.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    normal.finalLayout = useMsaa ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
     VkAttachmentDescription world{};
     world.format = kGBufferWorldFormat;
-    world.samples = VK_SAMPLE_COUNT_1_BIT;
+    world.samples = gbufferSamples;
     world.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    world.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    world.storeOp = useMsaa ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
     world.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    world.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    world.finalLayout = useMsaa ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
     VkAttachmentDescription depth{};
     depth.format = VK_FORMAT_D32_SFLOAT;
-    depth.samples = VK_SAMPLE_COUNT_1_BIT;
+    depth.samples = gbufferSamples;
     depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     depth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -161,6 +163,34 @@ void createGBufferRenderPass(VkDevice device, VkRenderPass& outRenderPass) {
     subpass.pColorAttachments = colorRefs.data();
     subpass.pDepthStencilAttachment = &depthRef;
 
+    std::array<VkAttachmentDescription, 4> attachments4{albedo, normal, world, depth};
+
+    VkAttachmentDescription resolveAlbedo{};
+    VkAttachmentDescription resolveNormal{};
+    VkAttachmentDescription resolveWorld{};
+    std::array<VkAttachmentReference, 3> resolveRefs{};
+    std::array<VkAttachmentDescription, 7> attachments7{};
+
+    if (useMsaa) {
+        resolveAlbedo.format = kGBufferAlbedoFormat;
+        resolveAlbedo.samples = VK_SAMPLE_COUNT_1_BIT;
+        resolveAlbedo.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        resolveAlbedo.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        resolveAlbedo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        resolveAlbedo.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        resolveNormal = resolveAlbedo;
+        resolveNormal.format = kGBufferNormalFormat;
+        resolveWorld = resolveAlbedo;
+        resolveWorld.format = kGBufferWorldFormat;
+
+        resolveRefs[0] = {4, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        resolveRefs[1] = {5, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        resolveRefs[2] = {6, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        subpass.pResolveAttachments = resolveRefs.data();
+
+        attachments7 = {albedo, normal, world, depth, resolveAlbedo, resolveNormal, resolveWorld};
+    }
+
     std::array<VkSubpassDependency, 2> dependencies{};
     dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
     dependencies[0].dstSubpass = 0;
@@ -177,15 +207,20 @@ void createGBufferRenderPass(VkDevice device, VkRenderPass& outRenderPass) {
     dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
     dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 
-    std::array<VkAttachmentDescription, 4> attachments{albedo, normal, world, depth};
     VkRenderPassCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    createInfo.attachmentCount = static_cast<std::uint32_t>(attachments.size());
-    createInfo.pAttachments = attachments.data();
     createInfo.subpassCount = 1;
     createInfo.pSubpasses = &subpass;
     createInfo.dependencyCount = static_cast<std::uint32_t>(dependencies.size());
     createInfo.pDependencies = dependencies.data();
+
+    if (useMsaa) {
+        createInfo.attachmentCount = static_cast<std::uint32_t>(attachments7.size());
+        createInfo.pAttachments = attachments7.data();
+    } else {
+        createInfo.attachmentCount = static_cast<std::uint32_t>(attachments4.size());
+        createInfo.pAttachments = attachments4.data();
+    }
     require(vkCreateRenderPass(device, &createInfo, nullptr, &outRenderPass), "vkCreateRenderPass(gbuffer)");
 }
 
@@ -241,13 +276,14 @@ RenderPasses createRenderPasses(
     VkFormat swapchainFormat,
     VkSampleCountFlagBits msaaSamples,
     bool enableGBuffer,
-    bool enableSsao
+    bool enableSsao,
+    VkSampleCountFlagBits gbufferSamples
 ) {
     RenderPasses passes;
     createForwardRenderPass(device, swapchainFormat, msaaSamples, passes.forward);
     createShadowRenderPass(device, passes.shadow);
     if (enableGBuffer) {
-        createGBufferRenderPass(device, passes.gbuffer);
+        createGBufferRenderPass(device, gbufferSamples, passes.gbuffer);
     }
     if (enableSsao) {
         createSsaoRenderPass(device, passes.ssao);

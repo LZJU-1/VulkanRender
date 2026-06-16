@@ -16,7 +16,8 @@ RenderPasses createRenderPasses(
     VkFormat swapchainFormat,
     VkSampleCountFlagBits msaaSamples,
     bool enableGBuffer,
-    bool enableSsao
+    bool enableSsao,
+    VkSampleCountFlagBits gbufferSamples = VK_SAMPLE_COUNT_1_BIT
 );
 
 } // namespace vr
