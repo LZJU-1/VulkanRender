@@ -338,30 +338,22 @@ float rayTracedVisibility(float3 origin, float3 normal, float3 lightDir, uint2 p
     float rotation = hash13(origin * 0.137 + float3((float)pixel.x, (float)pixel.y, v4Flags.w * 17.0 + 3.1) * 0.021) * 2.0 * kPi;
     float angularRadius = lerp(0.026, 0.064, saturate(length(origin - eyeNear.xyz) / 14.0));
 
-    static const float2 poisson[12] = {
+    static const float2 poisson[4] = {
         float2(0.000, 0.000),
         float2(0.527, 0.086),
         float2(-0.327, 0.421),
         float2(-0.481, -0.221),
-        float2(0.167, -0.612),
-        float2(0.738, -0.389),
-        float2(-0.720, 0.118),
-        float2(0.126, 0.794),
-        float2(-0.193, -0.872),
-        float2(0.905, 0.229),
-        float2(-0.869, -0.463),
-        float2(0.491, -0.807),
     };
 
     float unoccluded = 0.0;
     [unroll]
-    for (int i = 0; i < 12; ++i) {
+    for (int i = 0; i < 4; ++i) {
         float2 disk = rotate2(poisson[i], rotation);
         float3 rayDir = normalize(lightDir + (tangent * disk.x + bitangent * disk.y) * angularRadius);
         unoccluded += traceShadowRay(origin, normal, rayDir, max(rightFar.w, 32.0));
     }
 
-    float visibility = unoccluded / 12.0;
+    float visibility = unoccluded / 4.0;
     return lerp(0.08, 1.0, smoothstep(0.0, 1.0, visibility));
 }
 

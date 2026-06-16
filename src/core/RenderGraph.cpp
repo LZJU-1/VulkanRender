@@ -39,13 +39,14 @@ RenderGraph RenderGraph::build(const FeatureProfile& profile) {
         graph.add("post.tone-map", PassKind::PostProcess);
         break;
     case ProfileId::V5RealtimeRayTracing:
+        graph.add("gbuffer.fill-jittered", PassKind::Raster);
         graph.add("rt.build-blas", PassKind::RayTracing);
         graph.add("rt.build-tlas", PassKind::RayTracing);
-        graph.add("rt.upload-sbt", PassKind::RayTracing);
-        graph.add("rt.trace-primary", PassKind::RayTracing);
-        graph.add("rt.trace-reflections", PassKind::RayTracing, true);
-        graph.add("rt.accumulate", PassKind::Compute);
-        graph.add("post.tone-map", PassKind::PostProcess);
+        graph.add("rt.ray-query-shadow-signal", PassKind::RayTracing);
+        graph.add("rt.ray-query-reflection-signal", PassKind::RayTracing, true);
+        graph.add("denoise.temporal-reprojection", PassKind::Compute);
+        graph.add("denoise.bilateral-signal-filter", PassKind::Compute);
+        graph.add("post.taa-resolve", PassKind::PostProcess);
         break;
     }
 

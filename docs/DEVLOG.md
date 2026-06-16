@@ -743,3 +743,13 @@ Validation commands:
 scripts\build_msvc.bat
 C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
 ```
+# 2026-06-16 - V5 Realtime Hybrid RT Direction
+
+- Saved the previous v5 denoising/supersampling work as commit `1eb2f47`.
+- Re-centered v5 on realtime hybrid RT for bathroom2 validation:
+  - default internal scale is now 1x for interactive performance;
+  - 2x remains a quality/debug target instead of the main path;
+  - render graph/docs now describe the actual raster G-buffer + ray-query signal + denoise path;
+  - camera movement reduces effective history confidence so the image re-accumulates instead of trusting a stale long history;
+  - final resolve now adapts to 1x or optional larger internal scales.
+- Reduced per-pixel directional RT shadow rays so v5 behaves more like a realtime noisy-signal pipeline that relies on temporal/bilateral denoising.

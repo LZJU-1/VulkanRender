@@ -1,12 +1,12 @@
 # V5 Feature Guide
 
-V5 is the realtime ray tracing profile. The current implementation follows a modern hybrid-game layout: jittered 2x internal G-buffer first, hardware Vulkan ray-query shadows/reflection probes from a TLAS/BLAS scene, raw RT signal buffers, SVGF/NRD-style temporal and bilateral denoising with world-position reprojection, surface-history validation, then an edge-aware TAA resolve and downsample writing into the swapchain as a storage image.
+V5 is the realtime hybrid ray tracing profile. The current implementation follows a modern hybrid-game layout: a jittered raster G-buffer provides primary visibility, hardware Vulkan ray-query traces only selected shadow/reflection signals from a TLAS/BLAS scene, raw RT signal buffers are temporally reprojected and bilateral-filtered, then an edge-aware TAA resolve writes into the swapchain as a storage image.
 
 ## Feature: V5 Profile And Preview Entry
 
 Implementation:
 
-- `--profile v5-rt` and aliases such as `v5`, `rt`, and `raytracing` select the v5 profile.
+- `--profile v5-rt` and aliases such as `v5`, `rt`, `raytracing`, `hybrid-rt`, and `v5-hybrid` select the v5 profile.
 - `RendererApp` now allows v5 in realtime preview mode.
 - `V1RenderSettings::enableV5RayTracing` selects the Vulkan compute ray tracing path.
 - The preview window still supports the existing roaming camera controls, so the ray traced camera can be moved in realtime.
@@ -32,8 +32,9 @@ Expected log markers:
 - `createV5AccelerationStructures: triangles=... tlas=ready`
 - `v5RayTracing=on`
 - `taa=halton16-surface-validated-resolve`
-- `denoise=split-shadow-reflection-temporal-bilateral-sharpen`
-- `internalScale=2x`
+- `denoise=hybrid-split-signal-temporal-bilateral`
+- `mode=realtime-hybrid-rt`
+- `internalScale=1x`
 - `record v5: dispatch ray signal compute`
 - `record v5: dispatch denoise compute`
 - `record v5: dispatch downsample compute`
@@ -83,7 +84,7 @@ Implementation:
 Implementation:
 
 - V5 uses a 16-sample Halton jitter sequence for subpixel coverage in the jittered G-buffer.
-- V5 renders the G-buffer, RT signals, denoise, and histories at 2x internal resolution, then downsamples to the swapchain.
+- V5 defaults to 1x internal resolution for realtime interaction. `kV5QualityInternalScale` remains in code as the comparison/quality target for later optional modes.
 - The camera uniform stores both current and previous camera frames:
   - current camera basis and current jitter
   - previous camera basis and previous jitter
@@ -96,11 +97,11 @@ Implementation:
 - Descriptor bindings 26/27 ping-pong shadow history.
 - Descriptor bindings 28/29 ping-pong reflection history.
 - Descriptor bindings 30/31 ping-pong surface history.
-- Descriptor binding 32 stores the high-resolution resolved color image used by the downsample pass.
+- Descriptor binding 32 stores the resolved color image used by the final swapchain resolve pass.
 - The command buffer runs three compute passes:
   - ray signal pass: writes raw shadow/reflection buffers.
   - denoise pass: reads raw buffers and previous histories, writes denoised signal histories and final color.
-  - downsample pass: resolves the 2x internal color image into the swapchain.
+- resolve pass: copies 1x resolved color into the swapchain or downsamples when an optional larger internal scale is enabled.
 - The denoise shader reprojects each current G-buffer world position into the previous camera/jitter frame before sampling:
   - final color history
   - shadow signal history
@@ -112,7 +113,7 @@ Implementation:
   - `r`: directional RT visibility
   - `gba`: imported local-light direct radiance after RT shadowing
 - The camera uniform uses `v4Flags.w` as the current history frame count for v5.
-- Camera pose/FOV changes no longer force a history reset; static world positions are carried through by reprojection.
+- Camera pose/FOV changes reduce history confidence so the view visibly re-accumulates; static world positions are still carried through by reprojection instead of sampling the same screen pixel.
 
 Validation:
 
@@ -159,7 +160,7 @@ Validation:
 ## Current Limits
 
 - This is a ray-query compute path, not the final full Vulkan ray tracing pipeline path.
-- There is no shader binding table yet.
+- There is no shader binding table yet. V5 currently uses ray-query compute passes, not a full raygen/miss/closest-hit pipeline.
 - Hardware RT is currently used for directional shadows and first-hit reflection probes; reflected hit shading still falls back to G-buffer projection where available.
 - Reprojection currently targets static geometry via G-buffer world position and previous camera state. It is not yet a full velocity-buffer path for animated/skinned geometry.
 - Mitsuba/path-tracer area lights, transmissive glass, and emissive materials are not physically imported yet; v5 still shades with its current realtime light model.
@@ -170,7 +171,8 @@ Validation:
 ## Next V5 Steps
 
 - Add instanced/procedural geometry to the TLAS.
-- Add a full `VK_KHR_ray_tracing_pipeline` path with raygen/miss/closest-hit shaders and SBT upload.
+- Add an optional `v5-pt-preview` path with progressive path tracing style accumulation.
+- Add a full `VK_KHR_ray_tracing_pipeline` path with raygen/miss/closest-hit shaders and SBT upload when material hit shading is needed.
 - Add variance/moment tracking for a closer SVGF implementation.
 - Add a dedicated velocity buffer for animated objects and dynamic geometry.
 - Add roughness-aware reflection hit confidence and disocclusion masks.

@@ -665,6 +665,7 @@ private:
         if (!enableV5RayTracing_) {
             return swapchainExtent_;
         }
+        static_cast<void>(kV5QualityInternalScale);
         return {
             std::max(1u, swapchainExtent_.width * kV5InternalScale),
             std::max(1u, swapchainExtent_.height * kV5InternalScale),
@@ -1633,8 +1634,9 @@ private:
             + (samplerAnisotropy_ ? std::to_string(maxSamplerAnisotropy_) + "x" : "off")
             + " edgeAA=g-buffer"
             + (enableV5RayTracing_ ? " taa=halton16-surface-validated-resolve" : "")
-            + (enableV5RayTracing_ ? " denoise=split-shadow-reflection-temporal-bilateral-sharpen" : "")
-            + (enableV5RayTracing_ ? " internalScale=2x" : "")
+            + (enableV5RayTracing_ ? " denoise=hybrid-split-signal-temporal-bilateral" : "")
+            + (enableV5RayTracing_ ? " mode=realtime-hybrid-rt" : "")
+            + (enableV5RayTracing_ ? (" internalScale=" + std::to_string(kV5InternalScale) + "x") : "")
         );
     }
 
@@ -2378,8 +2380,11 @@ private:
         uniform.v4Flags[1] = static_cast<float>(lightCount_);
         uniform.v4Flags[2] = static_cast<float>(v4DebugMode);
         if (enableV5RayTracing_) {
+            const bool cameraChanged = cameraChangedForHistory(cameraSettings);
             if (!hasLastV5Camera_) {
                 v5HistoryFrameCount_ = 0;
+            } else if (cameraChanged) {
+                v5HistoryFrameCount_ = std::min<std::uint32_t>(v5HistoryFrameCount_ + 1u, 2u);
             } else {
                 v5HistoryFrameCount_ = std::min<std::uint32_t>(v5HistoryFrameCount_ + 1u, 240u);
             }

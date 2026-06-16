@@ -303,16 +303,16 @@ void filterSignals(uint2 pixel, uint width, uint height, Surface center, out flo
     float weightSum = 0.0;
 
     [unroll]
-    for (int y = -2; y <= 2; ++y) {
+    for (int y = -1; y <= 1; ++y) {
         [unroll]
-        for (int x = -2; x <= 2; ++x) {
+        for (int x = -1; x <= 1; ++x) {
             uint2 samplePixel = clampPixel(int2(pixel) + int2(x, y), width, height);
             Surface sampleSurface;
             if (!readSurfacePixel(samplePixel, sampleSurface)) {
                 continue;
             }
             float distance2 = (float)(x * x + y * y);
-            float spatialWeight = exp(-distance2 * 0.28);
+            float spatialWeight = exp(-distance2 * 0.42);
             float weight = spatialWeight * bilateralWeight(center, sampleSurface);
             if (weight <= 0.0001) {
                 continue;

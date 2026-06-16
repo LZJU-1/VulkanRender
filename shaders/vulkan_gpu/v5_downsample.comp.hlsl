@@ -20,12 +20,20 @@ void main(uint3 id : SV_DispatchThreadID) {
     uint inWidth;
     uint inHeight;
     resolvedColor.GetDimensions(inWidth, inHeight);
-    uint2 basePixel = min(id.xy * 2u, uint2(max(inWidth, 1u) - 1u, max(inHeight, 1u) - 1u));
     uint2 maxPixel = uint2(max(inWidth, 1u) - 1u, max(inHeight, 1u) - 1u);
+
+    float2 scale = float2(inWidth, inHeight) / float2(max(outWidth, 1u), max(outHeight, 1u));
+    uint2 basePixel = min(uint2(floor(float2(id.xy) * scale)), maxPixel);
+    if (scale.x < 1.5 && scale.y < 1.5) {
+        outputImage[id.xy] = float4(saturate(resolvedColor[basePixel].rgb), 1.0);
+        return;
+    }
+
+    uint2 stepPixel = uint2(max(1u, (uint)round(scale.x)), max(1u, (uint)round(scale.y)));
     float3 c00 = resolvedColor[min(basePixel + uint2(0u, 0u), maxPixel)].rgb;
-    float3 c10 = resolvedColor[min(basePixel + uint2(1u, 0u), maxPixel)].rgb;
-    float3 c01 = resolvedColor[min(basePixel + uint2(0u, 1u), maxPixel)].rgb;
-    float3 c11 = resolvedColor[min(basePixel + uint2(1u, 1u), maxPixel)].rgb;
+    float3 c10 = resolvedColor[min(basePixel + uint2(stepPixel.x - 1u, 0u), maxPixel)].rgb;
+    float3 c01 = resolvedColor[min(basePixel + uint2(0u, stepPixel.y - 1u), maxPixel)].rgb;
+    float3 c11 = resolvedColor[min(basePixel + stepPixel - uint2(1u, 1u), maxPixel)].rgb;
     float3 color = (c00 + c10 + c01 + c11) * 0.25;
 
     float contrast = max(max(luma(c00), luma(c10)), max(luma(c01), luma(c11))) - min(min(luma(c00), luma(c10)), min(luma(c01), luma(c11)));

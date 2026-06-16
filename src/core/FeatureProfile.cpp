@@ -58,9 +58,9 @@ const std::array<FeatureProfile, 5> kProfiles = {{
     {
         ProfileId::V5RealtimeRayTracing,
         "v5-rt",
-        "v5 realtime ray tracing",
-        {"v5", "rt", "raytracing", "ray-tracing", "realtime-rt"},
-        {"blas", "tlas", "sbt", "raygen", "miss", "closest-hit", "hybrid-accumulation"},
+        "v5 realtime hybrid ray tracing",
+        {"v5", "rt", "raytracing", "ray-tracing", "realtime-rt", "hybrid-rt", "v5-hybrid"},
+        {"raster-gbuffer", "blas", "tlas", "ray-query", "rt-shadows", "rt-reflections", "signal-denoise", "hybrid-accumulation"},
         true,
     },
 }};
