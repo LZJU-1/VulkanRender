@@ -12,4 +12,12 @@ if not exist "%DXC%" (
 "%DXC%" -spirv "-fspv-target-env=vulkan1.2" "-fspv-extension=SPV_KHR_ray_query" "-fspv-extension=SPV_KHR_ray_tracing" -T cs_6_5 -E main "%~dp0..\shaders\vulkan_gpu\v5_raytrace.comp.hlsl" -Fo "%~dp0..\shaders\vulkan_gpu\v5_raytrace.comp.spv"
 if errorlevel 1 exit /b 1
 
+"%DXC%" -spirv "-fspv-target-env=vulkan1.2" -T cs_6_0 -E main "%~dp0..\shaders\vulkan_gpu\v5_denoise.comp.hlsl" -Fo "%~dp0..\shaders\vulkan_gpu\v5_denoise.comp.spv"
+if errorlevel 1 exit /b 1
+
+"%DXC%" -spirv "-fspv-target-env=vulkan1.2" -T cs_6_0 -E main "%~dp0..\shaders\vulkan_gpu\v5_downsample.comp.hlsl" -Fo "%~dp0..\shaders\vulkan_gpu\v5_downsample.comp.spv"
+if errorlevel 1 exit /b 1
+
 echo Compiled shaders\vulkan_gpu\v5_raytrace.comp.spv
+echo Compiled shaders\vulkan_gpu\v5_denoise.comp.spv
+echo Compiled shaders\vulkan_gpu\v5_downsample.comp.spv

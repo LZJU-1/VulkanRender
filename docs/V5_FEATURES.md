@@ -1,6 +1,6 @@
 # V5 Feature Guide
 
-V5 is the realtime ray tracing profile. The current implementation follows a modern hybrid-game layout: rasterized G-buffer first, hardware Vulkan ray-query shadows from a TLAS/BLAS scene, temporal accumulation for low-sample RT stability, then a GPU compute compose pass writing directly into the swapchain as a storage image.
+V5 is the realtime ray tracing profile. The current implementation follows a modern hybrid-game layout: jittered 2x internal G-buffer first, hardware Vulkan ray-query shadows/reflection probes from a TLAS/BLAS scene, raw RT signal buffers, SVGF/NRD-style temporal and bilateral denoising with world-position reprojection, surface-history validation, then an edge-aware TAA resolve and downsample writing into the swapchain as a storage image.
 
 ## Feature: V5 Profile And Preview Entry
 
@@ -31,6 +31,12 @@ Expected log markers:
 - `createV5RayTracingDescriptors`
 - `createV5AccelerationStructures: triangles=... tlas=ready`
 - `v5RayTracing=on`
+- `taa=halton16-surface-validated-resolve`
+- `denoise=split-shadow-reflection-temporal-bilateral-sharpen`
+- `internalScale=2x`
+- `record v5: dispatch ray signal compute`
+- `record v5: dispatch denoise compute`
+- `record v5: dispatch downsample compute`
 - repeated `draw/present`
 
 PathTracer bathroom2 demo:
@@ -45,15 +51,19 @@ Implementation:
 
 - Added `shaders/vulkan_gpu/v5_raytrace.comp.hlsl`.
 - The shader is compiled to `shaders/vulkan_gpu/v5_raytrace.comp.spv` with DXC SPIR-V output.
-- The compute shader uses one thread per pixel and dispatches in 8x8 workgroups.
-- For every pixel, the shader reads G-buffer albedo, normal, and world-position data and reconstructs shading in screen space.
+- The ray signal compute shader uses one thread per pixel and dispatches in 8x8 workgroups.
+- For every pixel, the shader reads G-buffer albedo, normal, and world-position data before tracing RT shadow/reflection signals.
 - The shader binds `RaytracingAccelerationStructure sceneTlas` at binding 21 and uses `RayQuery` for shadow visibility.
-- The shader reads a previous-frame history texture and writes the current accumulated color to a ping-pong history target.
+- The shader writes raw directional shadow visibility to binding 24 and raw reflection radiance to binding 25.
+- `v5_denoise.comp.hlsl` reads those raw signals, applies temporal history clamping and bilateral spatial filtering, then writes final color.
 
 Scene features:
 
 - Hardware ray-query directional shadows.
 - Screen-space reflections for glossy/metallic surfaces.
+- Separate raw shadow and reflection signal buffers.
+- Signal-level temporal accumulation with history clamp.
+- Normal/depth/material-guided bilateral filtering for shadows and reflections.
 - PBR lighting against the rasterized scene.
 - Tone mapping and gamma correction.
 
@@ -68,21 +78,50 @@ Implementation:
 - The cone sample rotation changes per frame and is stabilized by temporal history accumulation.
 - Shadow maps are not used in v5. The shadow atlas remains a v3/v4 raster feature.
 
-## Feature: Temporal RT Accumulation
+## Feature: Split RT Signal Denoising
 
 Implementation:
 
-- V5 allocates two `VK_FORMAT_R16G16B16A16_SFLOAT` history images.
+- V5 uses a 16-sample Halton jitter sequence for subpixel coverage in the jittered G-buffer.
+- V5 renders the G-buffer, RT signals, denoise, and histories at 2x internal resolution, then downsamples to the swapchain.
+- The camera uniform stores both current and previous camera frames:
+  - current camera basis and current jitter
+  - previous camera basis and previous jitter
+- V5 allocates two `VK_FORMAT_R16G16B16A16_SFLOAT` final-color history images.
+- V5 also allocates raw shadow/reflection signal images and separate ping-pong history images for each signal.
+- V5 stores a surface-history ping-pong image for previous normal/depth validation.
 - Descriptor binding 22 reads the previous history image as `SAMPLED_IMAGE`.
 - Descriptor binding 23 writes the current history image as `STORAGE_IMAGE`.
-- The command buffer ping-pongs the two history images every frame and inserts layout barriers around compute.
+- Descriptor bindings 24 and 25 store raw shadow and reflection signals.
+- Descriptor bindings 26/27 ping-pong shadow history.
+- Descriptor bindings 28/29 ping-pong reflection history.
+- Descriptor bindings 30/31 ping-pong surface history.
+- Descriptor binding 32 stores the high-resolution resolved color image used by the downsample pass.
+- The command buffer runs three compute passes:
+  - ray signal pass: writes raw shadow/reflection buffers.
+  - denoise pass: reads raw buffers and previous histories, writes denoised signal histories and final color.
+  - downsample pass: resolves the 2x internal color image into the swapchain.
+- The denoise shader reprojects each current G-buffer world position into the previous camera/jitter frame before sampling:
+  - final color history
+  - shadow signal history
+  - reflection signal history
+- The denoise shader samples previous surface history at the same UV and rejects history across depth/normal discontinuities.
+- Final color TAA uses padded 3x3 neighborhood clipping, edge-aware history weighting, a residual edge smoothing pass, and lightweight adaptive sharpening.
+- Neighborhood min/max clamping is applied around the current pixel after reprojection to reduce ghosting.
+- The raw shadow signal uses four channels:
+  - `r`: directional RT visibility
+  - `gba`: imported local-light direct radiance after RT shadowing
 - The camera uniform uses `v4Flags.w` as the current history frame count for v5.
-- Camera pose/FOV changes reset the accumulation so roaming does not smear old views.
+- Camera pose/FOV changes no longer force a history reset; static world positions are carried through by reprojection.
 
 Validation:
 
 - Expected startup log contains `createV5HistoryResources`.
-- When the camera is still, the soft RT shadow noise should settle over multiple frames.
+- Expected draw log contains `record v5: dispatch ray signal compute` followed by `record v5: dispatch denoise compute`.
+- Expected draw log then contains `record v5: dispatch downsample compute`.
+- When the camera is still, Halton jitter should converge edges rather than causing visible whole-frame shimmer.
+- During camera movement, history should follow surfaces through previous-frame reprojection instead of sampling the same screen pixel.
+- Silhouette disocclusions should reject previous history through surface normal/depth validation.
 
 Asset requirements:
 
@@ -103,9 +142,14 @@ Implementation:
   - binding 21: TLAS acceleration structure
   - binding 22: previous v5 history image
   - binding 23: current v5 history storage image
+  - binding 24: raw shadow signal storage image
+  - binding 25: raw reflection signal storage image
+  - binding 26/27: previous/current shadow history
+  - binding 28/29: previous/current reflection history
+  - binding 30/31: previous/current surface normal-depth history
 - The command buffer transitions the acquired swapchain image:
   - `UNDEFINED` to `GENERAL`
-  - compute dispatch writes the full image
+  - denoise compute dispatch writes the full image
   - `GENERAL` to `PRESENT_SRC_KHR`
 
 Validation:
@@ -116,7 +160,8 @@ Validation:
 
 - This is a ray-query compute path, not the final full Vulkan ray tracing pipeline path.
 - There is no shader binding table yet.
-- Hardware RT is currently used for directional shadows. Reflections are still screen-space.
+- Hardware RT is currently used for directional shadows and first-hit reflection probes; reflected hit shading still falls back to G-buffer projection where available.
+- Reprojection currently targets static geometry via G-buffer world position and previous camera state. It is not yet a full velocity-buffer path for animated/skinned geometry.
 - Mitsuba/path-tracer area lights, transmissive glass, and emissive materials are not physically imported yet; v5 still shades with its current realtime light model.
 - Screen-space AO is disabled in the main v5 lighting path because it produced unstable false occluders on G-buffer edges.
 - Instanced many-light benchmark spheres are still rasterized into the G-buffer but are not yet added as TLAS instances for RT shadows.
@@ -126,5 +171,6 @@ Validation:
 
 - Add instanced/procedural geometry to the TLAS.
 - Add a full `VK_KHR_ray_tracing_pipeline` path with raygen/miss/closest-hit shaders and SBT upload.
-- Add motion-vector reprojection/history clamping instead of the current camera-reset-only accumulation.
-- Add an edge-aware spatial filter for the shadow visibility signal before temporal resolve.
+- Add variance/moment tracking for a closer SVGF implementation.
+- Add a dedicated velocity buffer for animated objects and dynamic geometry.
+- Add roughness-aware reflection hit confidence and disocclusion masks.

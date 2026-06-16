@@ -118,6 +118,8 @@ public:
         ssaoBlurPipeline_ = pipelines.ssaoBlur;
         v4ComposePipeline_ = pipelines.v4Compose;
         v5RayTracingPipeline_ = pipelines.v5Compute;
+        v5DenoisePipeline_ = pipelines.v5Denoise;
+        v5DownsamplePipeline_ = pipelines.v5Downsample;
         previewLog("VulkanGpuRenderer: createCommands");
         createCommands();
         previewLog("VulkanGpuRenderer: createSync");
@@ -140,6 +142,8 @@ public:
         if (device_ != VK_NULL_HANDLE && v4ComposePipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, v4ComposePipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && ssaoBlurPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, ssaoBlurPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && ssaoPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, ssaoPipeline_, nullptr);
+        if (device_ != VK_NULL_HANDLE && v5DownsamplePipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, v5DownsamplePipeline_, nullptr);
+        if (device_ != VK_NULL_HANDLE && v5DenoisePipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, v5DenoisePipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && v5RayTracingPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, v5RayTracingPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && instancedGBufferPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, instancedGBufferPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && gbufferPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, gbufferPipeline_, nullptr);
@@ -206,6 +210,30 @@ public:
             if (device_ != VK_NULL_HANDLE && history.image != VK_NULL_HANDLE) vkDestroyImage(device_, history.image, nullptr);
             if (device_ != VK_NULL_HANDLE && history.memory != VK_NULL_HANDLE) vkFreeMemory(device_, history.memory, nullptr);
         }
+        for (TextureResource& history : v5ShadowHistoryTargets_) {
+            if (device_ != VK_NULL_HANDLE && history.view != VK_NULL_HANDLE) vkDestroyImageView(device_, history.view, nullptr);
+            if (device_ != VK_NULL_HANDLE && history.image != VK_NULL_HANDLE) vkDestroyImage(device_, history.image, nullptr);
+            if (device_ != VK_NULL_HANDLE && history.memory != VK_NULL_HANDLE) vkFreeMemory(device_, history.memory, nullptr);
+        }
+        for (TextureResource& history : v5ReflectionHistoryTargets_) {
+            if (device_ != VK_NULL_HANDLE && history.view != VK_NULL_HANDLE) vkDestroyImageView(device_, history.view, nullptr);
+            if (device_ != VK_NULL_HANDLE && history.image != VK_NULL_HANDLE) vkDestroyImage(device_, history.image, nullptr);
+            if (device_ != VK_NULL_HANDLE && history.memory != VK_NULL_HANDLE) vkFreeMemory(device_, history.memory, nullptr);
+        }
+        for (TextureResource& history : v5SurfaceHistoryTargets_) {
+            if (device_ != VK_NULL_HANDLE && history.view != VK_NULL_HANDLE) vkDestroyImageView(device_, history.view, nullptr);
+            if (device_ != VK_NULL_HANDLE && history.image != VK_NULL_HANDLE) vkDestroyImage(device_, history.image, nullptr);
+            if (device_ != VK_NULL_HANDLE && history.memory != VK_NULL_HANDLE) vkFreeMemory(device_, history.memory, nullptr);
+        }
+        if (device_ != VK_NULL_HANDLE && v5ResolvedColor_.view != VK_NULL_HANDLE) vkDestroyImageView(device_, v5ResolvedColor_.view, nullptr);
+        if (device_ != VK_NULL_HANDLE && v5ResolvedColor_.image != VK_NULL_HANDLE) vkDestroyImage(device_, v5ResolvedColor_.image, nullptr);
+        if (device_ != VK_NULL_HANDLE && v5ResolvedColor_.memory != VK_NULL_HANDLE) vkFreeMemory(device_, v5ResolvedColor_.memory, nullptr);
+        if (device_ != VK_NULL_HANDLE && v5ShadowSignal_.view != VK_NULL_HANDLE) vkDestroyImageView(device_, v5ShadowSignal_.view, nullptr);
+        if (device_ != VK_NULL_HANDLE && v5ShadowSignal_.image != VK_NULL_HANDLE) vkDestroyImage(device_, v5ShadowSignal_.image, nullptr);
+        if (device_ != VK_NULL_HANDLE && v5ShadowSignal_.memory != VK_NULL_HANDLE) vkFreeMemory(device_, v5ShadowSignal_.memory, nullptr);
+        if (device_ != VK_NULL_HANDLE && v5ReflectionSignal_.view != VK_NULL_HANDLE) vkDestroyImageView(device_, v5ReflectionSignal_.view, nullptr);
+        if (device_ != VK_NULL_HANDLE && v5ReflectionSignal_.image != VK_NULL_HANDLE) vkDestroyImage(device_, v5ReflectionSignal_.image, nullptr);
+        if (device_ != VK_NULL_HANDLE && v5ReflectionSignal_.memory != VK_NULL_HANDLE) vkFreeMemory(device_, v5ReflectionSignal_.memory, nullptr);
         if (device_ != VK_NULL_HANDLE && gbufferDepthView_ != VK_NULL_HANDLE) vkDestroyImageView(device_, gbufferDepthView_, nullptr);
         if (device_ != VK_NULL_HANDLE && gbufferDepthImage_ != VK_NULL_HANDLE) vkDestroyImage(device_, gbufferDepthImage_, nullptr);
         if (device_ != VK_NULL_HANDLE && gbufferDepthMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, gbufferDepthMemory_, nullptr);
@@ -633,11 +661,24 @@ private:
 
     }
 
-    void createColorAttachment(TextureResource& target, VkFormat format, const char* label) {
+    VkExtent2D v5RenderExtent() const {
+        if (!enableV5RayTracing_) {
+            return swapchainExtent_;
+        }
+        return {
+            std::max(1u, swapchainExtent_.width * kV5InternalScale),
+            std::max(1u, swapchainExtent_.height * kV5InternalScale),
+        };
+    }
+
+    void createColorAttachment(TextureResource& target, VkFormat format, const char* label, VkExtent2D extent = {}) {
+        if (extent.width == 0 || extent.height == 0) {
+            extent = swapchainExtent_;
+        }
         VkImageCreateInfo image{};
         image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         image.imageType = VK_IMAGE_TYPE_2D;
-        image.extent = {swapchainExtent_.width, swapchainExtent_.height, 1};
+        image.extent = {extent.width, extent.height, 1};
         image.mipLevels = 1;
         image.arrayLayers = 1;
         image.format = format;
@@ -659,11 +700,14 @@ private:
         target.view = createImageView(target.image, format, VK_IMAGE_ASPECT_COLOR_BIT);
     }
 
-    void createStorageSampledTexture(TextureResource& target, VkFormat format, const char* label) {
+    void createStorageSampledTexture(TextureResource& target, VkFormat format, const char* label, VkExtent2D extent = {}) {
+        if (extent.width == 0 || extent.height == 0) {
+            extent = swapchainExtent_;
+        }
         VkImageCreateInfo image{};
         image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         image.imageType = VK_IMAGE_TYPE_2D;
-        image.extent = {swapchainExtent_.width, swapchainExtent_.height, 1};
+        image.extent = {extent.width, extent.height, 1};
         image.mipLevels = 1;
         image.arrayLayers = 1;
         image.format = format;
@@ -686,14 +730,15 @@ private:
     }
 
     void createGBufferResources() {
-        createColorAttachment(gbufferTargets_[0], kGBufferAlbedoFormat, "vkCreateImage(gbuffer albedo)");
-        createColorAttachment(gbufferTargets_[1], kGBufferNormalFormat, "vkCreateImage(gbuffer normal)");
-        createColorAttachment(gbufferTargets_[2], kGBufferWorldFormat, "vkCreateImage(gbuffer world)");
+        const VkExtent2D extent = v5RenderExtent();
+        createColorAttachment(gbufferTargets_[0], kGBufferAlbedoFormat, "vkCreateImage(gbuffer albedo)", extent);
+        createColorAttachment(gbufferTargets_[1], kGBufferNormalFormat, "vkCreateImage(gbuffer normal)", extent);
+        createColorAttachment(gbufferTargets_[2], kGBufferWorldFormat, "vkCreateImage(gbuffer world)", extent);
 
         VkImageCreateInfo depth{};
         depth.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         depth.imageType = VK_IMAGE_TYPE_2D;
-        depth.extent = {swapchainExtent_.width, swapchainExtent_.height, 1};
+        depth.extent = {extent.width, extent.height, 1};
         depth.mipLevels = 1;
         depth.arrayLayers = 1;
         depth.format = VK_FORMAT_D32_SFLOAT;
@@ -725,16 +770,31 @@ private:
         framebuffer.renderPass = gbufferRenderPass_;
         framebuffer.attachmentCount = static_cast<std::uint32_t>(attachments.size());
         framebuffer.pAttachments = attachments.data();
-        framebuffer.width = swapchainExtent_.width;
-        framebuffer.height = swapchainExtent_.height;
+        framebuffer.width = extent.width;
+        framebuffer.height = extent.height;
         framebuffer.layers = 1;
         require(vkCreateFramebuffer(device_, &framebuffer, nullptr, &gbufferFramebuffer_), "vkCreateFramebuffer(gbuffer)");
     }
 
     void createV5HistoryResources() {
-        createStorageSampledTexture(v5HistoryTargets_[0], kV5HistoryFormat, "vkCreateImage(v5 history 0)");
-        createStorageSampledTexture(v5HistoryTargets_[1], kV5HistoryFormat, "vkCreateImage(v5 history 1)");
+        const VkExtent2D extent = v5RenderExtent();
+        createStorageSampledTexture(v5HistoryTargets_[0], kV5HistoryFormat, "vkCreateImage(v5 history 0)", extent);
+        createStorageSampledTexture(v5HistoryTargets_[1], kV5HistoryFormat, "vkCreateImage(v5 history 1)", extent);
+        createStorageSampledTexture(v5ShadowSignal_, kV5ShadowSignalFormat, "vkCreateImage(v5 shadow signal)", extent);
+        createStorageSampledTexture(v5ReflectionSignal_, kV5ReflectionSignalFormat, "vkCreateImage(v5 reflection signal)", extent);
+        createStorageSampledTexture(v5ShadowHistoryTargets_[0], kV5ShadowSignalFormat, "vkCreateImage(v5 shadow history 0)", extent);
+        createStorageSampledTexture(v5ShadowHistoryTargets_[1], kV5ShadowSignalFormat, "vkCreateImage(v5 shadow history 1)", extent);
+        createStorageSampledTexture(v5ReflectionHistoryTargets_[0], kV5ReflectionSignalFormat, "vkCreateImage(v5 reflection history 0)", extent);
+        createStorageSampledTexture(v5ReflectionHistoryTargets_[1], kV5ReflectionSignalFormat, "vkCreateImage(v5 reflection history 1)", extent);
+        createStorageSampledTexture(v5SurfaceHistoryTargets_[0], kV5SurfaceHistoryFormat, "vkCreateImage(v5 surface history 0)", extent);
+        createStorageSampledTexture(v5SurfaceHistoryTargets_[1], kV5SurfaceHistoryFormat, "vkCreateImage(v5 surface history 1)", extent);
+        createStorageSampledTexture(v5ResolvedColor_, kV5HistoryFormat, "vkCreateImage(v5 resolved color)", extent);
         v5HistoryInitialized_ = {false, false};
+        v5ShadowHistoryInitialized_ = {false, false};
+        v5ReflectionHistoryInitialized_ = {false, false};
+        v5SurfaceHistoryInitialized_ = {false, false};
+        v5SignalInitialized_ = false;
+        v5ResolvedColorInitialized_ = false;
     }
 
     void createSsaoResources() {
@@ -1572,6 +1632,9 @@ private:
             + " sampler=linear-mipmap-linear anisotropy="
             + (samplerAnisotropy_ ? std::to_string(maxSamplerAnisotropy_) + "x" : "off")
             + " edgeAA=g-buffer"
+            + (enableV5RayTracing_ ? " taa=halton16-surface-validated-resolve" : "")
+            + (enableV5RayTracing_ ? " denoise=split-shadow-reflection-temporal-bilateral-sharpen" : "")
+            + (enableV5RayTracing_ ? " internalScale=2x" : "")
         );
     }
 
@@ -1886,13 +1949,31 @@ private:
         historyOutputBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         historyOutputBinding.descriptorCount = 1;
         historyOutputBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        VkDescriptorSetLayoutBinding shadowSignalBinding = historyOutputBinding;
+        shadowSignalBinding.binding = kV5ShadowSignalBinding;
+        VkDescriptorSetLayoutBinding reflectionSignalBinding = historyOutputBinding;
+        reflectionSignalBinding.binding = kV5ReflectionSignalBinding;
+        VkDescriptorSetLayoutBinding shadowHistoryInputBinding = albedoBinding;
+        shadowHistoryInputBinding.binding = kV5ShadowHistoryInputBinding;
+        VkDescriptorSetLayoutBinding shadowHistoryOutputBinding = historyOutputBinding;
+        shadowHistoryOutputBinding.binding = kV5ShadowHistoryOutputBinding;
+        VkDescriptorSetLayoutBinding reflectionHistoryInputBinding = albedoBinding;
+        reflectionHistoryInputBinding.binding = kV5ReflectionHistoryInputBinding;
+        VkDescriptorSetLayoutBinding reflectionHistoryOutputBinding = historyOutputBinding;
+        reflectionHistoryOutputBinding.binding = kV5ReflectionHistoryOutputBinding;
+        VkDescriptorSetLayoutBinding surfaceHistoryInputBinding = albedoBinding;
+        surfaceHistoryInputBinding.binding = kV5SurfaceHistoryInputBinding;
+        VkDescriptorSetLayoutBinding surfaceHistoryOutputBinding = historyOutputBinding;
+        surfaceHistoryOutputBinding.binding = kV5SurfaceHistoryOutputBinding;
+        VkDescriptorSetLayoutBinding resolvedColorBinding = historyOutputBinding;
+        resolvedColorBinding.binding = kV5ResolvedColorBinding;
         VkDescriptorSetLayoutBinding lightBinding{};
         lightBinding.binding = kV4ManyLightBufferBinding;
         lightBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         lightBinding.descriptorCount = 1;
         lightBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-        std::array<VkDescriptorSetLayoutBinding, 10> bindings{
+        std::array<VkDescriptorSetLayoutBinding, 19> bindings{
             cameraBinding,
             outputBinding,
             samplerBinding,
@@ -1903,6 +1984,15 @@ private:
             historyInputBinding,
             historyOutputBinding,
             lightBinding,
+            shadowSignalBinding,
+            reflectionSignalBinding,
+            shadowHistoryInputBinding,
+            shadowHistoryOutputBinding,
+            reflectionHistoryInputBinding,
+            reflectionHistoryOutputBinding,
+            surfaceHistoryInputBinding,
+            surfaceHistoryOutputBinding,
+            resolvedColorBinding,
         };
         VkDescriptorSetLayoutCreateInfo layout{};
         layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -1914,11 +2004,11 @@ private:
         poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         poolSizes[0].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 2u);
         poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        poolSizes[1].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 4u);
+        poolSizes[1].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 16u);
         poolSizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLER;
         poolSizes[2].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 2u);
         poolSizes[3].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-        poolSizes[3].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 8u);
+        poolSizes[3].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 14u);
         poolSizes[4].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
         poolSizes[4].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 2u);
         poolSizes[5].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -1964,8 +2054,17 @@ private:
         std::vector<VkDescriptorImageInfo> outputInfos(v5DescriptorSets_.size());
         std::vector<VkDescriptorImageInfo> historyInputInfos(v5DescriptorSets_.size());
         std::vector<VkDescriptorImageInfo> historyOutputInfos(v5DescriptorSets_.size());
+        std::vector<VkDescriptorImageInfo> shadowSignalInfos(v5DescriptorSets_.size());
+        std::vector<VkDescriptorImageInfo> reflectionSignalInfos(v5DescriptorSets_.size());
+        std::vector<VkDescriptorImageInfo> shadowHistoryInputInfos(v5DescriptorSets_.size());
+        std::vector<VkDescriptorImageInfo> shadowHistoryOutputInfos(v5DescriptorSets_.size());
+        std::vector<VkDescriptorImageInfo> reflectionHistoryInputInfos(v5DescriptorSets_.size());
+        std::vector<VkDescriptorImageInfo> reflectionHistoryOutputInfos(v5DescriptorSets_.size());
+        std::vector<VkDescriptorImageInfo> surfaceHistoryInputInfos(v5DescriptorSets_.size());
+        std::vector<VkDescriptorImageInfo> surfaceHistoryOutputInfos(v5DescriptorSets_.size());
+        std::vector<VkDescriptorImageInfo> resolvedColorInfos(v5DescriptorSets_.size());
         std::vector<VkWriteDescriptorSetAccelerationStructureKHR> asInfos(v5DescriptorSets_.size());
-        std::vector<std::array<VkWriteDescriptorSet, 10>> writes(v5DescriptorSets_.size());
+        std::vector<std::array<VkWriteDescriptorSet, 19>> writes(v5DescriptorSets_.size());
         for (std::size_t i = 0; i < v5DescriptorSets_.size(); ++i) {
             const std::size_t swapchainIndex = i / 2u;
             const std::size_t pingPongIndex = i % 2u;
@@ -1975,6 +2074,24 @@ private:
             historyInputInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             historyOutputInfos[i].imageView = v5HistoryTargets_[pingPongIndex].view;
             historyOutputInfos[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            shadowSignalInfos[i].imageView = v5ShadowSignal_.view;
+            shadowSignalInfos[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            reflectionSignalInfos[i].imageView = v5ReflectionSignal_.view;
+            reflectionSignalInfos[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            shadowHistoryInputInfos[i].imageView = v5ShadowHistoryTargets_[1u - pingPongIndex].view;
+            shadowHistoryInputInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            shadowHistoryOutputInfos[i].imageView = v5ShadowHistoryTargets_[pingPongIndex].view;
+            shadowHistoryOutputInfos[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            reflectionHistoryInputInfos[i].imageView = v5ReflectionHistoryTargets_[1u - pingPongIndex].view;
+            reflectionHistoryInputInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            reflectionHistoryOutputInfos[i].imageView = v5ReflectionHistoryTargets_[pingPongIndex].view;
+            reflectionHistoryOutputInfos[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            surfaceHistoryInputInfos[i].imageView = v5SurfaceHistoryTargets_[1u - pingPongIndex].view;
+            surfaceHistoryInputInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            surfaceHistoryOutputInfos[i].imageView = v5SurfaceHistoryTargets_[pingPongIndex].view;
+            surfaceHistoryOutputInfos[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            resolvedColorInfos[i].imageView = v5ResolvedColor_.view;
+            resolvedColorInfos[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
             asInfos[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
             asInfos[i].accelerationStructureCount = 1;
             asInfos[i].pAccelerationStructures = &v5Tlas_.handle;
@@ -2048,6 +2165,69 @@ private:
             writes[i][9].descriptorCount = 1;
             writes[i][9].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             writes[i][9].pBufferInfo = &lightInfo;
+
+            writes[i][10].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i][10].dstSet = v5DescriptorSets_[i];
+            writes[i][10].dstBinding = kV5ShadowSignalBinding;
+            writes[i][10].descriptorCount = 1;
+            writes[i][10].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[i][10].pImageInfo = &shadowSignalInfos[i];
+
+            writes[i][11].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i][11].dstSet = v5DescriptorSets_[i];
+            writes[i][11].dstBinding = kV5ReflectionSignalBinding;
+            writes[i][11].descriptorCount = 1;
+            writes[i][11].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[i][11].pImageInfo = &reflectionSignalInfos[i];
+
+            writes[i][12].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i][12].dstSet = v5DescriptorSets_[i];
+            writes[i][12].dstBinding = kV5ShadowHistoryInputBinding;
+            writes[i][12].descriptorCount = 1;
+            writes[i][12].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            writes[i][12].pImageInfo = &shadowHistoryInputInfos[i];
+
+            writes[i][13].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i][13].dstSet = v5DescriptorSets_[i];
+            writes[i][13].dstBinding = kV5ShadowHistoryOutputBinding;
+            writes[i][13].descriptorCount = 1;
+            writes[i][13].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[i][13].pImageInfo = &shadowHistoryOutputInfos[i];
+
+            writes[i][14].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i][14].dstSet = v5DescriptorSets_[i];
+            writes[i][14].dstBinding = kV5ReflectionHistoryInputBinding;
+            writes[i][14].descriptorCount = 1;
+            writes[i][14].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            writes[i][14].pImageInfo = &reflectionHistoryInputInfos[i];
+
+            writes[i][15].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i][15].dstSet = v5DescriptorSets_[i];
+            writes[i][15].dstBinding = kV5ReflectionHistoryOutputBinding;
+            writes[i][15].descriptorCount = 1;
+            writes[i][15].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[i][15].pImageInfo = &reflectionHistoryOutputInfos[i];
+
+            writes[i][16].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i][16].dstSet = v5DescriptorSets_[i];
+            writes[i][16].dstBinding = kV5SurfaceHistoryInputBinding;
+            writes[i][16].descriptorCount = 1;
+            writes[i][16].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            writes[i][16].pImageInfo = &surfaceHistoryInputInfos[i];
+
+            writes[i][17].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i][17].dstSet = v5DescriptorSets_[i];
+            writes[i][17].dstBinding = kV5SurfaceHistoryOutputBinding;
+            writes[i][17].descriptorCount = 1;
+            writes[i][17].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[i][17].pImageInfo = &surfaceHistoryOutputInfos[i];
+
+            writes[i][18].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i][18].dstSet = v5DescriptorSets_[i];
+            writes[i][18].dstBinding = kV5ResolvedColorBinding;
+            writes[i][18].descriptorCount = 1;
+            writes[i][18].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[i][18].pImageInfo = &resolvedColorInfos[i];
             vkUpdateDescriptorSets(device_, static_cast<std::uint32_t>(writes[i].size()), writes[i].data(), 0, nullptr);
         }
     }
@@ -2097,15 +2277,36 @@ private:
             || changed(camera.fovY, lastV5Camera_.fovY, 0.0005f);
     }
 
+    static float halton(std::uint32_t index, std::uint32_t base) {
+        float result = 0.0f;
+        float fraction = 1.0f / static_cast<float>(base);
+        while (index > 0) {
+            result += static_cast<float>(index % base) * fraction;
+            index /= base;
+            fraction /= static_cast<float>(base);
+        }
+        return result;
+    }
+
     void updateUniform(const V1CameraSettings& cameraSettings, std::uint32_t v4DebugMode) {
+        const V1CameraSettings previousCamera = hasLastV5Camera_ ? lastV5Camera_ : cameraSettings;
+        const std::array<float, 2> previousJitter = lastV5Jitter_;
         const Vec3 eye = eyeOf(cameraSettings);
         const Vec3 forward = normalize(targetOf(cameraSettings) - eye);
         const Vec3 right = rightFor(forward, upOf(cameraSettings));
         const Vec3 up = normalize(cross(right, forward));
+        const Vec3 prevEye = eyeOf(previousCamera);
+        const Vec3 prevForward = normalize(targetOf(previousCamera) - prevEye);
+        const Vec3 prevRight = rightFor(prevForward, upOf(previousCamera));
+        const Vec3 prevUp = normalize(cross(prevRight, prevForward));
         const float nearPlane = cameraSettings.nearPlane > 0.0f ? cameraSettings.nearPlane : 0.05f;
         const float farPlane = cameraSettings.farPlane > 0.0f ? cameraSettings.farPlane : 200.0f;
         const float fovY = cameraSettings.fovY > 0.0f ? cameraSettings.fovY : (52.0f * kPi / 180.0f);
         const float aspect = static_cast<float>(swapchainExtent_.width) / static_cast<float>(swapchainExtent_.height);
+        const VkExtent2D renderExtent = enableV5RayTracing_ ? v5RenderExtent() : swapchainExtent_;
+        const float prevNearPlane = previousCamera.nearPlane > 0.0f ? previousCamera.nearPlane : 0.05f;
+        const float prevFarPlane = previousCamera.farPlane > 0.0f ? previousCamera.farPlane : 200.0f;
+        const float prevFovY = previousCamera.fovY > 0.0f ? previousCamera.fovY : (52.0f * kPi / 180.0f);
 
         CameraUniform uniform{};
         uniform.eyeNear[0] = eye.x;
@@ -2177,7 +2378,7 @@ private:
         uniform.v4Flags[1] = static_cast<float>(lightCount_);
         uniform.v4Flags[2] = static_cast<float>(v4DebugMode);
         if (enableV5RayTracing_) {
-            if (cameraChangedForHistory(cameraSettings)) {
+            if (!hasLastV5Camera_) {
                 v5HistoryFrameCount_ = 0;
             } else {
                 v5HistoryFrameCount_ = std::min<std::uint32_t>(v5HistoryFrameCount_ + 1u, 240u);
@@ -2185,6 +2386,35 @@ private:
             lastV5Camera_ = cameraSettings;
             hasLastV5Camera_ = true;
             uniform.v4Flags[3] = static_cast<float>(v5HistoryFrameCount_);
+
+            const std::uint32_t jitterIndex = (v5HistoryFrameCount_ % 16u) + 1u;
+            const float jitterPixelX = halton(jitterIndex, 2u) - 0.5f;
+            const float jitterPixelY = halton(jitterIndex, 3u) - 0.5f;
+            uniform.taaJitter[0] = (2.0f * jitterPixelX) / static_cast<float>(std::max<std::uint32_t>(renderExtent.width, 1u));
+            uniform.taaJitter[1] = (2.0f * jitterPixelY) / static_cast<float>(std::max<std::uint32_t>(renderExtent.height, 1u));
+            uniform.taaJitter[2] = jitterPixelX;
+            uniform.taaJitter[3] = jitterPixelY;
+            uniform.prevEyeNear[0] = prevEye.x;
+            uniform.prevEyeNear[1] = prevEye.y;
+            uniform.prevEyeNear[2] = prevEye.z;
+            uniform.prevEyeNear[3] = prevNearPlane;
+            uniform.prevRightFar[0] = prevRight.x;
+            uniform.prevRightFar[1] = prevRight.y;
+            uniform.prevRightFar[2] = prevRight.z;
+            uniform.prevRightFar[3] = prevFarPlane;
+            uniform.prevUpTanHalf[0] = prevUp.x;
+            uniform.prevUpTanHalf[1] = prevUp.y;
+            uniform.prevUpTanHalf[2] = prevUp.z;
+            uniform.prevUpTanHalf[3] = std::tan(prevFovY * 0.5f);
+            uniform.prevForwardAspect[0] = prevForward.x;
+            uniform.prevForwardAspect[1] = prevForward.y;
+            uniform.prevForwardAspect[2] = prevForward.z;
+            uniform.prevForwardAspect[3] = aspect;
+            uniform.prevTaaJitter[0] = (2.0f * previousJitter[0]) / static_cast<float>(std::max<std::uint32_t>(renderExtent.width, 1u));
+            uniform.prevTaaJitter[1] = (2.0f * previousJitter[1]) / static_cast<float>(std::max<std::uint32_t>(renderExtent.height, 1u));
+            uniform.prevTaaJitter[2] = previousJitter[0];
+            uniform.prevTaaJitter[3] = previousJitter[1];
+            lastV5Jitter_ = {jitterPixelX, jitterPixelY};
         } else {
             uniform.v4Flags[3] = static_cast<float>(frameIndex_);
         }
@@ -2248,6 +2478,15 @@ private:
         scissor.extent = swapchainExtent_;
 
         if (enableV5RayTracing_) {
+            const VkExtent2D internalExtent = v5RenderExtent();
+            VkViewport internalViewport{};
+            internalViewport.width = static_cast<float>(internalExtent.width);
+            internalViewport.height = static_cast<float>(internalExtent.height);
+            internalViewport.minDepth = 0.0f;
+            internalViewport.maxDepth = 1.0f;
+            VkRect2D internalScissor{};
+            internalScissor.extent = internalExtent;
+
             if (frameIndex_ < 4) previewLog("record v5: begin gbuffer pass");
             std::array<VkClearValue, 4> gbufferClears{};
             gbufferClears[0].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
@@ -2258,12 +2497,12 @@ private:
             gbufferPass.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
             gbufferPass.renderPass = gbufferRenderPass_;
             gbufferPass.framebuffer = gbufferFramebuffer_;
-            gbufferPass.renderArea.extent = swapchainExtent_;
+            gbufferPass.renderArea.extent = internalExtent;
             gbufferPass.clearValueCount = static_cast<std::uint32_t>(gbufferClears.size());
             gbufferPass.pClearValues = gbufferClears.data();
             vkCmdBeginRenderPass(commandBuffer, &gbufferPass, VK_SUBPASS_CONTENTS_INLINE);
-            vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
-            vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+            vkCmdSetViewport(commandBuffer, 0, 1, &internalViewport);
+            vkCmdSetScissor(commandBuffer, 0, 1, &internalScissor);
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, gbufferPipeline_);
             VkDeviceSize gbufferOffset = 0;
             vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer_, &gbufferOffset);
@@ -2326,29 +2565,57 @@ private:
 
             const std::uint32_t historyWriteIndex = frameIndex_ & 1u;
             const std::uint32_t historyReadIndex = 1u - historyWriteIndex;
-            std::array<VkImageMemoryBarrier, 2> historyBeforeCompute{};
-            historyBeforeCompute[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            historyBeforeCompute[0].oldLayout = v5HistoryInitialized_[historyReadIndex] ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
-            historyBeforeCompute[0].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            historyBeforeCompute[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            historyBeforeCompute[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            historyBeforeCompute[0].image = v5HistoryTargets_[historyReadIndex].image;
-            historyBeforeCompute[0].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            historyBeforeCompute[0].subresourceRange.levelCount = 1;
-            historyBeforeCompute[0].subresourceRange.layerCount = 1;
-            historyBeforeCompute[0].srcAccessMask = v5HistoryInitialized_[historyReadIndex] ? VK_ACCESS_SHADER_READ_BIT : 0;
-            historyBeforeCompute[0].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            historyBeforeCompute[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            historyBeforeCompute[1].oldLayout = v5HistoryInitialized_[historyWriteIndex] ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
-            historyBeforeCompute[1].newLayout = VK_IMAGE_LAYOUT_GENERAL;
-            historyBeforeCompute[1].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            historyBeforeCompute[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            historyBeforeCompute[1].image = v5HistoryTargets_[historyWriteIndex].image;
-            historyBeforeCompute[1].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            historyBeforeCompute[1].subresourceRange.levelCount = 1;
-            historyBeforeCompute[1].subresourceRange.layerCount = 1;
-            historyBeforeCompute[1].srcAccessMask = v5HistoryInitialized_[historyWriteIndex] ? VK_ACCESS_SHADER_READ_BIT : 0;
-            historyBeforeCompute[1].dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            std::array<VkImageMemoryBarrier, 11> historyBeforeCompute{};
+            auto setHistoryReadBarrier = [](VkImageMemoryBarrier& barrier, VkImage image, bool initialized) {
+                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                barrier.oldLayout = initialized ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+                barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.image = image;
+                barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                barrier.subresourceRange.levelCount = 1;
+                barrier.subresourceRange.layerCount = 1;
+                barrier.srcAccessMask = initialized ? VK_ACCESS_SHADER_READ_BIT : 0;
+                barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            };
+            auto setHistoryWriteBarrier = [](VkImageMemoryBarrier& barrier, VkImage image, bool initialized) {
+                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                barrier.oldLayout = initialized ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+                barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.image = image;
+                barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                barrier.subresourceRange.levelCount = 1;
+                barrier.subresourceRange.layerCount = 1;
+                barrier.srcAccessMask = initialized ? VK_ACCESS_SHADER_READ_BIT : 0;
+                barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            };
+            auto setSignalWriteBarrier = [](VkImageMemoryBarrier& barrier, VkImage image, bool initialized) {
+                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                barrier.oldLayout = initialized ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED;
+                barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.image = image;
+                barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                barrier.subresourceRange.levelCount = 1;
+                barrier.subresourceRange.layerCount = 1;
+                barrier.srcAccessMask = initialized ? VK_ACCESS_SHADER_WRITE_BIT : 0;
+                barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            };
+            setHistoryReadBarrier(historyBeforeCompute[0], v5HistoryTargets_[historyReadIndex].image, v5HistoryInitialized_[historyReadIndex]);
+            setHistoryWriteBarrier(historyBeforeCompute[1], v5HistoryTargets_[historyWriteIndex].image, v5HistoryInitialized_[historyWriteIndex]);
+            setHistoryReadBarrier(historyBeforeCompute[2], v5ShadowHistoryTargets_[historyReadIndex].image, v5ShadowHistoryInitialized_[historyReadIndex]);
+            setHistoryWriteBarrier(historyBeforeCompute[3], v5ShadowHistoryTargets_[historyWriteIndex].image, v5ShadowHistoryInitialized_[historyWriteIndex]);
+            setHistoryReadBarrier(historyBeforeCompute[4], v5ReflectionHistoryTargets_[historyReadIndex].image, v5ReflectionHistoryInitialized_[historyReadIndex]);
+            setHistoryWriteBarrier(historyBeforeCompute[5], v5ReflectionHistoryTargets_[historyWriteIndex].image, v5ReflectionHistoryInitialized_[historyWriteIndex]);
+            setHistoryReadBarrier(historyBeforeCompute[6], v5SurfaceHistoryTargets_[historyReadIndex].image, v5SurfaceHistoryInitialized_[historyReadIndex]);
+            setHistoryWriteBarrier(historyBeforeCompute[7], v5SurfaceHistoryTargets_[historyWriteIndex].image, v5SurfaceHistoryInitialized_[historyWriteIndex]);
+            setSignalWriteBarrier(historyBeforeCompute[8], v5ShadowSignal_.image, v5SignalInitialized_);
+            setSignalWriteBarrier(historyBeforeCompute[9], v5ReflectionSignal_.image, v5SignalInitialized_);
+            setSignalWriteBarrier(historyBeforeCompute[10], v5ResolvedColor_.image, v5ResolvedColorInitialized_);
             vkCmdPipelineBarrier(
                 commandBuffer,
                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
@@ -2388,25 +2655,96 @@ private:
                 &toGeneral
             );
 
-            if (frameIndex_ < 4) previewLog("record v5: dispatch compute");
+            if (frameIndex_ < 4) previewLog("record v5: dispatch ray signal compute");
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, v5RayTracingPipeline_);
             const std::size_t descriptorIndex = static_cast<std::size_t>(imageIndex) * 2u + historyWriteIndex;
             const VkDescriptorSet descriptorSet = v5DescriptorSets_[descriptorIndex];
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, v5RayTracingPipelineLayout_, 0, 1, &descriptorSet, 0, nullptr);
-            vkCmdDispatch(commandBuffer, (swapchainExtent_.width + 7u) / 8u, (swapchainExtent_.height + 7u) / 8u, 1);
+            vkCmdDispatch(commandBuffer, (internalExtent.width + 7u) / 8u, (internalExtent.height + 7u) / 8u, 1);
 
-            VkImageMemoryBarrier historyAfterCompute{};
-            historyAfterCompute.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            historyAfterCompute.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-            historyAfterCompute.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            historyAfterCompute.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            historyAfterCompute.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            historyAfterCompute.image = v5HistoryTargets_[historyWriteIndex].image;
-            historyAfterCompute.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            historyAfterCompute.subresourceRange.levelCount = 1;
-            historyAfterCompute.subresourceRange.layerCount = 1;
-            historyAfterCompute.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-            historyAfterCompute.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            std::array<VkImageMemoryBarrier, 2> signalAfterRay{};
+            auto setSignalReadBarrier = [](VkImageMemoryBarrier& barrier, VkImage image) {
+                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+                barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.image = image;
+                barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                barrier.subresourceRange.levelCount = 1;
+                barrier.subresourceRange.layerCount = 1;
+                barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            };
+            setSignalReadBarrier(signalAfterRay[0], v5ShadowSignal_.image);
+            setSignalReadBarrier(signalAfterRay[1], v5ReflectionSignal_.image);
+            vkCmdPipelineBarrier(
+                commandBuffer,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                0,
+                0,
+                nullptr,
+                0,
+                nullptr,
+                static_cast<std::uint32_t>(signalAfterRay.size()),
+                signalAfterRay.data()
+            );
+
+            if (frameIndex_ < 4) previewLog("record v5: dispatch denoise compute");
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, v5DenoisePipeline_);
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, v5RayTracingPipelineLayout_, 0, 1, &descriptorSet, 0, nullptr);
+            vkCmdDispatch(commandBuffer, (internalExtent.width + 7u) / 8u, (internalExtent.height + 7u) / 8u, 1);
+
+            std::array<VkImageMemoryBarrier, 4> historyAfterCompute{};
+            auto setHistoryAfterCompute = [](VkImageMemoryBarrier& barrier, VkImage image) {
+                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+                barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.image = image;
+                barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                barrier.subresourceRange.levelCount = 1;
+                barrier.subresourceRange.layerCount = 1;
+                barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            };
+            setHistoryAfterCompute(historyAfterCompute[0], v5HistoryTargets_[historyWriteIndex].image);
+            setHistoryAfterCompute(historyAfterCompute[1], v5ShadowHistoryTargets_[historyWriteIndex].image);
+            setHistoryAfterCompute(historyAfterCompute[2], v5ReflectionHistoryTargets_[historyWriteIndex].image);
+            setHistoryAfterCompute(historyAfterCompute[3], v5SurfaceHistoryTargets_[historyWriteIndex].image);
+            vkCmdPipelineBarrier(
+                commandBuffer,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                0,
+                0,
+                nullptr,
+                0,
+                nullptr,
+                static_cast<std::uint32_t>(historyAfterCompute.size()),
+                historyAfterCompute.data()
+            );
+            v5HistoryInitialized_[historyWriteIndex] = true;
+            v5ShadowHistoryInitialized_[historyWriteIndex] = true;
+            v5ReflectionHistoryInitialized_[historyWriteIndex] = true;
+            v5SurfaceHistoryInitialized_[historyWriteIndex] = true;
+            v5SignalInitialized_ = true;
+            v5ResolvedColorInitialized_ = true;
+
+            VkImageMemoryBarrier resolvedBeforeDownsample{};
+            resolvedBeforeDownsample.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            resolvedBeforeDownsample.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+            resolvedBeforeDownsample.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            resolvedBeforeDownsample.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            resolvedBeforeDownsample.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            resolvedBeforeDownsample.image = v5ResolvedColor_.image;
+            resolvedBeforeDownsample.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            resolvedBeforeDownsample.subresourceRange.levelCount = 1;
+            resolvedBeforeDownsample.subresourceRange.layerCount = 1;
+            resolvedBeforeDownsample.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            resolvedBeforeDownsample.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
             vkCmdPipelineBarrier(
                 commandBuffer,
                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
@@ -2417,9 +2755,13 @@ private:
                 0,
                 nullptr,
                 1,
-                &historyAfterCompute
+                &resolvedBeforeDownsample
             );
-            v5HistoryInitialized_[historyWriteIndex] = true;
+
+            if (frameIndex_ < 4) previewLog("record v5: dispatch downsample compute");
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, v5DownsamplePipeline_);
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, v5RayTracingPipelineLayout_, 0, 1, &descriptorSet, 0, nullptr);
+            vkCmdDispatch(commandBuffer, (swapchainExtent_.width + 7u) / 8u, (swapchainExtent_.height + 7u) / 8u, 1);
 
             if (frameIndex_ < 4) previewLog("record v5: swapchain to present");
             VkImageMemoryBarrier toPresent = toGeneral;
@@ -2638,6 +2980,17 @@ private:
     TextureResource ssaoBlurTarget_{};
     std::array<TextureResource, 2> v5HistoryTargets_{};
     std::array<bool, 2> v5HistoryInitialized_{false, false};
+    TextureResource v5ShadowSignal_{};
+    TextureResource v5ReflectionSignal_{};
+    std::array<TextureResource, 2> v5ShadowHistoryTargets_{};
+    std::array<TextureResource, 2> v5ReflectionHistoryTargets_{};
+    std::array<TextureResource, 2> v5SurfaceHistoryTargets_{};
+    TextureResource v5ResolvedColor_{};
+    std::array<bool, 2> v5ShadowHistoryInitialized_{false, false};
+    std::array<bool, 2> v5ReflectionHistoryInitialized_{false, false};
+    std::array<bool, 2> v5SurfaceHistoryInitialized_{false, false};
+    bool v5SignalInitialized_ = false;
+    bool v5ResolvedColorInitialized_ = false;
     VkFramebuffer ssaoFramebuffer_ = VK_NULL_HANDLE;
     VkFramebuffer ssaoBlurFramebuffer_ = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> framebuffers_;
@@ -2688,6 +3041,8 @@ private:
     VkPipeline ssaoBlurPipeline_ = VK_NULL_HANDLE;
     VkPipeline v4ComposePipeline_ = VK_NULL_HANDLE;
     VkPipeline v5RayTracingPipeline_ = VK_NULL_HANDLE;
+    VkPipeline v5DenoisePipeline_ = VK_NULL_HANDLE;
+    VkPipeline v5DownsamplePipeline_ = VK_NULL_HANDLE;
     VkCommandPool uploadCommandPool_ = VK_NULL_HANDLE;
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     VkCommandBuffer commandBuffer_ = VK_NULL_HANDLE;
@@ -2697,6 +3052,7 @@ private:
     std::uint32_t frameIndex_ = 0;
     std::uint32_t v5HistoryFrameCount_ = 0;
     V1CameraSettings lastV5Camera_{};
+    std::array<float, 2> lastV5Jitter_{0.0f, 0.0f};
     bool hasLastV5Camera_ = false;
     bool enableV4Ssao_ = false;
 };

@@ -14,6 +14,12 @@ cbuffer Camera : register(b0) {
     float4 spotColorIntensity;
     float4 v3Flags;
     float4 v4Flags;
+    float4 taaJitter;
+    float4 prevEyeNear;
+    float4 prevRightFar;
+    float4 prevUpTanHalf;
+    float4 prevForwardAspect;
+    float4 prevTaaJitter;
 };
 
 [[vk::binding(1, 0), vk::image_format("rgba8")]]
@@ -27,6 +33,10 @@ RWTexture2D<float4> outputImage : register(u1);
 [[vk::binding(22, 0)]] Texture2D<float4> historyColor;
 [[vk::binding(23, 0), vk::image_format("rgba16f")]]
 RWTexture2D<float4> historyOutput : register(u23);
+[[vk::binding(24, 0), vk::image_format("rgba16f")]]
+RWTexture2D<float4> shadowSignal : register(u24);
+[[vk::binding(25, 0), vk::image_format("rgba16f")]]
+RWTexture2D<float4> reflectionSignal : register(u25);
 
 static const float kPi = 3.14159265;
 
@@ -63,7 +73,7 @@ float3 toneMap(float3 color) {
 }
 
 float3 skyColorAtUv(float2 uv) {
-    float2 ndc = uv * 2.0 - 1.0;
+    float2 ndc = uv * 2.0 - 1.0 - taaJitter.xy;
     float3 cameraRay = normalize(forwardAspect.xyz + rightFar.xyz * ndc.x * forwardAspect.w * upTanHalf.w + upTanHalf.xyz * -ndc.y * upTanHalf.w);
     return toneMap(skyRadiance(cameraRay));
 }
@@ -179,7 +189,7 @@ bool projectWorldToUv(float3 p, out float2 uv, out float cameraZ) {
     float2 ndc;
     ndc.x = dot(rel, rightFar.xyz) / (cameraZ * aspect * tanHalf);
     ndc.y = -dot(rel, upTanHalf.xyz) / (cameraZ * tanHalf);
-    uv = ndc * 0.5 + 0.5;
+    uv = (ndc + taaJitter.xy) * 0.5 + 0.5;
     return uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0;
 }
 
@@ -240,11 +250,26 @@ void writeAccumulatedColor(uint2 pixel, float3 currentColor) {
     uint width;
     uint height;
     outputImage.GetDimensions(width, height);
+    int2 centerPixel = int2(pixel);
+    int2 maxPixel = int2(max(width, 1u) - 1u, max(height, 1u) - 1u);
+    uint2 rightPixel = uint2(min(max(centerPixel + int2(1, 0), int2(0, 0)), maxPixel));
+    uint2 leftPixel = uint2(min(max(centerPixel + int2(-1, 0), int2(0, 0)), maxPixel));
+    uint2 downPixel = uint2(min(max(centerPixel + int2(0, 1), int2(0, 0)), maxPixel));
+    uint2 upPixel = uint2(min(max(centerPixel + int2(0, -1), int2(0, 0)), maxPixel));
+    float3 neighborhoodMin = currentColor;
+    float3 neighborhoodMax = currentColor;
+    float3 n0 = cheapNeighborColor(rightPixel, width, height);
+    float3 n1 = cheapNeighborColor(leftPixel, width, height);
+    float3 n2 = cheapNeighborColor(downPixel, width, height);
+    float3 n3 = cheapNeighborColor(upPixel, width, height);
+    neighborhoodMin = min(neighborhoodMin, min(min(n0, n1), min(n2, n3)));
+    neighborhoodMax = max(neighborhoodMax, max(max(n0, n1), max(n2, n3)));
+
     float historyFrames = max(v4Flags.w, 0.0);
-    float3 previousColor = historyColor.Load(int3(pixel, 0)).rgb;
+    float3 previousColor = clamp(historyColor.Load(int3(pixel, 0)).rgb, neighborhoodMin, neighborhoodMax);
     float lumaCurrent = dot(currentColor, float3(0.2126, 0.7152, 0.0722));
     float lumaPrevious = dot(previousColor, float3(0.2126, 0.7152, 0.0722));
-    float historyConfidence = 1.0 - saturate(abs(lumaCurrent - lumaPrevious) * 2.5);
+    float historyConfidence = 1.0 - saturate(abs(lumaCurrent - lumaPrevious) * 4.0);
     float historyWeight = historyFrames < 1.0 ? 0.0 : min(0.92, historyFrames / (historyFrames + 1.0));
     historyWeight *= historyConfidence;
     float3 accumulated = lerp(currentColor, previousColor, historyWeight);
@@ -436,22 +461,24 @@ float3 importedLightsRadiance(Surface surface, float3 view, uint2 pixel) {
 void main(uint3 id : SV_DispatchThreadID) {
     uint width;
     uint height;
-    outputImage.GetDimensions(width, height);
+    gbufferWorld.GetDimensions(width, height);
     if (id.x >= width || id.y >= height) {
         return;
     }
 
     float2 uv = (float2(id.xy) + 0.5) / float2(width, height);
-    float2 ndc = uv * 2.0 - 1.0;
+    float2 ndc = uv * 2.0 - 1.0 - taaJitter.xy;
     float3 cameraRay = normalize(forwardAspect.xyz + rightFar.xyz * ndc.x * forwardAspect.w * upTanHalf.w + upTanHalf.xyz * -ndc.y * upTanHalf.w);
 
     Surface surface;
     if (!readSurface(uv, surface)) {
-        writeAccumulatedColor(id.xy, toneMap(skyRadiance(cameraRay)));
+        shadowSignal[id.xy] = float4(1.0, 0.0, 0.0, 0.0);
+        reflectionSignal[id.xy] = float4(skyRadiance(cameraRay), 0.0);
         return;
     }
     if (abs(surface.materialKind - 5.0) < 0.25) {
-        writeAccumulatedColor(id.xy, toneMap(surface.base * 18.0));
+        shadowSignal[id.xy] = float4(1.0, 0.0, 0.0, 0.0);
+        reflectionSignal[id.xy] = float4(0.0.xxx, 0.0);
         return;
     }
 
@@ -459,10 +486,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     float3 cameraToSurface = normalize(surface.worldPos - eyeNear.xyz);
     float3 lightDir = normalize(-shadowForwardFar.xyz);
     float visibility = rayTracedVisibility(surface.worldPos, surface.normal, lightDir, id.xy);
-    float ao = 1.0;
-
-    float3 direct = pbrDirectional(surface, view, lightDir, float3(1.10, 1.04, 0.92), 3.15, visibility);
-    direct += importedLightsRadiance(surface, view, id.xy);
+    float3 localDirect = importedLightsRadiance(surface, view, id.xy);
     float ndotv = max(0.04, saturate(dot(surface.normal, view)));
     float3 f0 = lerp(0.04.xxx, surface.base, surface.metalness);
     float3 fresnel = fresnelSchlick(ndotv, f0);
@@ -470,8 +494,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     bool mirrorMaterial = abs(surface.materialKind - 2.0) < 0.25;
     float reflectionWeight = mirrorMaterial ? 1.0 : smoothness * smoothness * lerp(0.025, 0.86, surface.metalness);
     float3 reflection = reflectionWeight > 0.01 ? rayTracedReflection(surface, cameraToSurface, view) : 0.0.xxx;
-    float3 ambient = mirrorMaterial ? 0.0.xxx : surface.base * lerp(0.14, 0.32, ao);
-
-    float3 color = ambient + direct + reflection * fresnel * reflectionWeight;
-    writeAccumulatedColor(id.xy, toneMap(color));
+    float fresnelLuma = dot(fresnel, float3(0.2126, 0.7152, 0.0722));
+    shadowSignal[id.xy] = float4(visibility, localDirect);
+    reflectionSignal[id.xy] = float4(reflection, saturate(reflectionWeight * fresnelLuma));
 }

@@ -53,11 +53,24 @@ constexpr std::uint32_t kV4ManyLightBufferBinding = 20;
 constexpr std::uint32_t kV5SceneTlasBinding = 21;
 constexpr std::uint32_t kV5HistoryInputBinding = 22;
 constexpr std::uint32_t kV5HistoryOutputBinding = 23;
+constexpr std::uint32_t kV5ShadowSignalBinding = 24;
+constexpr std::uint32_t kV5ReflectionSignalBinding = 25;
+constexpr std::uint32_t kV5ShadowHistoryInputBinding = 26;
+constexpr std::uint32_t kV5ShadowHistoryOutputBinding = 27;
+constexpr std::uint32_t kV5ReflectionHistoryInputBinding = 28;
+constexpr std::uint32_t kV5ReflectionHistoryOutputBinding = 29;
+constexpr std::uint32_t kV5SurfaceHistoryInputBinding = 30;
+constexpr std::uint32_t kV5SurfaceHistoryOutputBinding = 31;
+constexpr std::uint32_t kV5ResolvedColorBinding = 32;
+constexpr std::uint32_t kV5InternalScale = 2;
 constexpr VkFormat kGBufferAlbedoFormat = VK_FORMAT_R8G8B8A8_UNORM;
 constexpr VkFormat kGBufferNormalFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 constexpr VkFormat kGBufferWorldFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
 constexpr VkFormat kSsaoFormat = VK_FORMAT_R32_SFLOAT;
 constexpr VkFormat kV5HistoryFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+constexpr VkFormat kV5ShadowSignalFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+constexpr VkFormat kV5ReflectionSignalFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+constexpr VkFormat kV5SurfaceHistoryFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 
 struct Vec3 {
     float x = 0.0f;
@@ -81,6 +94,12 @@ struct CameraUniform {
     float spotColorIntensity[4]{};
     float v3Flags[4]{};
     float v4Flags[4]{};
+    float taaJitter[4]{};
+    float prevEyeNear[4]{};
+    float prevRightFar[4]{};
+    float prevUpTanHalf[4]{};
+    float prevForwardAspect[4]{};
+    float prevTaaJitter[4]{};
 };
 
 struct QueueFamilies {

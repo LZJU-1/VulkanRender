@@ -38,6 +38,13 @@ cbuffer Camera : register(b0) {
     float4 spotDirOuter;
     float4 spotColorIntensity;
     float4 v3Flags;
+    float4 v4Flags;
+    float4 taaJitter;
+    float4 prevEyeNear;
+    float4 prevRightFar;
+    float4 prevUpTanHalf;
+    float4 prevForwardAspect;
+    float4 prevTaaJitter;
 };
 
 VertexOut main(VertexIn input) {
@@ -56,6 +63,7 @@ VertexOut main(VertexIn input) {
     output.position.y = -cameraY * invTan;
     output.position.z = cameraZ * farPlane / (farPlane - nearPlane) - nearPlane * farPlane / (farPlane - nearPlane);
     output.position.w = cameraZ;
+    output.position.xy += taaJitter.xy * output.position.w;
     output.color = input.color;
     output.normal = normalize(input.normal);
     output.worldPos = input.position;

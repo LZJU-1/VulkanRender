@@ -1,5 +1,71 @@
 # Development Log
 
+## 2026-06-16 - V5 Halton Jitter Reprojection
+
+- Restored Halton subpixel jitter for the v5 G-buffer path so primary edges can accumulate antialiasing samples.
+- Added previous-frame camera basis and previous jitter to `CameraUniform`.
+- Added a surface-history ping-pong image storing previous normal and view depth.
+- Updated the v5 denoise pass to reproject current G-buffer world positions into the previous frame before sampling:
+  - final color history
+  - shadow signal history
+  - reflection signal history
+- Added previous normal/depth validation after reprojection to reject disoccluded silhouettes.
+- Upgraded final color resolve to padded 3x3 neighborhood clipping, edge-aware history weighting, residual edge smoothing, and lightweight adaptive sharpen.
+- Added a luma-directional FXAA-style resolve for residual stair steps on high-contrast furniture silhouettes and thin bright geometry.
+- Added 2x internal supersampling for v5: G-buffer, RT signals, denoise, and histories run at 2x resolution and a new compute downsample pass writes the swapchain.
+- Moved imported local-light shadowed radiance into the shadow signal so it is denoised with the same temporal/bilateral path as directional visibility.
+- Added `docs/V5_RT_DENOISING.md` to record the realtime RT denoising pipeline and remaining work.
+
+Validation:
+
+```powershell
+scripts\compile_v5_shader_dxc.bat
+tools\dxc\dxc_2026_05_27\bin\x64\dxc.exe -spirv "-fspv-target-env=vulkan1.2" -T vs_6_0 -E main shaders\vulkan_gpu\simple_color.vert.hlsl -Fo shaders\vulkan_gpu\simple_color.vert.spv
+tools\dxc\dxc_2026_05_27\bin\x64\dxc.exe -spirv "-fspv-target-env=vulkan1.2" -T vs_6_0 -E main shaders\vulkan_gpu\v4_instanced_sphere.vert.hlsl -Fo shaders\vulkan_gpu\v4_instanced_sphere.vert.spv
+scripts\build_msvc.bat nmake-debug
+build\nmake-debug\src\vulkan_render.exe --profile v5-rt --preview --scene C:\Users\lzju\Desktop\MonteCarloPathTracer\scenes\bathroom2\bathroom2.xml --width 1280 --height 720
+```
+
+Expected markers:
+
+```text
+taa=halton16-surface-validated-resolve
+denoise=split-shadow-reflection-temporal-bilateral-sharpen
+internalScale=2x
+record v5: dispatch ray signal compute
+record v5: dispatch denoise compute
+record v5: dispatch downsample compute
+```
+
+## 2026-06-16 - V5 Split RT Signal Denoising
+
+- Split the v5 realtime ray tracing path into two compute passes:
+  - `v5_raytrace.comp.hlsl` now writes raw shadow visibility and reflection radiance signal buffers.
+  - `v5_denoise.comp.hlsl` applies temporal history clamping and normal/depth/material-guided bilateral filtering before final compose.
+- Added raw shadow/reflection storage images and separate ping-pong histories for each signal.
+- Kept the existing final-color temporal accumulation, now after signal-level denoising.
+- Added startup and draw log markers for `denoise=split-shadow-reflection-temporal-bilateral`, `dispatch ray signal compute`, and `dispatch denoise compute`.
+- Current limit: temporal stability is still camera-reset based because the G-buffer does not carry motion vectors yet.
+
+Validation:
+
+```powershell
+scripts\compile_v5_shader_dxc.bat
+scripts\build_msvc.bat nmake-debug
+build\nmake-debug\src\vulkan_render.exe --profile v5-rt --preview --scene C:\Users\lzju\Desktop\MonteCarloPathTracer\scenes\bathroom2\bathroom2.xml --width 1280 --height 720
+```
+
+Observed log markers:
+
+```text
+runVulkanPreviewWindow: geometry vertices=3731769
+createV5AccelerationStructures: triangles=1243923 tlas=ready
+createTextureResources: ... denoise=split-shadow-reflection-temporal-bilateral
+record v5: dispatch ray signal compute
+record v5: dispatch denoise compute
+draw: present
+```
+
 ## 2026-06-15 - V5 Bathroom Emissive Lights And RT Reflection Step
 
 - Imported PathTracer/Mitsuba XML light declarations such as `<light mtlname="Light" radiance="125.0,100.0,75.0"/>`.

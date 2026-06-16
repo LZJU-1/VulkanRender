@@ -403,6 +403,8 @@ Pipelines createPipelines(
         require(vkCreatePipelineLayout(device, &rtLayout, nullptr, &p.v5RayTracingLayout), "vkCreatePipelineLayout(v5 rt)");
 
         const VkShaderModule rayTracingShader = createShader(device, "shaders/vulkan_gpu/v5_raytrace.comp.spv");
+        const VkShaderModule denoiseShader = createShader(device, "shaders/vulkan_gpu/v5_denoise.comp.spv");
+        const VkShaderModule downsampleShader = createShader(device, "shaders/vulkan_gpu/v5_downsample.comp.spv");
         VkPipelineShaderStageCreateInfo stage{};
         stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -414,7 +416,15 @@ Pipelines createPipelines(
         computeCreateInfo.stage = stage;
         computeCreateInfo.layout = p.v5RayTracingLayout;
         require(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &computeCreateInfo, nullptr, &p.v5Compute), "vkCreateComputePipelines(v5 rt)");
+        stage.module = denoiseShader;
+        computeCreateInfo.stage = stage;
+        require(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &computeCreateInfo, nullptr, &p.v5Denoise), "vkCreateComputePipelines(v5 denoise)");
+        stage.module = downsampleShader;
+        computeCreateInfo.stage = stage;
+        require(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &computeCreateInfo, nullptr, &p.v5Downsample), "vkCreateComputePipelines(v5 downsample)");
         vkDestroyShaderModule(device, rayTracingShader, nullptr);
+        vkDestroyShaderModule(device, denoiseShader, nullptr);
+        vkDestroyShaderModule(device, downsampleShader, nullptr);
     }
 
     return p;

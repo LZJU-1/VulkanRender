@@ -17,6 +17,8 @@ struct Pipelines {
     VkPipeline ssaoBlur = VK_NULL_HANDLE;
     VkPipeline v4Compose = VK_NULL_HANDLE;
     VkPipeline v5Compute = VK_NULL_HANDLE;
+    VkPipeline v5Denoise = VK_NULL_HANDLE;
+    VkPipeline v5Downsample = VK_NULL_HANDLE;
 };
 
 Pipelines createPipelines(
