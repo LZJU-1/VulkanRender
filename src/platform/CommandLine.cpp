@@ -3,7 +3,6 @@
 #include "core/FeatureProfile.hpp"
 
 #include <charconv>
-#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <iostream>
@@ -97,13 +96,6 @@ AppConfig CommandLine::parse(int argc, char** argv) {
             config.profile = "v5-rt";
         } else if (arg == "--headless") {
             config.headless = true;
-        } else if (arg == "--v5-quality") {
-            const std::string val = std::string(requireValue(i, argc, argv, arg));
-            if (val == "low") config.v5QualityLevel = 0;
-            else if (val == "medium") config.v5QualityLevel = 1;
-            else if (val == "high") config.v5QualityLevel = 2;
-            else if (val == "ultra") config.v5QualityLevel = 3;
-            else config.v5QualityLevel = std::clamp(parseU32(val, arg), 0u, 3u);
         } else if (arg == "--camera-eye") {
             const auto eye = parseVec3(i, argc, argv, arg);
             config.camera.enabled = true;
@@ -171,7 +163,6 @@ void CommandLine::printHelp(std::ostream& out) {
         << "  --camera-eye <x y z>       Override preview/render camera eye position\n"
         << "  --camera-target <x y z>    Override preview/render camera target position\n"
         << "  --camera-fov <degrees>     Override preview/render vertical field of view\n"
-        << "  --v5-quality low|medium|high|ultra  V5 TAA temporal samples (8/16/32/64, default: medium)\n"
         << "  --validation-pipeline [all|profile]\n"
         << "                             Print the Renderer72-aligned version validation plan\n"
         << "  --help                     Show this help\n";

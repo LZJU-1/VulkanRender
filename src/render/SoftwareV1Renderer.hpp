@@ -31,7 +31,6 @@ struct V1RenderSettings {
     bool enableV3Shadows = false;
     bool enableV4Ssao = false;
     bool enableV5RayTracing = false;
-    std::uint32_t v5QualityLevel = 1;  // 0=low(8spp), 1=med(16), 2=high(32), 3=ultra(64)
     V1CameraSettings camera;
     std::filesystem::path scenePath;
     std::filesystem::path outputPath;

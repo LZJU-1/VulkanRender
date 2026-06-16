@@ -174,7 +174,6 @@ int RendererApp::run() {
         settings.width = config_.width;
         settings.height = config_.height;
         settings.enableV5RayTracing = profile->id == ProfileId::V5RealtimeRayTracing;
-        settings.v5QualityLevel = config_.v5QualityLevel;
         settings.enableV2Shading = profile->id == ProfileId::V2PbrIbl || profile->id == ProfileId::V3LightsShadows || profile->id == ProfileId::V4DeferredSsao || settings.enableV5RayTracing;
         settings.enableV3Shadows = profile->id == ProfileId::V3LightsShadows || profile->id == ProfileId::V4DeferredSsao;
         settings.enableV4Ssao = profile->id == ProfileId::V4DeferredSsao;
