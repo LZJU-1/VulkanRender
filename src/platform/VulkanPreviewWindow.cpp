@@ -262,9 +262,6 @@ public:
         const bool logFrame = frameIndex_ < 4;
         if (logFrame) previewLog("draw: wait fence");
         vkWaitForFences(device_, 1, &inFlight_, VK_TRUE, UINT64_MAX);
-        if (logFrame) previewLog("draw: reset fence");
-        vkResetFences(device_, 1, &inFlight_);
-
         std::uint32_t imageIndex = 0;
         if (logFrame) previewLog("draw: acquire");
         VkResult acquire = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX, imageAvailable_, VK_NULL_HANDLE, &imageIndex);
@@ -277,12 +274,15 @@ public:
         const std::uint32_t sppCount = multiSpp ? 2u : 1u;
         const VkPipelineStageFlags waitStage = multiSpp ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 
+        if (logFrame) previewLog("draw: reset fence");
+        vkResetFences(device_, 1, &inFlight_);
+
         for (std::uint32_t spp = 0; spp < sppCount; ++spp) {
             if (logFrame && multiSpp) previewLog("draw: spp " + std::to_string(spp));
             updateUniform(camera, v4DebugMode, spp);
 
             if (logFrame) previewLog("draw: record command buffer");
-            recordCommandBuffer(commandBuffer_, imageIndex);
+            recordCommandBuffer(commandBuffer_, imageIndex, spp);
 
             if (logFrame) previewLog("draw: submit");
             VkSubmitInfo submit{};
@@ -296,8 +296,10 @@ public:
             submit.pSignalSemaphores = (spp == sppCount - 1) ? &renderFinished_ : nullptr;
             require(vkQueueSubmit(graphicsQueue_, 1, &submit, inFlight_), "vkQueueSubmit");
 
-            vkWaitForFences(device_, 1, &inFlight_, VK_TRUE, UINT64_MAX);
-            vkResetFences(device_, 1, &inFlight_);
+            if (spp + 1u < sppCount) {
+                vkWaitForFences(device_, 1, &inFlight_, VK_TRUE, UINT64_MAX);
+                vkResetFences(device_, 1, &inFlight_);
+            }
         }
 
         if (logFrame) previewLog("draw: present");
@@ -2476,16 +2478,18 @@ private:
         uniform.v4Flags[1] = static_cast<float>(lightCount_);
         uniform.v4Flags[2] = static_cast<float>(v4DebugMode);
         if (enableV5RayTracing_) {
-            const bool cameraChanged = cameraChangedForHistory(cameraSettings);
-            if (!hasLastV5Camera_) {
-                v5HistoryFrameCount_ = 0;
-            } else if (cameraChanged) {
-                v5HistoryFrameCount_ = std::min<std::uint32_t>(v5HistoryFrameCount_ + 1u, 8u);
-            } else {
-                v5HistoryFrameCount_ = std::min<std::uint32_t>(v5HistoryFrameCount_ + 1u, 240u);
+            if (spp == 0u) {
+                const bool cameraChanged = cameraChangedForHistory(cameraSettings);
+                if (!hasLastV5Camera_) {
+                    v5HistoryFrameCount_ = 0;
+                } else if (cameraChanged) {
+                    v5HistoryFrameCount_ = std::min<std::uint32_t>(v5HistoryFrameCount_ + 1u, 8u);
+                } else {
+                    v5HistoryFrameCount_ = std::min<std::uint32_t>(v5HistoryFrameCount_ + 1u, 240u);
+                }
+                lastV5Camera_ = cameraSettings;
+                hasLastV5Camera_ = true;
             }
-            lastV5Camera_ = cameraSettings;
-            hasLastV5Camera_ = true;
             uniform.v4Flags[3] = static_cast<float>(v5HistoryFrameCount_);
 
             // Freeze jitter when camera is still and history has accumulated enough
@@ -2535,7 +2539,7 @@ private:
         vkUnmapMemory(device_, uniformMemory_);
     }
 
-    void recordCommandBuffer(VkCommandBuffer commandBuffer, std::uint32_t imageIndex) {
+    void recordCommandBuffer(VkCommandBuffer commandBuffer, std::uint32_t imageIndex, std::uint32_t spp = 0) {
         vkResetCommandBuffer(commandBuffer, 0);
         VkCommandBufferBeginInfo begin{};
         begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -2673,7 +2677,7 @@ private:
                 gbufferReadBarriers.data()
             );
 
-            const std::uint32_t historyWriteIndex = frameIndex_ & 1u;
+            const std::uint32_t historyWriteIndex = (frameIndex_ * 2u + spp) & 1u;
             const std::uint32_t historyReadIndex = 1u - historyWriteIndex;
             std::array<VkImageMemoryBarrier, 11> historyBeforeCompute{};
             auto setHistoryReadBarrier = [](VkImageMemoryBarrier& barrier, VkImage image, bool initialized) {
