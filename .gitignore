@@ -16,3 +16,4 @@ CMakeUserPresets.json
 *.lib
 *.log
 tools/
+third_party/FidelityFX-FSR2/
