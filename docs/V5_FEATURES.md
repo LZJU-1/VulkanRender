@@ -106,7 +106,8 @@ Implementation:
   - final color history
   - shadow signal history
   - reflection signal history
-- The denoise shader samples previous surface history at the same UV and rejects history across depth/normal discontinuities.
+- The denoise shader now samples previous histories with validated 2x2 bilinear taps and rejects individual taps across depth/normal discontinuities.
+- Final color history falls back to a small 3x3 validated search when the bilinear taps miss due to disocclusion.
 - Final color TAA uses padded 3x3 neighborhood clipping, edge-aware history weighting, a residual edge smoothing pass, and lightweight adaptive sharpening.
 - Neighborhood min/max clamping is applied around the current pixel after reprojection to reduce ghosting.
 - The raw shadow signal uses four channels:
@@ -114,6 +115,7 @@ Implementation:
   - `gba`: imported local-light direct radiance after RT shadowing
 - The camera uniform uses `v4Flags.w` as the current history frame count for v5.
 - Camera pose/FOV changes reduce history confidence so the view visibly re-accumulates; static world positions are still carried through by reprojection instead of sampling the same screen pixel.
+- Halton jitter is driven by the real frame index, not the history confidence counter, so motion does not freeze the subpixel jitter sequence.
 
 Validation:
 

@@ -77,9 +77,16 @@ current pixel -> current world position -> previous camera clip -> previous hist
 
 This gives a static-scene motion vector without adding a separate velocity attachment. It is enough for camera movement and subpixel jitter in bathroom2. Animated or deforming objects still need a real velocity buffer.
 
-When the camera changes, v5 now lowers the effective history frame count so the image visibly re-accumulates instead of trusting an old 240-frame history. While the camera is still, the history count rises again and the denoiser gets more stable.
+When the camera changes, v5 lowers the effective history frame count so the image visibly re-accumulates instead of trusting an old 240-frame history. While the camera is still, the history count rises again and the denoiser gets more stable. The Halton jitter index is driven by the real frame index, not the history frame count, so camera movement still receives fresh subpixel samples.
 
-After reprojection, the denoiser samples previous surface history at the same UV. The sample is accepted only when:
+After reprojection, the denoiser follows the same broad pattern as the local `VulkanHybridRenderer` reference:
+
+- compute a previous-frame coordinate from a motion vector or equivalent reprojection
+- gather the previous history with 2x2 bilinear taps
+- validate each tap against previous normal/depth surface history
+- fall back to a 3x3 search for final color if the aligned 2x2 taps are rejected
+
+The previous sample is accepted only when:
 
 - previous normal is close enough to the current normal
 - previous depth is close enough to the projected previous-frame depth

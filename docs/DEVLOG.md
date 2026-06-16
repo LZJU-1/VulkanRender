@@ -753,3 +753,13 @@ C:\Users\lzju\Desktop\VulkanRender\build\nmake-debug\src\vulkan_render.exe --pro
   - camera movement reduces effective history confidence so the image re-accumulates instead of trusting a stale long history;
   - final resolve now adapts to 1x or optional larger internal scales.
 - Reduced per-pixel directional RT shadow rays so v5 behaves more like a realtime noisy-signal pipeline that relies on temporal/bilateral denoising.
+
+# 2026-06-16 - V5 Moving-Camera TAA Fixes
+
+- Used `.reference/VulkanHybridRenderer` as the local reference for hybrid G-buffer + SVGF-style reprojection.
+- Fixed a moving-camera issue where Halton jitter was tied to the history confidence counter and could freeze while the camera was moving.
+- Upgraded v5 history sampling:
+  - previous final color, shadow, and reflection histories now use validated 2x2 bilinear taps;
+  - previous surface normal/depth history validates each tap;
+  - final color uses a 3x3 validated fallback search when bilinear reprojection misses.
+- Camera motion now caps history confidence at a short accumulation window instead of forcing it down to two frames.

@@ -186,8 +186,7 @@ bool projectPrevWorldToUv(float3 p, out float2 uv, out float previousDepth) {
     return uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0;
 }
 
-bool validatePreviousSurface(Surface surface, float2 previousUv, float projectedDepth) {
-    float4 previousSurface = surfaceHistory.SampleLevel(materialSampler, previousUv, 0.0);
+bool validatePreviousSurfaceSample(Surface surface, float4 previousSurface, float projectedDepth) {
     if (previousSurface.a <= 0.0) {
         return false;
     }
@@ -197,6 +196,171 @@ bool validatePreviousSurface(Surface surface, float2 previousUv, float projected
     float depthTolerance = max(0.08, projectedDepth * 0.035);
     float depthOk = 1.0 - saturate(abs(previousSurface.a - projectedDepth) / depthTolerance);
     return normalOk > 0.62 && depthOk > 0.12;
+}
+
+bool validatePreviousSurface(Surface surface, float2 previousUv, float projectedDepth) {
+    return validatePreviousSurfaceSample(surface, surfaceHistory.SampleLevel(materialSampler, previousUv, 0.0), projectedDepth);
+}
+
+bool insidePixel(int2 pixel, uint width, uint height) {
+    return pixel.x >= 0 && pixel.y >= 0 && pixel.x < (int)width && pixel.y < (int)height;
+}
+
+float validatedTapWeight(Surface surface, int2 pixel, uint width, uint height, float projectedDepth) {
+    if (!insidePixel(pixel, width, height)) {
+        return 0.0;
+    }
+    float4 previousSurface = surfaceHistory.Load(int3(pixel, 0));
+    return validatePreviousSurfaceSample(surface, previousSurface, projectedDepth) ? 1.0 : 0.0;
+}
+
+bool validatedPreviousPixel(Surface surface, float2 previousUv, float projectedDepth, out float2 previousPixelFloat, out int2 basePixel, out float2 fracPixel) {
+    uint width;
+    uint height;
+    surfaceHistory.GetDimensions(width, height);
+    if (previousUv.x < 0.0 || previousUv.x > 1.0 || previousUv.y < 0.0 || previousUv.y > 1.0 || width == 0 || height == 0) {
+        previousPixelFloat = 0.0.xx;
+        basePixel = int2(0, 0);
+        fracPixel = 0.0.xx;
+        return false;
+    }
+    previousPixelFloat = previousUv * float2(width, height) - 0.5.xx;
+    basePixel = int2(floor(previousPixelFloat));
+    fracPixel = frac(previousPixelFloat);
+    return true;
+}
+
+bool sampleValidatedColorHistory(Surface surface, float2 previousUv, float projectedDepth, out float3 color, out float support) {
+    uint width;
+    uint height;
+    historyColor.GetDimensions(width, height);
+    float2 previousPixelFloat;
+    int2 basePixel;
+    float2 fracPixel;
+    color = 0.0.xxx;
+    support = 0.0;
+    if (!validatedPreviousPixel(surface, previousUv, projectedDepth, previousPixelFloat, basePixel, fracPixel)) {
+        return false;
+    }
+
+    float weights[4] = {
+        (1.0 - fracPixel.x) * (1.0 - fracPixel.y),
+        fracPixel.x * (1.0 - fracPixel.y),
+        (1.0 - fracPixel.x) * fracPixel.y,
+        fracPixel.x * fracPixel.y
+    };
+    int2 offsets[4] = {
+        int2(0, 0),
+        int2(1, 0),
+        int2(0, 1),
+        int2(1, 1)
+    };
+
+    [unroll]
+    for (int i = 0; i < 4; ++i) {
+        int2 tap = basePixel + offsets[i];
+        float valid = validatedTapWeight(surface, tap, width, height, projectedDepth);
+        if (valid > 0.0) {
+            color += historyColor.Load(int3(tap, 0)).rgb * weights[i];
+            support += weights[i];
+        }
+    }
+    if (support > 0.0001) {
+        color /= support;
+        return true;
+    }
+
+    int2 center = int2(round(previousPixelFloat));
+    [unroll]
+    for (int y = -1; y <= 1; ++y) {
+        [unroll]
+        for (int x = -1; x <= 1; ++x) {
+            int2 tap = center + int2(x, y);
+            float valid = validatedTapWeight(surface, tap, width, height, projectedDepth);
+            if (valid > 0.0) {
+                color += historyColor.Load(int3(tap, 0)).rgb;
+                support += 1.0;
+            }
+        }
+    }
+    if (support > 0.0001) {
+        color /= support;
+        support = saturate(support / 9.0);
+        return true;
+    }
+    return false;
+}
+
+bool sampleValidatedShadowHistory(Surface surface, float2 previousUv, float projectedDepth, out float4 signal, out float support) {
+    uint width;
+    uint height;
+    shadowHistory.GetDimensions(width, height);
+    float2 previousPixelFloat;
+    int2 basePixel;
+    float2 fracPixel;
+    signal = 0.0.xxxx;
+    support = 0.0;
+    if (!validatedPreviousPixel(surface, previousUv, projectedDepth, previousPixelFloat, basePixel, fracPixel)) {
+        return false;
+    }
+
+    float weights[4] = {
+        (1.0 - fracPixel.x) * (1.0 - fracPixel.y),
+        fracPixel.x * (1.0 - fracPixel.y),
+        (1.0 - fracPixel.x) * fracPixel.y,
+        fracPixel.x * fracPixel.y
+    };
+    int2 offsets[4] = { int2(0, 0), int2(1, 0), int2(0, 1), int2(1, 1) };
+    [unroll]
+    for (int i = 0; i < 4; ++i) {
+        int2 tap = basePixel + offsets[i];
+        float valid = validatedTapWeight(surface, tap, width, height, projectedDepth);
+        if (valid > 0.0) {
+            signal += shadowHistory.Load(int3(tap, 0)) * weights[i];
+            support += weights[i];
+        }
+    }
+    if (support > 0.0001) {
+        signal /= support;
+        return true;
+    }
+    return false;
+}
+
+bool sampleValidatedReflectionHistory(Surface surface, float2 previousUv, float projectedDepth, out float4 signal, out float support) {
+    uint width;
+    uint height;
+    reflectionHistory.GetDimensions(width, height);
+    float2 previousPixelFloat;
+    int2 basePixel;
+    float2 fracPixel;
+    signal = 0.0.xxxx;
+    support = 0.0;
+    if (!validatedPreviousPixel(surface, previousUv, projectedDepth, previousPixelFloat, basePixel, fracPixel)) {
+        return false;
+    }
+
+    float weights[4] = {
+        (1.0 - fracPixel.x) * (1.0 - fracPixel.y),
+        fracPixel.x * (1.0 - fracPixel.y),
+        (1.0 - fracPixel.x) * fracPixel.y,
+        fracPixel.x * fracPixel.y
+    };
+    int2 offsets[4] = { int2(0, 0), int2(1, 0), int2(0, 1), int2(1, 1) };
+    [unroll]
+    for (int i = 0; i < 4; ++i) {
+        int2 tap = basePixel + offsets[i];
+        float valid = validatedTapWeight(surface, tap, width, height, projectedDepth);
+        if (valid > 0.0) {
+            signal += reflectionHistory.Load(int3(tap, 0)) * weights[i];
+            support += weights[i];
+        }
+    }
+    if (support > 0.0001) {
+        signal /= support;
+        return true;
+    }
+    return false;
 }
 
 float surfaceEdgeConfidence(uint2 pixel, uint width, uint height, Surface center) {
@@ -253,13 +417,15 @@ float4 temporalShadowAt(uint2 pixel, uint width, uint height, Surface surface) {
     float2 previousUv;
     float previousDepth;
     float4 previous = current;
+    float previousSupport = 0.0;
     bool hasPrevious = projectPrevWorldToUv(surface.worldPos, previousUv, previousDepth);
-    hasPrevious = hasPrevious && validatePreviousSurface(surface, previousUv, previousDepth);
+    hasPrevious = hasPrevious && sampleValidatedShadowHistory(surface, previousUv, previousDepth, previous, previousSupport);
     if (hasPrevious) {
-        previous = clamp(shadowHistory.SampleLevel(materialSampler, previousUv, 0.0), lo, hi);
+        previous = clamp(previous, lo, hi);
     }
     float historyFrames = max(v4Flags.w, 0.0);
     float historyWeight = (historyFrames < 1.0 || !hasPrevious) ? 0.0 : min(0.96, historyFrames / (historyFrames + 1.0));
+    historyWeight *= saturate(previousSupport);
     float localCurrent = dot(current.gba, float3(0.2126, 0.7152, 0.0722));
     float localPrevious = dot(previous.gba, float3(0.2126, 0.7152, 0.0722));
     float disagreement = abs(current.r - previous.r) + abs(localCurrent - localPrevious) * 0.25;
@@ -283,13 +449,15 @@ float4 temporalReflectionAt(uint2 pixel, uint width, uint height, Surface surfac
     float2 previousUv;
     float previousDepth;
     float4 previous = current;
+    float previousSupport = 0.0;
     bool hasPrevious = projectPrevWorldToUv(surface.worldPos, previousUv, previousDepth);
-    hasPrevious = hasPrevious && validatePreviousSurface(surface, previousUv, previousDepth);
+    hasPrevious = hasPrevious && sampleValidatedReflectionHistory(surface, previousUv, previousDepth, previous, previousSupport);
     if (hasPrevious) {
-        previous = clamp(reflectionHistory.SampleLevel(materialSampler, previousUv, 0.0), lo, hi);
+        previous = clamp(previous, lo, hi);
     }
     float historyFrames = max(v4Flags.w, 0.0);
     float historyWeight = (historyFrames < 1.0 || !hasPrevious) ? 0.0 : min(0.94, historyFrames / (historyFrames + 2.0));
+    historyWeight *= saturate(previousSupport);
     float lumaCurrent = dot(current.rgb, float3(0.2126, 0.7152, 0.0722));
     float lumaPrevious = dot(previous.rgb, float3(0.2126, 0.7152, 0.0722));
     historyWeight *= 1.0 - saturate(abs(lumaCurrent - lumaPrevious) * 2.0);
@@ -480,10 +648,13 @@ void writeAccumulatedColor(uint2 pixel, uint width, uint height, float3 currentC
     float2 previousUv;
     float previousDepth;
     bool hasPrevious = hasSurface && projectPrevWorldToUv(surface.worldPos, previousUv, previousDepth);
-    hasPrevious = hasPrevious && validatePreviousSurface(surface, previousUv, previousDepth);
     float3 previousColor = currentColor;
+    float previousSupport = 0.0;
     if (hasPrevious) {
-        previousColor = clamp(historyColor.SampleLevel(materialSampler, previousUv, 0.0).rgb, neighborhoodMin, neighborhoodMax);
+        hasPrevious = sampleValidatedColorHistory(surface, previousUv, previousDepth, previousColor, previousSupport);
+    }
+    if (hasPrevious) {
+        previousColor = clamp(previousColor, neighborhoodMin, neighborhoodMax);
     }
     float lumaCurrent = dot(currentColor, float3(0.2126, 0.7152, 0.0722));
     float lumaPrevious = dot(previousColor, float3(0.2126, 0.7152, 0.0722));
@@ -491,6 +662,7 @@ void writeAccumulatedColor(uint2 pixel, uint width, uint height, float3 currentC
     float edge = hasSurface ? surfaceEdgeConfidence(pixel, width, height, surface) : 0.0;
     float baseHistoryWeight = lerp(0.91, 0.965, edge);
     float historyWeight = (historyFrames < 1.0 || !hasPrevious) ? 0.0 : min(baseHistoryWeight, historyFrames / (historyFrames + 0.65));
+    historyWeight *= saturate(previousSupport);
     float lumaDisagreement = abs(lumaCurrent - lumaPrevious);
     historyWeight *= 1.0 - saturate(lumaDisagreement * lerp(4.0, 1.85, edge));
     float3 accumulated = lerp(currentColor, previousColor, historyWeight);

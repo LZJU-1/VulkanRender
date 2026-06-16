@@ -2384,7 +2384,7 @@ private:
             if (!hasLastV5Camera_) {
                 v5HistoryFrameCount_ = 0;
             } else if (cameraChanged) {
-                v5HistoryFrameCount_ = std::min<std::uint32_t>(v5HistoryFrameCount_ + 1u, 2u);
+                v5HistoryFrameCount_ = std::min<std::uint32_t>(v5HistoryFrameCount_ + 1u, 8u);
             } else {
                 v5HistoryFrameCount_ = std::min<std::uint32_t>(v5HistoryFrameCount_ + 1u, 240u);
             }
@@ -2392,7 +2392,7 @@ private:
             hasLastV5Camera_ = true;
             uniform.v4Flags[3] = static_cast<float>(v5HistoryFrameCount_);
 
-            const std::uint32_t jitterIndex = (v5HistoryFrameCount_ % 16u) + 1u;
+            const std::uint32_t jitterIndex = (frameIndex_ % 16u) + 1u;
             const float jitterPixelX = halton(jitterIndex, 2u) - 0.5f;
             const float jitterPixelY = halton(jitterIndex, 3u) - 0.5f;
             uniform.taaJitter[0] = (2.0f * jitterPixelX) / static_cast<float>(std::max<std::uint32_t>(renderExtent.width, 1u));
