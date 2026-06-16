@@ -154,7 +154,6 @@ inline std::uint32_t mipLevelsFor(std::uint32_t width, std::uint32_t height) {
 }
 
 inline VkSampleCountFlagBits chooseSampleCount(VkSampleCountFlags counts) {
-    if (counts & VK_SAMPLE_COUNT_8_BIT) return VK_SAMPLE_COUNT_8_BIT;
     if (counts & VK_SAMPLE_COUNT_4_BIT) return VK_SAMPLE_COUNT_4_BIT;
     if (counts & VK_SAMPLE_COUNT_2_BIT) return VK_SAMPLE_COUNT_2_BIT;
     return VK_SAMPLE_COUNT_1_BIT;
