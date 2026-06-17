@@ -1363,6 +1363,13 @@ const cgltf_accessor* findAttribute(const cgltf_primitive& primitive, cgltf_attr
     return nullptr;
 }
 
+Vec2 readAccessorVec2(const cgltf_accessor* accessor, cgltf_size index, Vec2 fallback = {0.0f, 0.0f}) {
+    if (!accessor) { return fallback; }
+    float value[4] = {fallback.x, fallback.y, 0.0f, 0.0f};
+    if (!cgltf_accessor_read_float(accessor, index, value, 4)) { return fallback; }
+    return {value[0], value[1]};
+}
+
 Vec3 readAccessorVec3(const cgltf_accessor* accessor, cgltf_size index, Vec3 fallback = {}) {
     if (!accessor) {
         return fallback;
@@ -2006,6 +2013,7 @@ void appendGltfPrimitive(const cgltf_node& node, const cgltf_primitive& primitiv
     const cgltf_accessor* colors = findAttribute(primitive, cgltf_attribute_type_color);
     const cgltf_accessor* normals = findAttribute(primitive, cgltf_attribute_type_normal);
     const cgltf_accessor* tangents = findAttribute(primitive, cgltf_attribute_type_tangent);
+    const cgltf_accessor* texcoords = findAttribute(primitive, cgltf_attribute_type_texcoord);
     const Color materialColor = colorFromFactor(primitive);
 
     // Extract glTF PBR material properties
@@ -2090,6 +2098,12 @@ void appendGltfPrimitive(const cgltf_node& node, const cgltf_primitive& primitiv
         tri.metalness = texMetalness;
         tri.materialKind = matKind;
         tri.emission = emissiveColor;
+        // UV coordinates — required for texture mapping
+        if (texcoords) {
+            tri.uvA = readAccessorVec2(texcoords, ia);
+            tri.uvB = readAccessorVec2(texcoords, ib);
+            tri.uvC = readAccessorVec2(texcoords, ic);
+        }
         if (!albedoTex.empty()) { tri.hasAlbedoTexture = true; tri.albedoTexturePath = albedoTex; }
         if (!roughnessTex.empty()) { tri.roughnessTexturePath = roughnessTex; }
         if (!normalTex.empty()) { tri.hasAlbedoTexture = true; /* triggers detail texture path */ }
