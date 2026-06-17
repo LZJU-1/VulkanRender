@@ -95,6 +95,9 @@ PFN_vkCreateAccelerationStructureKHR vkCreateAccelerationStructureKHR = nullptr;
 PFN_vkDestroyAccelerationStructureKHR vkDestroyAccelerationStructureKHR = nullptr;
 PFN_vkGetAccelerationStructureBuildSizesKHR vkGetAccelerationStructureBuildSizesKHR = nullptr;
 PFN_vkCmdBuildAccelerationStructuresKHR vkCmdBuildAccelerationStructuresKHR = nullptr;
+PFN_vkCreateRayTracingPipelinesKHR vkCreateRayTracingPipelinesKHR = nullptr;
+PFN_vkCmdTraceRaysKHR vkCmdTraceRaysKHR = nullptr;
+PFN_vkGetRayTracingShaderGroupHandlesKHR vkGetRayTracingShaderGroupHandlesKHR = nullptr;
 PFN_vkGetAccelerationStructureDeviceAddressKHR vkGetAccelerationStructureDeviceAddressKHR = nullptr;
 
 namespace {
@@ -266,6 +269,9 @@ void loadDeviceFunctions(VkDevice device, bool enableRayTracing) {
         loadDevice(device, vkGetAccelerationStructureBuildSizesKHR, "vkGetAccelerationStructureBuildSizesKHR");
         loadDevice(device, vkCmdBuildAccelerationStructuresKHR, "vkCmdBuildAccelerationStructuresKHR");
         loadDevice(device, vkGetAccelerationStructureDeviceAddressKHR, "vkGetAccelerationStructureDeviceAddressKHR");
+        loadDevice(device, vkCreateRayTracingPipelinesKHR, "vkCreateRayTracingPipelinesKHR");
+        loadDevice(device, vkCmdTraceRaysKHR, "vkCmdTraceRaysKHR");
+        loadDevice(device, vkGetRayTracingShaderGroupHandlesKHR, "vkGetRayTracingShaderGroupHandlesKHR");
     }
 }
 

@@ -412,11 +412,12 @@ private:
                 continue;
             }
             if (enableV5RayTracing_) {
-                const std::array<const char*, 6> required{
+                const std::array<const char*, 7> required{
                     VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
                     VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
                     VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
                     VK_KHR_RAY_QUERY_EXTENSION_NAME,
+                    VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
                     VK_KHR_SPIRV_1_4_EXTENSION_NAME,
                     VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
                 };
@@ -451,13 +452,17 @@ private:
                 accelerationStructure.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
                 VkPhysicalDeviceRayQueryFeaturesKHR rayQuery{};
                 rayQuery.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+                VkPhysicalDeviceRayTracingPipelineFeaturesKHR rayTracingPipeline{};
+                rayTracingPipeline.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+                rayTracingPipeline.rayTracingPipeline = VK_TRUE;
+                rayQuery.pNext = &rayTracingPipeline;
                 accelerationStructure.pNext = &rayQuery;
                 bufferDeviceAddress.pNext = &accelerationStructure;
                 VkPhysicalDeviceFeatures2 features2{};
                 features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
                 features2.pNext = &bufferDeviceAddress;
                 vkGetPhysicalDeviceFeatures2(device, &features2);
-                if (bufferDeviceAddress.bufferDeviceAddress != VK_TRUE || accelerationStructure.accelerationStructure != VK_TRUE || rayQuery.rayQuery != VK_TRUE) {
+                if (bufferDeviceAddress.bufferDeviceAddress != VK_TRUE || accelerationStructure.accelerationStructure != VK_TRUE || rayQuery.rayQuery != VK_TRUE || rayTracingPipeline.rayTracingPipeline != VK_TRUE) {
                     continue;
                 }
             }
@@ -492,6 +497,7 @@ private:
 
         std::vector<const char*> extensions{VK_KHR_SWAPCHAIN_EXTENSION_NAME};
         VkPhysicalDeviceBufferDeviceAddressFeatures bufferDeviceAddress{};
+        VkPhysicalDeviceRayTracingPipelineFeaturesKHR rayTracingPipeline{};
         VkPhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructure{};
         VkPhysicalDeviceRayQueryFeaturesKHR rayQuery{};
         if (enableV5RayTracing_) {
@@ -499,6 +505,7 @@ private:
             extensions.push_back(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
             extensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
             extensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+            extensions.push_back(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
             extensions.push_back(VK_KHR_SPIRV_1_4_EXTENSION_NAME);
             extensions.push_back(VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME);
 
@@ -507,6 +514,9 @@ private:
             accelerationStructure.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
             accelerationStructure.accelerationStructure = VK_TRUE;
             rayQuery.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+            rayTracingPipeline.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+            rayTracingPipeline.rayTracingPipeline = VK_TRUE;
+            rayQuery.pNext = &rayTracingPipeline;
             rayQuery.rayQuery = VK_TRUE;
             accelerationStructure.pNext = &rayQuery;
             bufferDeviceAddress.pNext = &accelerationStructure;
