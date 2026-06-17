@@ -552,7 +552,8 @@ float3 composeLinear(Surface surface, float4 shadow, float3 reflection) {
     bool importedLightScene = v4Flags.y > 0.5;
     float3 direct = 0.0.xxx;
     if (importedLightScene) {
-        direct = shadow.gba;
+        float visibilityWeight = 0.12 + shadow.r * 0.88;
+        direct = importedRasterDirect(surface, view) * visibilityWeight + shadow.gba * 0.30;
     } else {
         direct = shadow.gba;
         float3 lightDir = normalize(-shadowForwardFar.xyz);
