@@ -548,14 +548,14 @@ float3 composeLinear(Surface surface, float4 shadow, float3 reflection) {
     float3 view = normalize(eyeNear.xyz - surface.worldPos);
     float3 lightDir = normalize(-shadowForwardFar.xyz);
     float3 direct = shadow.gba;
-    direct += pbrDirectional(surface, view, lightDir, float3(1.10, 1.04, 0.92), 3.15, shadow.r);
+    direct += pbrDirectional(surface, view, lightDir, float3(1.10, 1.04, 0.92), 12.0, shadow.r);
     float ndotv = max(0.04, saturate(dot(surface.normal, view)));
     float3 f0 = lerp(0.04.xxx, surface.base, surface.metalness);
     float3 fresnel = fresnelSchlick(ndotv, f0);
     float smoothness = saturate((0.58 - surface.roughness) / 0.58);
     bool mirrorMaterial = abs(surface.materialKind - 2.0) < 0.25;
     float reflectionWeight = mirrorMaterial ? 1.0 : smoothness * smoothness * lerp(0.025, 0.86, surface.metalness);
-    float3 ambient = mirrorMaterial ? 0.0.xxx : surface.base * 0.24;
+    float3 ambient = mirrorMaterial ? 0.0.xxx : surface.base * 0.40;
     return ambient + direct + reflection * fresnel * reflectionWeight;
 }
 
