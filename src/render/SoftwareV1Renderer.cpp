@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <deque>
 #include <map>
 #include <sstream>
 #include <stdexcept>
@@ -2113,6 +2114,29 @@ GltfScene loadGltfScene(const std::filesystem::path& path) {
     result = cgltf_load_buffers(&options, data, pathString.c_str());
     if (result != cgltf_result_success) {
         throw std::runtime_error("Could not load glTF buffers: " + path.string());
+    }
+
+    // Extract embedded textures to cache dir
+    const auto cacheDir = path.parent_path() / (path.stem().string() + "_textures");
+    for (cgltf_size imgIdx = 0; imgIdx < data->images_count; ++imgIdx) {
+        cgltf_image& img = data->images[imgIdx];
+        if (img.uri && img.uri[0] != '\0') continue; // already has external path
+        if (!img.buffer_view) continue; // not embedded
+        const auto* buf = static_cast<const uint8_t*>(img.buffer_view->buffer->data);
+        if (!buf) continue;
+        const size_t offset = img.buffer_view->offset;
+        const size_t size = img.buffer_view->size;
+        if (offset + size > img.buffer_view->buffer->size) continue;
+        std::filesystem::create_directories(cacheDir);
+        const auto outPath = cacheDir / ("tex_" + std::to_string(imgIdx) + ".png");
+        if (!std::filesystem::exists(outPath)) {
+            std::ofstream(cacheDir / ("tex_" + std::to_string(imgIdx) + ".png"), std::ios::binary)
+                .write(reinterpret_cast<const char*>(buf + offset), static_cast<std::streamsize>(size));
+        }
+        // Allocate persistent URI string that cgltf can reference
+        static std::deque<std::string> uriStorage;
+        uriStorage.push_back(outPath.string());
+        img.uri = const_cast<char*>(uriStorage.back().c_str());
     }
 
     GltfScene scene;
