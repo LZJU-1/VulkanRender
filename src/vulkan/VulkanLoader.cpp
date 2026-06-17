@@ -10,6 +10,7 @@ PFN_vkCreateWin32SurfaceKHR vkCreateWin32SurfaceKHR = nullptr;
 PFN_vkDestroySurfaceKHR vkDestroySurfaceKHR = nullptr;
 PFN_vkEnumeratePhysicalDevices vkEnumeratePhysicalDevices = nullptr;
 PFN_vkGetPhysicalDeviceProperties vkGetPhysicalDeviceProperties = nullptr;
+PFN_vkGetPhysicalDeviceProperties2 vkGetPhysicalDeviceProperties2 = nullptr;
 PFN_vkGetPhysicalDeviceFeatures vkGetPhysicalDeviceFeatures = nullptr;
 PFN_vkGetPhysicalDeviceFeatures2 vkGetPhysicalDeviceFeatures2 = nullptr;
 PFN_vkGetPhysicalDeviceFormatProperties vkGetPhysicalDeviceFormatProperties = nullptr;
@@ -179,6 +180,7 @@ void loadInstanceFunctions(VkInstance instance) {
     loadInstance(instance, vkDestroySurfaceKHR, "vkDestroySurfaceKHR");
     loadInstance(instance, vkEnumeratePhysicalDevices, "vkEnumeratePhysicalDevices");
     loadInstance(instance, vkGetPhysicalDeviceProperties, "vkGetPhysicalDeviceProperties");
+    loadInstance(instance, vkGetPhysicalDeviceProperties2, "vkGetPhysicalDeviceProperties2");
     loadInstance(instance, vkGetPhysicalDeviceFeatures, "vkGetPhysicalDeviceFeatures");
     loadInstance(instance, vkGetPhysicalDeviceFeatures2, "vkGetPhysicalDeviceFeatures2");
     loadInstance(instance, vkGetPhysicalDeviceFormatProperties, "vkGetPhysicalDeviceFormatProperties");

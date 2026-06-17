@@ -126,6 +126,7 @@ public:
         createCommands();
         previewLog("VulkanGpuRenderer: createSync");
         createSync();
+        createV5RTPipeline();
         previewLog("VulkanGpuRenderer: ready");
     }
 
@@ -147,6 +148,9 @@ public:
         if (device_ != VK_NULL_HANDLE && v5DownsamplePipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, v5DownsamplePipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && v5DenoisePipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, v5DenoisePipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && v5RayTracingPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, v5RayTracingPipeline_, nullptr);
+        if (device_ != VK_NULL_HANDLE && v5RTPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, v5RTPipeline_, nullptr);
+        if (device_ != VK_NULL_HANDLE && v5RTSbtBuffer_ != VK_NULL_HANDLE) vkDestroyBuffer(device_, v5RTSbtBuffer_, nullptr);
+        if (device_ != VK_NULL_HANDLE && v5RTSbtMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, v5RTSbtMemory_, nullptr);
         if (device_ != VK_NULL_HANDLE && instancedGBufferPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, instancedGBufferPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && gbufferPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, gbufferPipeline_, nullptr);
         if (device_ != VK_NULL_HANDLE && shadowPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, shadowPipeline_, nullptr);
@@ -2342,6 +2346,87 @@ private:
         }
     }
 
+    VkShaderModule createShaderModule(const std::filesystem::path& path) {
+        const std::vector<std::uint32_t> code = readSpirv(resolveProjectPath(path));
+        VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0, code.size() * 4, code.data()};
+        VkShaderModule m = VK_NULL_HANDLE;
+        require(vkCreateShaderModule(device_, &info, nullptr, &m), "vkCreateShaderModule(rt)");
+        return m;
+    }
+
+    void createV5RTPipeline() {
+        if (!enableV5RayTracing_) return;
+        rtProps_.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
+        VkPhysicalDeviceProperties2 props2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &rtProps_};
+        vkGetPhysicalDeviceProperties2(physicalDevice_, &props2);
+
+        const VkShaderModule rgen = createShaderModule("shaders/vulkan_gpu/v5_rt_pipeline_rgen.spv");
+        const VkShaderModule rmiss = createShaderModule("shaders/vulkan_gpu/v5_rt_pipeline_rmiss.spv");
+        const VkShaderModule rmissShadow = createShaderModule("shaders/vulkan_gpu/v5_rt_pipeline_shadow_rmiss.spv");
+        const VkShaderModule rchit = createShaderModule("shaders/vulkan_gpu/v5_rt_pipeline_rchit.spv");
+
+        VkPipelineShaderStageCreateInfo stages[4]{};
+        stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[0].stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR; stages[0].module = rgen; stages[0].pName = "RayGen";
+        stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[1].stage = VK_SHADER_STAGE_MISS_BIT_KHR; stages[1].module = rmiss; stages[1].pName = "Miss";
+        stages[2].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[2].stage = VK_SHADER_STAGE_MISS_BIT_KHR; stages[2].module = rmissShadow; stages[2].pName = "ShadowMiss";
+        stages[3].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[3].stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR; stages[3].module = rchit; stages[3].pName = "ClosestHit";
+
+        VkRayTracingShaderGroupCreateInfoKHR groups[4]{};
+        groups[0].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+        groups[0].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+        groups[0].generalShader = 0; groups[0].closestHitShader = VK_SHADER_UNUSED_KHR;
+        groups[0].anyHitShader = VK_SHADER_UNUSED_KHR; groups[0].intersectionShader = VK_SHADER_UNUSED_KHR;
+        groups[1].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+        groups[1].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+        groups[1].generalShader = 1; groups[1].closestHitShader = VK_SHADER_UNUSED_KHR;
+        groups[1].anyHitShader = VK_SHADER_UNUSED_KHR; groups[1].intersectionShader = VK_SHADER_UNUSED_KHR;
+        groups[2].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+        groups[2].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+        groups[2].generalShader = 2; groups[2].closestHitShader = VK_SHADER_UNUSED_KHR;
+        groups[2].anyHitShader = VK_SHADER_UNUSED_KHR; groups[2].intersectionShader = VK_SHADER_UNUSED_KHR;
+        groups[3].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+        groups[3].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
+        groups[3].generalShader = VK_SHADER_UNUSED_KHR;
+        groups[3].closestHitShader = 3; groups[3].anyHitShader = VK_SHADER_UNUSED_KHR;
+        groups[3].intersectionShader = VK_SHADER_UNUSED_KHR;
+
+        VkRayTracingPipelineCreateInfoKHR rtInfo{};
+        rtInfo.sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
+        rtInfo.stageCount = 4; rtInfo.pStages = stages;
+        rtInfo.groupCount = 4; rtInfo.pGroups = groups;
+        rtInfo.maxPipelineRayRecursionDepth = 1;
+        rtInfo.layout = v5RayTracingPipelineLayout_;
+        require(vkCreateRayTracingPipelinesKHR(device_, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &rtInfo, nullptr, &v5RTPipeline_), "vkCreateRayTracingPipelinesKHR");
+
+        vkDestroyShaderModule(device_, rgen, nullptr); vkDestroyShaderModule(device_, rmiss, nullptr);
+        vkDestroyShaderModule(device_, rmissShadow, nullptr); vkDestroyShaderModule(device_, rchit, nullptr);
+
+        // SBT
+        const uint32_t handleSize = rtProps_.shaderGroupHandleSize;
+        const uint32_t handleAligned = (handleSize + rtProps_.shaderGroupBaseAlignment - 1) & ~(rtProps_.shaderGroupBaseAlignment - 1);
+        const uint32_t sbtSize = handleAligned * 4;
+        std::vector<uint8_t> handles(sbtSize);
+        vkGetRayTracingShaderGroupHandlesKHR(device_, v5RTPipeline_, 0, 4, sbtSize, handles.data());
+
+        createBuffer(sbtSize, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR,
+            v5RTSbtBuffer_, v5RTSbtMemory_, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT);
+        void* sbtData = nullptr;
+        vkMapMemory(device_, v5RTSbtMemory_, 0, sbtSize, 0, &sbtData);
+        for (uint32_t g = 0; g < 4; ++g) memcpy((uint8_t*)sbtData + g * handleAligned, handles.data() + g * handleSize, handleSize);
+        vkUnmapMemory(device_, v5RTSbtMemory_);
+
+        VkDeviceAddress sbtAddr = bufferDeviceAddress(v5RTSbtBuffer_);
+        v5RTRaygenSbt_ = {sbtAddr + 0 * handleAligned, handleAligned, handleAligned};
+        v5RTMissSbt_   = {sbtAddr + 1 * handleAligned, handleAligned, handleAligned * 2};
+        v5RTHitSbt_    = {sbtAddr + 3 * handleAligned, handleAligned, handleAligned};
+
+        previewLog("createV5RTPipeline: ready");
+    }
+
     void createCommands() {
         VkCommandPoolCreateInfo pool{};
         pool.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -2779,12 +2864,12 @@ private:
                 &toGeneral
             );
 
-            if (frameIndex_ < 4) previewLog("record v5: dispatch ray signal compute");
-            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, v5RayTracingPipeline_);
+            if (frameIndex_ < 4) previewLog("record v5: dispatch ray signal (RT pipeline)");
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, v5RTPipeline_);
             const std::size_t descriptorIndex = static_cast<std::size_t>(imageIndex) * 2u + historyWriteIndex;
             const VkDescriptorSet descriptorSet = v5DescriptorSets_[descriptorIndex];
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, v5RayTracingPipelineLayout_, 0, 1, &descriptorSet, 0, nullptr);
-            vkCmdDispatch(commandBuffer, (internalExtent.width + 7u) / 8u, (internalExtent.height + 7u) / 8u, 1);
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, v5RayTracingPipelineLayout_, 0, 1, &descriptorSet, 0, nullptr);
+            vkCmdTraceRaysKHR(commandBuffer, &v5RTRaygenSbt_, &v5RTMissSbt_, &v5RTHitSbt_, &v5RTHitSbt_, internalExtent.width, internalExtent.height, 1);
 
             std::array<VkImageMemoryBarrier, 2> signalAfterRay{};
             auto setSignalReadBarrier = [](VkImageMemoryBarrier& barrier, VkImage image) {
@@ -3182,6 +3267,14 @@ private:
     std::array<float, 2> lastV5Jitter_{0.0f, 0.0f};
     bool hasLastV5Camera_ = false;
     bool enableV4Ssao_ = false;
+    // Hardware RT pipeline
+    VkPipeline v5RTPipeline_ = VK_NULL_HANDLE;
+    VkBuffer v5RTSbtBuffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory v5RTSbtMemory_ = VK_NULL_HANDLE;
+    VkStridedDeviceAddressRegionKHR v5RTRaygenSbt_{};
+    VkStridedDeviceAddressRegionKHR v5RTMissSbt_{};
+    VkStridedDeviceAddressRegionKHR v5RTHitSbt_{};
+    VkPhysicalDeviceRayTracingPipelinePropertiesKHR rtProps_{};
 };
 
 struct PreviewState {
