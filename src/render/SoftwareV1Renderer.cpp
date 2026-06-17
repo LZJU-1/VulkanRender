@@ -2006,6 +2006,44 @@ void appendGltfPrimitive(const cgltf_node& node, const cgltf_primitive& primitiv
     const cgltf_accessor* normals = findAttribute(primitive, cgltf_attribute_type_normal);
     const cgltf_accessor* tangents = findAttribute(primitive, cgltf_attribute_type_tangent);
     const Color materialColor = colorFromFactor(primitive);
+
+    // Extract glTF PBR material properties
+    float texRoughness = 0.7f, texMetalness = 0.0f;
+    MaterialKind matKind = MaterialKind::Pbr;
+    std::filesystem::path albedoTex, roughnessTex, normalTex, displacementTex;
+    Vec3 emissiveColor{0.0f, 0.0f, 0.0f};
+
+    if (primitive.material) {
+        if (primitive.material->has_pbr_metallic_roughness) {
+            const auto& pbr = primitive.material->pbr_metallic_roughness;
+            texRoughness = pbr.roughness_factor;
+            texMetalness = pbr.metallic_factor;
+            if (pbr.base_color_texture.texture && pbr.base_color_texture.texture->image) {
+                const char* uri = pbr.base_color_texture.texture->image->uri;
+                if (uri && !strstr(uri, "data:")) albedoTex = uri;
+            }
+            if (pbr.metallic_roughness_texture.texture && pbr.metallic_roughness_texture.texture->image) {
+                const char* uri = pbr.metallic_roughness_texture.texture->image->uri;
+                if (uri && !strstr(uri, "data:")) roughnessTex = uri;
+            }
+        }
+        if (primitive.material->normal_texture.texture && primitive.material->normal_texture.texture->image) {
+            const char* uri = primitive.material->normal_texture.texture->image->uri;
+            if (uri && !strstr(uri, "data:")) normalTex = uri;
+        }
+        if (primitive.material->has_emissive_strength || primitive.material->emissive_factor[0] > 0.01f ||
+            primitive.material->emissive_factor[1] > 0.01f || primitive.material->emissive_factor[2] > 0.01f) {
+            emissiveColor = Vec3{primitive.material->emissive_factor[0],
+                                 primitive.material->emissive_factor[1],
+                                 primitive.material->emissive_factor[2]};
+            if (luminance(emissiveColor) > 0.1f) {
+                matKind = MaterialKind::Emissive;
+            }
+        }
+        // Mirror detection: very low roughness + fully metallic
+        if (texRoughness < 0.08f && texMetalness > 0.9f) matKind = MaterialKind::Mirror;
+    }
+
     float world[16]{};
     cgltf_node_transform_world(&node, world);
 
@@ -2047,6 +2085,13 @@ void appendGltfPrimitive(const cgltf_node& node, const cgltf_primitive& primitiv
             tri.tangentC = fallbackTangent;
         }
         tri.baseColor = colorToVec(color);
+        tri.roughness = texRoughness;
+        tri.metalness = texMetalness;
+        tri.materialKind = matKind;
+        tri.emission = emissiveColor;
+        if (!albedoTex.empty()) { tri.hasAlbedoTexture = true; tri.albedoTexturePath = albedoTex; }
+        if (!roughnessTex.empty()) { tri.roughnessTexturePath = roughnessTex; }
+        if (!normalTex.empty()) { tri.hasAlbedoTexture = true; /* triggers detail texture path */ }
         triangles.push_back(tri);
     }
 }
