@@ -707,6 +707,14 @@ void writeAccumulatedColor(uint2 pixel, uint width, uint height, float3 currentC
     float baseHistoryWeight = lerp(0.94, 0.975, edge);
     float historyWeightLuma = (historyFrames < 1.0 || !hasPrevious) ? 0.0 : min(baseHistoryWeight, historyFrames / (historyFrames + 0.45));
     historyWeightLuma *= saturate(previousSupport);
+
+    // Variance-guided alpha (SVGF-style): noisy pixels blend more aggressively
+    float lumaVariance = abs(currentYCoCg.x - previousYCoCg.x);
+    lumaVariance *= lumaVariance;
+    float sigma = max(0.002, sqrt(lumaVariance));
+    float varianceBoost = saturate(sigma / (sigma + 0.04));
+    historyWeightLuma = max(historyWeightLuma, varianceBoost * 0.92);
+
     float lumaDisagreement = abs(currentYCoCg.x - previousYCoCg.x);
     historyWeightLuma *= 1.0 - saturate(lumaDisagreement * lerp(3.5, 1.5, edge));
 

@@ -270,8 +270,8 @@ public:
             return;
         }
 
-        const bool multiSpp = enableV5RayTracing_;
-        const std::uint32_t sppCount = multiSpp ? 2u : 1u;
+        const bool multiSpp = false;  // 1 SPP — aligned with SVGF reference
+        const std::uint32_t sppCount = 1u;
         const VkPipelineStageFlags waitStage = multiSpp ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 
         if (logFrame) previewLog("draw: reset fence");

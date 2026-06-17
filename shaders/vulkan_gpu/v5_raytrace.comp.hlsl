@@ -350,39 +350,7 @@ float3 rayTracedReflection(Surface surface, float3 cameraToSurface, float3 view)
                     float visibility = rayTracedVisibility(projectedHit.worldPos, projectedHit.normal, lightDir, uint2(hitUv * 8192.0));
                     float3 direct = pbrDirectional(projectedHit, reflectedView, lightDir, float3(1.10, 1.04, 0.92), 2.0, visibility);
                     direct += importedLightsRadiance(projectedHit, reflectedView, uint2(hitUv * 8192.0));
-                    float3 firstBounce = projectedHit.base * 0.20 + direct;
-
-                    // 2nd bounce: reflect the first ray from the first-hit surface.
-                    float hitSmoothness = saturate((0.58 - projectedHit.roughness) / 0.58);
-                    float hitReflectionWeight = hitSmoothness * hitSmoothness * lerp(0.025, 0.86, projectedHit.metalness);
-                    float3 secondDir = normalize(reflect(reflectionDir, projectedHit.normal));
-                    if (hitReflectionWeight > 0.05 && dot(secondDir, projectedHit.normal) > 0.01) {
-                        float3 secondOrigin = projectedHit.worldPos + projectedHit.normal * 0.05;
-                        float secondDist;
-                        bool secondHit = traceSceneRay(secondOrigin, secondDir, 0.04, max(rightFar.w, 24.0), secondDist);
-                        if (secondHit) {
-                            float3 secondHitPoint = secondOrigin + secondDir * secondDist;
-                            float2 secondUv;
-                            float secondCamZ;
-                            if (projectWorldToUv(secondHitPoint, secondUv, secondCamZ)) {
-                                Surface secondSurface;
-                                if (readSurface(secondUv, secondSurface)) {
-                                    float gbufDepth = dot(secondSurface.worldPos - eyeNear.xyz, forwardAspect.xyz);
-                                    if (abs(secondCamZ - gbufDepth) < max(0.15, secondCamZ * 0.06)) {
-                                        float3 secondView = normalize(eyeNear.xyz - secondSurface.worldPos);
-                                        float secondVis = traceShadowRay(secondSurface.worldPos, secondSurface.normal, lightDir, max(rightFar.w, 32.0));
-                                        float3 secondDirect = pbrDirectional(secondSurface, secondView, lightDir, float3(1.04, 0.98, 0.88), 1.5, secondVis);
-                                        secondDirect += importedLightsRadiance(secondSurface, secondView, uint2(secondUv * 4096.0));
-                                        float3 secondBounce = secondSurface.base * 0.18 + secondDirect;
-                                        float3 f0 = lerp(0.04.xxx, projectedHit.base, projectedHit.metalness);
-                                        float3 fresnel = fresnelSchlick(saturate(dot(projectedHit.normal, -reflectionDir)), f0);
-                                        firstBounce += secondBounce * fresnel * hitReflectionWeight * 0.5;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    return firstBounce;
+                    return projectedHit.base * 0.20 + direct;
                 }
             }
         }
