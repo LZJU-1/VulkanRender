@@ -57,9 +57,6 @@ RWTexture2D<float2> motionVectorHistory : register(u34);
 [[vk::binding(20, 0)]] StructuredBuffer<SceneLight> sceneLights;
 
 float3 skyColorAtUv(float2 uv) {
-    if (v4Flags.y > 0.5) {
-        return 0.0.xxx;
-    }
     float2 ndc = uv * 2.0 - 1.0 - taaJitter.xy;
     float3 cameraRay = normalize(forwardAspect.xyz + rightFar.xyz * ndc.x * forwardAspect.w * upTanHalf.w + upTanHalf.xyz * -ndc.y * upTanHalf.w);
     return toneMap(skyRadiance(cameraRay));
@@ -549,23 +546,16 @@ float3 importedRasterDirect(Surface surface, float3 view) {
 
 float3 composeLinear(Surface surface, float4 shadow, float3 reflection) {
     float3 view = normalize(eyeNear.xyz - surface.worldPos);
-    bool importedLightScene = v4Flags.y > 0.5;
-    float3 direct = 0.0.xxx;
-    if (importedLightScene) {
-        float visibilityWeight = 0.12 + shadow.r * 0.88;
-        direct = importedRasterDirect(surface, view) * visibilityWeight + shadow.gba * 0.30;
-    } else {
-        direct = shadow.gba;
-        float3 lightDir = normalize(-shadowForwardFar.xyz);
-        direct += pbrDirectional(surface, view, lightDir, float3(1.10, 1.04, 0.92), 3.15, shadow.r);
-    }
+    float3 lightDir = normalize(-shadowForwardFar.xyz);
+    float3 direct = shadow.gba;
+    direct += pbrDirectional(surface, view, lightDir, float3(1.10, 1.04, 0.92), 3.15, shadow.r);
     float ndotv = max(0.04, saturate(dot(surface.normal, view)));
     float3 f0 = lerp(0.04.xxx, surface.base, surface.metalness);
     float3 fresnel = fresnelSchlick(ndotv, f0);
     float smoothness = saturate((0.58 - surface.roughness) / 0.58);
     bool mirrorMaterial = abs(surface.materialKind - 2.0) < 0.25;
     float reflectionWeight = mirrorMaterial ? 1.0 : smoothness * smoothness * lerp(0.025, 0.86, surface.metalness);
-    float3 ambient = (mirrorMaterial || importedLightScene) ? 0.0.xxx : surface.base * 0.24;
+    float3 ambient = mirrorMaterial ? 0.0.xxx : surface.base * 0.24;
     return ambient + direct + reflection * fresnel * reflectionWeight;
 }
 
@@ -573,7 +563,7 @@ float3 cheapToneAt(uint2 pixel, uint width, uint height) {
     Surface surface;
     if (!readSurfacePixel(pixel, surface)) {
         float2 uv = (float2(pixel) + 0.5) / float2(max(width, 1u), max(height, 1u));
-        return v4Flags.y > 0.5 ? 0.0.xxx : skyColorAtUv(uv);
+        return skyColorAtUv(uv);
     }
     if (abs(surface.materialKind - 5.0) < 0.25) {
         return toneMap(surface.base * 18.0);
@@ -752,7 +742,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         shadowHistoryOutput[pixel] = float4(1.0, 0.0, 0.0, 0.0);
         reflectionHistoryOutput[pixel] = float4(0.0.xxxx);
         writeSurfaceHistory(pixel, surface, false);
-        float3 background = v4Flags.y > 0.5 ? 0.0.xxx : skyColorAtUv(uv);
+        float3 background = skyColorAtUv(uv);
         writeAccumulatedColor(pixel, width, height, background, surface, false);
         return;
     }

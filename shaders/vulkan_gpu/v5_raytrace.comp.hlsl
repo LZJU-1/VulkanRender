@@ -43,9 +43,6 @@ RWTexture2D<float4> reflectionSignal : register(u25);
 [[vk::binding(20, 0)]] StructuredBuffer<SceneLight> sceneLights;
 
 float3 skyColorAtUv(float2 uv) {
-    if (v4Flags.y > 0.5) {
-        return 0.0.xxx;
-    }
     float2 ndc = uv * 2.0 - 1.0 - taaJitter.xy;
     float3 cameraRay = normalize(forwardAspect.xyz + rightFar.xyz * ndc.x * forwardAspect.w * upTanHalf.w + upTanHalf.xyz * -ndc.y * upTanHalf.w);
     return toneMap(skyRadiance(cameraRay));
@@ -87,25 +84,19 @@ bool readSurface(float2 uv, out Surface surface) {
 float3 importedLightsRadiance(Surface surface, float3 view, uint2 pixel);
 
 float3 cheapNeighborColor(uint2 pixel, uint width, uint height) {
-    bool importedLightScene = v4Flags.y > 0.5;
     float2 uv = (float2(pixel) + 0.5) / float2(max(width, 1u), max(height, 1u));
     Surface surface;
     if (!readSurface(uv, surface)) {
-        return importedLightScene ? 0.0.xxx : skyColorAtUv(uv);
+        return skyColorAtUv(uv);
     }
-
-    if (importedLightScene) {
-        float3 view = normalize(eyeNear.xyz - surface.worldPos);
-        return toneMap(importedLightsRadiance(surface, view, pixel));
-    }
-
+    float3 view = normalize(eyeNear.xyz - surface.worldPos);
     float3 lightDir = normalize(-shadowForwardFar.xyz);
     float ndotl = saturate(dot(surface.normal, lightDir));
     float3 lit = surface.base * (0.20 + ndotl * 0.70);
     if (abs(surface.materialKind - 5.0) < 0.25) {
         lit = surface.base * 8.0;
     }
-    return toneMap(lit);
+    return toneMap(lit + importedLightsRadiance(surface, view, pixel));
 }
 
 float edgeStrength(uint2 pixel, uint width, uint height) {
@@ -334,11 +325,10 @@ float rayTracedAmbientOcclusion(float3 origin, float3 normal) {
 }
 
 float3 rayTracedReflection(Surface surface, float3 cameraToSurface, float3 view) {
-    bool importedLightScene = v4Flags.y > 0.5;
     float3 reflectionDir = normalize(reflect(cameraToSurface, surface.normal));
     float smoothness = saturate((0.58 - surface.roughness) / 0.58);
     if (smoothness * smoothness * lerp(0.12, 1.0, surface.metalness) < 0.08) {
-        return importedLightScene ? 0.0.xxx : skyRadiance(reflectionDir) * 0.35;
+        return skyRadiance(reflectionDir) * 0.35;
     }
 
     const float tlasTmin = 0.06;
@@ -357,9 +347,10 @@ float3 rayTracedReflection(Surface surface, float3 cameraToSurface, float3 view)
                 if (abs(hitCameraZ - projectedDepth) < max(0.12, hitCameraZ * 0.04)) {
                     float3 reflectedView = normalize(eyeNear.xyz - projectedHit.worldPos);
                     float3 lightDir = normalize(-shadowForwardFar.xyz);
-                    float visibility = importedLightScene ? 0.0 : rayTracedVisibility(projectedHit.worldPos, projectedHit.normal, lightDir, uint2(hitUv * 8192.0));
-                    float3 direct = importedLightScene ? importedLightsRadiance(projectedHit, reflectedView, uint2(hitUv * 8192.0)) : pbrDirectional(projectedHit, reflectedView, lightDir, float3(1.10, 1.04, 0.92), 2.0, visibility);
-                    float3 firstBounce = importedLightScene ? direct : projectedHit.base * 0.20 + direct;
+                    float visibility = rayTracedVisibility(projectedHit.worldPos, projectedHit.normal, lightDir, uint2(hitUv * 8192.0));
+                    float3 direct = pbrDirectional(projectedHit, reflectedView, lightDir, float3(1.10, 1.04, 0.92), 2.0, visibility);
+                    direct += importedLightsRadiance(projectedHit, reflectedView, uint2(hitUv * 8192.0));
+                    float3 firstBounce = projectedHit.base * 0.20 + direct;
 
                     // 2nd bounce: reflect the first ray from the first-hit surface.
                     float hitSmoothness = saturate((0.58 - projectedHit.roughness) / 0.58);
@@ -379,9 +370,10 @@ float3 rayTracedReflection(Surface surface, float3 cameraToSurface, float3 view)
                                     float gbufDepth = dot(secondSurface.worldPos - eyeNear.xyz, forwardAspect.xyz);
                                     if (abs(secondCamZ - gbufDepth) < max(0.15, secondCamZ * 0.06)) {
                                         float3 secondView = normalize(eyeNear.xyz - secondSurface.worldPos);
-                                        float secondVis = importedLightScene ? 0.0 : traceShadowRay(secondSurface.worldPos, secondSurface.normal, lightDir, max(rightFar.w, 32.0));
-                                        float3 secondDirect = importedLightScene ? importedLightsRadiance(secondSurface, secondView, uint2(secondUv * 4096.0)) : pbrDirectional(secondSurface, secondView, lightDir, float3(1.04, 0.98, 0.88), 1.5, secondVis);
-                                        float3 secondBounce = importedLightScene ? secondDirect : secondSurface.base * 0.18 + secondDirect;
+                                        float secondVis = traceShadowRay(secondSurface.worldPos, secondSurface.normal, lightDir, max(rightFar.w, 32.0));
+                                        float3 secondDirect = pbrDirectional(secondSurface, secondView, lightDir, float3(1.04, 0.98, 0.88), 1.5, secondVis);
+                                        secondDirect += importedLightsRadiance(secondSurface, secondView, uint2(secondUv * 4096.0));
+                                        float3 secondBounce = secondSurface.base * 0.18 + secondDirect;
                                         float3 f0 = lerp(0.04.xxx, projectedHit.base, projectedHit.metalness);
                                         float3 fresnel = fresnelSchlick(saturate(dot(projectedHit.normal, -reflectionDir)), f0);
                                         firstBounce += secondBounce * fresnel * hitReflectionWeight * 0.5;
@@ -394,7 +386,7 @@ float3 rayTracedReflection(Surface surface, float3 cameraToSurface, float3 view)
                 }
             }
         }
-        return importedLightScene ? 0.0.xxx : float3(0.48, 0.50, 0.52) * lerp(0.5, 1.2, smoothness);
+        return float3(0.48, 0.50, 0.52) * lerp(0.5, 1.2, smoothness);
     }
 
     Surface hitSurface;
@@ -402,14 +394,15 @@ float3 rayTracedReflection(Surface surface, float3 cameraToSurface, float3 view)
     float maxDistance = lerp(5.0, 1.4, surface.roughness);
     bool hit = traceGBufferRay(surface.worldPos + surface.normal * 0.065, reflectionDir, maxDistance, 36, 0.055, hitSurface, hitDistance);
     if (!hit) {
-        return importedLightScene ? 0.0.xxx : skyRadiance(reflectionDir);
+        return skyRadiance(reflectionDir);
     }
 
     float3 reflectedView = normalize(eyeNear.xyz - hitSurface.worldPos);
     float3 lightDir = normalize(-shadowForwardFar.xyz);
-    float visibility = importedLightScene ? 0.0 : 1.0;
-    float3 direct = importedLightScene ? importedLightsRadiance(hitSurface, reflectedView, uint2(0, 0)) : pbrDirectional(hitSurface, reflectedView, lightDir, float3(1.10, 1.04, 0.92), 3.0, visibility);
-    float3 ambient = importedLightScene ? 0.0.xxx : hitSurface.base * 0.22;
+    float visibility = 1.0;
+    float3 direct = pbrDirectional(hitSurface, reflectedView, lightDir, float3(1.10, 1.04, 0.92), 3.0, visibility);
+    direct += importedLightsRadiance(hitSurface, reflectedView, uint2(0, 0));
+    float3 ambient = hitSurface.base * 0.22;
     return ambient + direct;
 }
 
@@ -547,7 +540,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     Surface surface;
     if (!readSurface(uv, surface)) {
         shadowSignal[id.xy] = float4(1.0, 0.0, 0.0, 0.0);
-        reflectionSignal[id.xy] = float4(v4Flags.y > 0.5 ? 0.0.xxx : skyRadiance(cameraRay), 0.0);
+        reflectionSignal[id.xy] = float4(skyRadiance(cameraRay), 0.0);
         return;
     }
     if (abs(surface.materialKind - 5.0) < 0.25) {
@@ -559,13 +552,14 @@ void main(uint3 id : SV_DispatchThreadID) {
     float3 view = normalize(eyeNear.xyz - surface.worldPos);
     float3 cameraToSurface = normalize(surface.worldPos - eyeNear.xyz);
     float3 lightDir = normalize(-shadowForwardFar.xyz);
-    bool importedLightScene = v4Flags.y > 0.5;
-    float4 importedSignal = importedLightScene ? importedLightsSignal(surface, view, id.xy) : 0.0.xxxx;
-    float visibility = importedLightScene ? importedSignal.a : rayTracedVisibility(surface.worldPos, surface.normal, lightDir, id.xy);
-    float3 localDirect = importedLightScene ? (importedSignal.rgb + importedDiffuseBounce(surface, id.xy)) : importedLightsRadiance(surface, view, id.xy);
-    if (importedLightScene) {
-        localDirect = max(localDirect, 0.0.xxx);
-    }
+
+    // Directional shadow visibility — always trace (cost-free if no directional light)
+    float visibility = rayTracedVisibility(surface.worldPos, surface.normal, lightDir, id.xy);
+
+    // Local/area light signal (disk-sampled area lights or point lights) + indirect bounce
+    float4 localSignal = importedLightsSignal(surface, view, id.xy);
+    float3 indirectBounce = importedDiffuseBounce(surface, id.xy);
+    float3 localDirect = localSignal.rgb + indirectBounce;
     float ndotv = max(0.04, saturate(dot(surface.normal, view)));
     float3 f0 = lerp(0.04.xxx, surface.base, surface.metalness);
     float3 fresnel = fresnelSchlick(ndotv, f0);
