@@ -15,6 +15,7 @@ struct Surface {
 struct SceneLight {
     float4 positionRadius;
     float4 colorIntensity;
+    float4 normalArea;
 };
 
 float3 skyRadiance(float3 dir) {

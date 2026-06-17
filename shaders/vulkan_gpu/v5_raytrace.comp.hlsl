@@ -43,6 +43,9 @@ RWTexture2D<float4> reflectionSignal : register(u25);
 [[vk::binding(20, 0)]] StructuredBuffer<SceneLight> sceneLights;
 
 float3 skyColorAtUv(float2 uv) {
+    if (v4Flags.y > 0.5) {
+        return 0.0.xxx;
+    }
     float2 ndc = uv * 2.0 - 1.0 - taaJitter.xy;
     float3 cameraRay = normalize(forwardAspect.xyz + rightFar.xyz * ndc.x * forwardAspect.w * upTanHalf.w + upTanHalf.xyz * -ndc.y * upTanHalf.w);
     return toneMap(skyRadiance(cameraRay));
@@ -81,11 +84,19 @@ bool readSurface(float2 uv, out Surface surface) {
     return true;
 }
 
+float3 importedLightsRadiance(Surface surface, float3 view, uint2 pixel);
+
 float3 cheapNeighborColor(uint2 pixel, uint width, uint height) {
+    bool importedLightScene = v4Flags.y > 0.5;
     float2 uv = (float2(pixel) + 0.5) / float2(max(width, 1u), max(height, 1u));
     Surface surface;
     if (!readSurface(uv, surface)) {
-        return skyColorAtUv(uv);
+        return importedLightScene ? 0.0.xxx : skyColorAtUv(uv);
+    }
+
+    if (importedLightScene) {
+        float3 view = normalize(eyeNear.xyz - surface.worldPos);
+        return toneMap(importedLightsRadiance(surface, view, pixel));
     }
 
     float3 lightDir = normalize(-shadowForwardFar.xyz);
@@ -322,13 +333,12 @@ float rayTracedAmbientOcclusion(float3 origin, float3 normal) {
     return saturate(1.0 - occlusion / 12.0);
 }
 
-float3 importedLightsRadiance(Surface surface, float3 view, uint2 pixel);
-
 float3 rayTracedReflection(Surface surface, float3 cameraToSurface, float3 view) {
+    bool importedLightScene = v4Flags.y > 0.5;
     float3 reflectionDir = normalize(reflect(cameraToSurface, surface.normal));
     float smoothness = saturate((0.58 - surface.roughness) / 0.58);
     if (smoothness * smoothness * lerp(0.12, 1.0, surface.metalness) < 0.08) {
-        return skyRadiance(reflectionDir) * 0.35;
+        return importedLightScene ? 0.0.xxx : skyRadiance(reflectionDir) * 0.35;
     }
 
     const float tlasTmin = 0.06;
@@ -347,9 +357,9 @@ float3 rayTracedReflection(Surface surface, float3 cameraToSurface, float3 view)
                 if (abs(hitCameraZ - projectedDepth) < max(0.12, hitCameraZ * 0.04)) {
                     float3 reflectedView = normalize(eyeNear.xyz - projectedHit.worldPos);
                     float3 lightDir = normalize(-shadowForwardFar.xyz);
-                    float visibility = rayTracedVisibility(projectedHit.worldPos, projectedHit.normal, lightDir, uint2(hitUv * 8192.0));
-                    float3 direct = pbrDirectional(projectedHit, reflectedView, lightDir, float3(1.10, 1.04, 0.92), 2.0, visibility);
-                    float3 firstBounce = projectedHit.base * 0.20 + direct;
+                    float visibility = importedLightScene ? 0.0 : rayTracedVisibility(projectedHit.worldPos, projectedHit.normal, lightDir, uint2(hitUv * 8192.0));
+                    float3 direct = importedLightScene ? importedLightsRadiance(projectedHit, reflectedView, uint2(hitUv * 8192.0)) : pbrDirectional(projectedHit, reflectedView, lightDir, float3(1.10, 1.04, 0.92), 2.0, visibility);
+                    float3 firstBounce = importedLightScene ? direct : projectedHit.base * 0.20 + direct;
 
                     // 2nd bounce: reflect the first ray from the first-hit surface.
                     float hitSmoothness = saturate((0.58 - projectedHit.roughness) / 0.58);
@@ -369,9 +379,9 @@ float3 rayTracedReflection(Surface surface, float3 cameraToSurface, float3 view)
                                     float gbufDepth = dot(secondSurface.worldPos - eyeNear.xyz, forwardAspect.xyz);
                                     if (abs(secondCamZ - gbufDepth) < max(0.15, secondCamZ * 0.06)) {
                                         float3 secondView = normalize(eyeNear.xyz - secondSurface.worldPos);
-                                        float secondVis = traceShadowRay(secondSurface.worldPos, secondSurface.normal, lightDir, max(rightFar.w, 32.0));
-                                        float3 secondDirect = pbrDirectional(secondSurface, secondView, lightDir, float3(1.04, 0.98, 0.88), 1.5, secondVis);
-                                        float3 secondBounce = secondSurface.base * 0.18 + secondDirect;
+                                        float secondVis = importedLightScene ? 0.0 : traceShadowRay(secondSurface.worldPos, secondSurface.normal, lightDir, max(rightFar.w, 32.0));
+                                        float3 secondDirect = importedLightScene ? importedLightsRadiance(secondSurface, secondView, uint2(secondUv * 4096.0)) : pbrDirectional(secondSurface, secondView, lightDir, float3(1.04, 0.98, 0.88), 1.5, secondVis);
+                                        float3 secondBounce = importedLightScene ? secondDirect : secondSurface.base * 0.18 + secondDirect;
                                         float3 f0 = lerp(0.04.xxx, projectedHit.base, projectedHit.metalness);
                                         float3 fresnel = fresnelSchlick(saturate(dot(projectedHit.normal, -reflectionDir)), f0);
                                         firstBounce += secondBounce * fresnel * hitReflectionWeight * 0.5;
@@ -384,7 +394,7 @@ float3 rayTracedReflection(Surface surface, float3 cameraToSurface, float3 view)
                 }
             }
         }
-        return float3(0.48, 0.50, 0.52) * lerp(0.5, 1.2, smoothness);
+        return importedLightScene ? 0.0.xxx : float3(0.48, 0.50, 0.52) * lerp(0.5, 1.2, smoothness);
     }
 
     Surface hitSurface;
@@ -392,42 +402,133 @@ float3 rayTracedReflection(Surface surface, float3 cameraToSurface, float3 view)
     float maxDistance = lerp(5.0, 1.4, surface.roughness);
     bool hit = traceGBufferRay(surface.worldPos + surface.normal * 0.065, reflectionDir, maxDistance, 36, 0.055, hitSurface, hitDistance);
     if (!hit) {
-        return skyRadiance(reflectionDir);
+        return importedLightScene ? 0.0.xxx : skyRadiance(reflectionDir);
     }
 
     float3 reflectedView = normalize(eyeNear.xyz - hitSurface.worldPos);
     float3 lightDir = normalize(-shadowForwardFar.xyz);
-    float visibility = 1.0;
-    float3 direct = pbrDirectional(hitSurface, reflectedView, lightDir, float3(1.10, 1.04, 0.92), 3.0, visibility);
-    float3 ambient = hitSurface.base * 0.22;
+    float visibility = importedLightScene ? 0.0 : 1.0;
+    float3 direct = importedLightScene ? importedLightsRadiance(hitSurface, reflectedView, uint2(0, 0)) : pbrDirectional(hitSurface, reflectedView, lightDir, float3(1.10, 1.04, 0.92), 3.0, visibility);
+    float3 ambient = importedLightScene ? 0.0.xxx : hitSurface.base * 0.22;
     return ambient + direct;
 }
 
-float3 pbrPointLight(Surface surface, float3 view, SceneLight light, uint2 pixel) {
-    float3 toLight = light.positionRadius.xyz - surface.worldPos;
+float4 pbrLightSignal(Surface surface, float3 view, SceneLight light, uint2 pixel) {
+    float3 lightPosition = light.positionRadius.xyz;
+    if (light.normalArea.w > 0.0001) {
+        float3 lightNormal = normalize(light.normalArea.xyz);
+        float3 helper = abs(lightNormal.z) < 0.95 ? float3(0.0, 0.0, 1.0) : float3(1.0, 0.0, 0.0);
+        float3 tangent = normalize(cross(helper, lightNormal));
+        float3 bitangent = cross(lightNormal, tangent);
+        float seed = v4Flags.w * 19.37 + (float)pixel.x * 0.013 + (float)pixel.y * 0.017;
+        float u0 = hash13(surface.worldPos * 0.173 + float3(seed, 1.7, 4.1));
+        float u1 = hash13(surface.worldPos * 0.241 + float3(3.3, seed, 8.9));
+        float diskRadius = max(light.positionRadius.w, sqrt(light.normalArea.w / kPi));
+        float r = sqrt(u0) * diskRadius;
+        float theta = u1 * 2.0 * kPi;
+        lightPosition += (tangent * cos(theta) + bitangent * sin(theta)) * r;
+
+        float3 toSample = lightPosition - surface.worldPos;
+        float distanceToSample = length(toSample);
+        float3 sampleDir = toSample / max(distanceToSample, 0.001);
+        float emissionCos = saturate(dot(lightNormal, -sampleDir));
+        float ndotl = saturate(dot(surface.normal, sampleDir));
+        if (emissionCos <= 0.0 || ndotl <= 0.0) {
+            return float4(0.0.xxxx);
+        }
+
+        float visibility = traceShadowRay(surface.worldPos, surface.normal, sampleDir, max(0.04, distanceToSample - 0.025));
+        float attenuation = emissionCos * light.normalArea.w / max(distanceToSample * distanceToSample, 0.05);
+        float3 radiance = pbrDirectional(surface, view, sampleDir, saturate(light.colorIntensity.rgb), light.colorIntensity.w * attenuation * 4.0, visibility);
+        return float4(radiance, visibility);
+    }
+
+    float3 toLight = lightPosition - surface.worldPos;
     float distanceToLight = length(toLight);
     float radius = max(0.25, light.positionRadius.w);
     float3 lightDir = toLight / max(distanceToLight, 0.001);
     float ndotl = saturate(dot(surface.normal, lightDir));
     if (ndotl <= 0.0 || distanceToLight >= radius) {
-        return 0.0.xxx;
+        return float4(0.0.xxxx);
     }
 
     float visibility = traceShadowRay(surface.worldPos, surface.normal, lightDir, max(0.04, distanceToLight - 0.35));
     float falloff = saturate(1.0 - distanceToLight / radius);
     falloff = falloff * falloff * (3.0 - 2.0 * falloff);
     float softEdge = lerp(0.35, 1.0, visibility);
-    return pbrDirectional(surface, view, lightDir, saturate(light.colorIntensity.rgb), light.colorIntensity.w * falloff, softEdge);
+    float3 radiance = pbrDirectional(surface, view, lightDir, saturate(light.colorIntensity.rgb), light.colorIntensity.w * falloff, softEdge);
+    return float4(radiance, visibility);
+}
+
+float3 pbrPointLight(Surface surface, float3 view, SceneLight light, uint2 pixel) {
+    return pbrLightSignal(surface, view, light, pixel).rgb;
+}
+
+float4 importedLightsSignal(Surface surface, float3 view, uint2 pixel) {
+    uint lightCount = min((uint)max(0.0, v4Flags.y), 128u);
+    float3 radiance = 0.0.xxx;
+    float visibility = 0.0;
+    [loop]
+    for (uint i = 0; i < lightCount; ++i) {
+        float4 signal = pbrLightSignal(surface, view, sceneLights[i], pixel);
+        radiance += signal.rgb;
+        visibility += signal.a;
+    }
+    visibility = lightCount > 0u ? visibility / (float)lightCount : 1.0;
+    return float4(radiance, visibility);
 }
 
 float3 importedLightsRadiance(Surface surface, float3 view, uint2 pixel) {
-    uint lightCount = min((uint)max(0.0, v4Flags.y), 128u);
-    float3 radiance = 0.0.xxx;
-    [loop]
-    for (uint i = 0; i < lightCount; ++i) {
-        radiance += pbrPointLight(surface, view, sceneLights[i], pixel);
+    return importedLightsSignal(surface, view, pixel).rgb;
+}
+
+float3 sampleCosineHemisphere(float3 normal, uint2 pixel, float frameSeed) {
+    float3 helper = abs(normal.z) < 0.95 ? float3(0.0, 0.0, 1.0) : float3(1.0, 0.0, 0.0);
+    float3 tangent = normalize(cross(helper, normal));
+    float3 bitangent = cross(normal, tangent);
+    float seed = frameSeed * 37.17 + (float)pixel.x * 0.019 + (float)pixel.y * 0.023;
+    float u0 = hash13(normal + float3(seed, 2.1, 5.7));
+    float u1 = hash13(normal * 1.37 + float3(4.3, seed, 9.1));
+    float r = sqrt(u0);
+    float phi = u1 * 2.0 * kPi;
+    float z = sqrt(max(0.0, 1.0 - u0));
+    return normalize(tangent * (r * cos(phi)) + bitangent * (r * sin(phi)) + normal * z);
+}
+
+float3 importedDiffuseBounce(Surface surface, uint2 pixel) {
+    if (surface.metalness > 0.5 || surface.roughness < 0.08) {
+        return 0.0.xxx;
     }
-    return radiance;
+
+    float3 bounceDir = sampleCosineHemisphere(surface.normal, pixel, v4Flags.w);
+    float hitDistance;
+    bool hit = traceSceneRay(surface.worldPos + surface.normal * 0.07, bounceDir, 0.05, max(rightFar.w, 6.0), hitDistance);
+    if (!hit) {
+        return 0.0.xxx;
+    }
+
+    float3 hitPoint = surface.worldPos + surface.normal * 0.07 + bounceDir * hitDistance;
+    float2 hitUv;
+    float hitCameraZ;
+    if (!projectWorldToUv(hitPoint, hitUv, hitCameraZ)) {
+        return 0.0.xxx;
+    }
+
+    Surface hitSurface;
+    if (!readSurface(hitUv, hitSurface) || abs(hitSurface.materialKind - 5.0) < 0.25) {
+        return 0.0.xxx;
+    }
+
+    float projectedDepth = dot(hitSurface.worldPos - eyeNear.xyz, forwardAspect.xyz);
+    if (abs(hitCameraZ - projectedDepth) > max(0.16, hitCameraZ * 0.06)) {
+        return 0.0.xxx;
+    }
+
+    float3 hitView = normalize(eyeNear.xyz - hitSurface.worldPos);
+    float3 hitDirect = importedLightsRadiance(hitSurface, hitView, uint2(hitUv * 8192.0));
+    float distanceFalloff = 1.0 / (1.0 + hitDistance * hitDistance * 0.18);
+    float receiving = saturate(dot(surface.normal, bounceDir));
+    return surface.base * hitSurface.base * hitDirect * receiving * distanceFalloff * 0.55;
 }
 
 [numthreads(8, 8, 1)]
@@ -446,7 +547,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     Surface surface;
     if (!readSurface(uv, surface)) {
         shadowSignal[id.xy] = float4(1.0, 0.0, 0.0, 0.0);
-        reflectionSignal[id.xy] = float4(skyRadiance(cameraRay), 0.0);
+        reflectionSignal[id.xy] = float4(v4Flags.y > 0.5 ? 0.0.xxx : skyRadiance(cameraRay), 0.0);
         return;
     }
     if (abs(surface.materialKind - 5.0) < 0.25) {
@@ -458,8 +559,13 @@ void main(uint3 id : SV_DispatchThreadID) {
     float3 view = normalize(eyeNear.xyz - surface.worldPos);
     float3 cameraToSurface = normalize(surface.worldPos - eyeNear.xyz);
     float3 lightDir = normalize(-shadowForwardFar.xyz);
-    float visibility = rayTracedVisibility(surface.worldPos, surface.normal, lightDir, id.xy);
-    float3 localDirect = importedLightsRadiance(surface, view, id.xy);
+    bool importedLightScene = v4Flags.y > 0.5;
+    float4 importedSignal = importedLightScene ? importedLightsSignal(surface, view, id.xy) : 0.0.xxxx;
+    float visibility = importedLightScene ? importedSignal.a : rayTracedVisibility(surface.worldPos, surface.normal, lightDir, id.xy);
+    float3 localDirect = importedLightScene ? importedDiffuseBounce(surface, id.xy) : importedLightsRadiance(surface, view, id.xy);
+    if (importedLightScene) {
+        localDirect = max(localDirect, 0.0.xxx);
+    }
     float ndotv = max(0.04, saturate(dot(surface.normal, view)));
     float3 f0 = lerp(0.04.xxx, surface.base, surface.metalness);
     float3 fresnel = fresnelSchlick(ndotv, f0);

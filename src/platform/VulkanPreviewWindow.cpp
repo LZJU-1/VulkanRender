@@ -3195,15 +3195,43 @@ PreviewState* stateFrom(HWND hwnd) {
     return reinterpret_cast<PreviewState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 }
 
+Vec3 roamingBasisForward(Vec3 up) {
+    up = normalize(up);
+    const Vec3 preferred = std::abs(dot(up, {0.0f, 0.0f, 1.0f})) < 0.95f ? Vec3{0.0f, 0.0f, 1.0f} : Vec3{1.0f, 0.0f, 0.0f};
+    Vec3 forward = preferred - up * dot(preferred, up);
+    if (dot(forward, forward) <= 0.00001f) {
+        forward = {1.0f, 0.0f, 0.0f};
+    }
+    return normalize(forward);
+}
+
+Vec3 roamingForwardFor(float yaw, float pitch, Vec3 up) {
+    up = normalize(up);
+    const Vec3 baseForward = roamingBasisForward(up);
+    const Vec3 baseRight = normalize(cross(baseForward, up));
+    const float cp = std::cos(pitch);
+    return normalize(baseForward * (std::cos(yaw) * cp) + baseRight * (std::sin(yaw) * cp) + up * std::sin(pitch));
+}
+
 void deriveAnglesFromCamera(PreviewState& state) {
     const Vec3 forward = normalize(targetOf(state.camera) - eyeOf(state.camera));
-    state.yaw = std::atan2(forward.y, forward.x);
-    state.pitch = std::asin(std::clamp(forward.z, -1.0f, 1.0f));
+    const Vec3 sceneUp = upOf(state.geometry.camera);
+    const Vec3 baseForward = roamingBasisForward(sceneUp);
+    const Vec3 baseRight = normalize(cross(baseForward, sceneUp));
+    const float vertical = std::clamp(dot(forward, sceneUp), -1.0f, 1.0f);
+    Vec3 horizontal = forward - sceneUp * vertical;
+    if (dot(horizontal, horizontal) <= 0.00001f) {
+        horizontal = baseForward;
+    } else {
+        horizontal = normalize(horizontal);
+    }
+    state.yaw = std::atan2(dot(horizontal, baseRight), dot(horizontal, baseForward));
+    state.pitch = std::asin(vertical);
 }
 
 void writeCameraPose(PreviewState& state, Vec3 eye) {
-    const Vec3 forward = forwardFor(state.yaw, state.pitch);
     const Vec3 sceneUp = upOf(state.geometry.camera);
+    const Vec3 forward = roamingForwardFor(state.yaw, state.pitch, sceneUp);
     const Vec3 right = rightFor(forward, sceneUp);
     const Vec3 up = normalize(cross(right, forward));
     state.camera.enabled = true;
@@ -3249,7 +3277,7 @@ void updateCamera(PreviewState& state, float dt) {
     if (keyDown(state, VK_UP) || keyDown(state, 'I')) state.pitch = std::clamp(state.pitch + lookSpeed * dt, -1.45f, 1.45f);
     if (keyDown(state, VK_DOWN) || keyDown(state, 'K')) state.pitch = std::clamp(state.pitch - lookSpeed * dt, -1.45f, 1.45f);
 
-    const Vec3 forward = forwardFor(state.yaw, state.pitch);
+    const Vec3 forward = roamingForwardFor(state.yaw, state.pitch, sceneUp);
     const Vec3 right = rightFor(forward, sceneUp);
     const Vec3 up = sceneUp;
     Vec3 movement{};
@@ -3259,7 +3287,8 @@ void updateCamera(PreviewState& state, float dt) {
     if (keyDown(state, 'A')) movement = movement - right;
     if (keyDown(state, 'E') || keyDown(state, VK_SPACE)) movement = movement + up;
     if (keyDown(state, 'Q') || keyDown(state, VK_CONTROL)) movement = movement - up;
-    const float speed = (GetKeyState(VK_SHIFT) & 0x8000) ? 20.0f : 7.0f;
+    const float baseSpeed = std::clamp(state.geometry.camera.farPlane * 0.02f, 4.0f, 60.0f);
+    const float speed = (GetKeyState(VK_SHIFT) & 0x8000) ? baseSpeed * 3.0f : baseSpeed;
     if (dot(movement, movement) > 0.00001f) {
         movement = normalize(movement) * (speed * dt);
     }

@@ -1761,21 +1761,29 @@ void applyMitsubaCamera(const std::filesystem::path& xmlPath, ObjScene& scene) {
         camera.up = {xmlFloatAttribute(tag, "x", camera.up.x), xmlFloatAttribute(tag, "y", camera.up.y), xmlFloatAttribute(tag, "z", camera.up.z)};
     }
     camera.fovY = xmlFloatAttribute(xml, "fovy", xmlFloatAttribute(xml, "fov", camera.fovY * 180.0f / kPi)) * kPi / 180.0f;
-    camera.nearPlane = 0.05f;
-    camera.farPlane = 250.0f;
+    camera.nearPlane = xmlFloatAttribute(xml, "near", 0.05f);
+    camera.farPlane = xmlFloatAttribute(xml, "far", std::max(camera.farPlane, 2000.0f));
     scene.camera = camera;
 }
 
 ObjScene loadObjOrCompanionXmlScene(const std::filesystem::path& path) {
     std::filesystem::path objPath = path;
     std::map<std::string, Vec3> xmlEmissions;
+    std::filesystem::path xmlPath;
     if (path.extension() == ".xml") {
+        xmlPath = path;
         objPath = path.parent_path() / (path.stem().string() + ".obj");
         xmlEmissions = loadXmlEmissionMap(path);
+    } else if (path.extension() == ".obj") {
+        const std::filesystem::path companionXml = path.parent_path() / (path.stem().string() + ".xml");
+        if (std::filesystem::exists(companionXml)) {
+            xmlPath = companionXml;
+            xmlEmissions = loadXmlEmissionMap(companionXml);
+        }
     }
     ObjScene scene = loadObjScene(objPath, xmlEmissions);
-    if (path.extension() == ".xml") {
-        applyMitsubaCamera(path, scene);
+    if (!xmlPath.empty()) {
+        applyMitsubaCamera(xmlPath, scene);
     }
     return scene;
 }
@@ -2660,14 +2668,26 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
     }
     if (settings.enableV5RayTracing && !geometry.manyLightDemo) {
         constexpr std::size_t kMaxImportedLights = 128;
+        Vec3 sceneMin{std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
+        Vec3 sceneMax{std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest()};
+        for (const Triangle3& tri : *triangles) {
+            sceneMin = minVec(sceneMin, minVec(tri.a, minVec(tri.b, tri.c)));
+            sceneMax = maxVec(sceneMax, maxVec(tri.a, maxVec(tri.b, tri.c)));
+        }
+        const Vec3 sceneCenter = (sceneMin + sceneMax) * 0.5f;
         for (const Triangle3& tri : *triangles) {
             if (tri.materialKind != MaterialKind::Emissive || geometry.lights.size() >= kMaxImportedLights) {
                 continue;
             }
             const Vec3 center = (tri.a + tri.b + tri.c) / 3.0f;
-            const float area = length(cross(tri.b - tri.a, tri.c - tri.a)) * 0.5f;
-            const float radius = std::clamp(std::sqrt(std::max(area, 0.01f)) * 5.0f, 4.0f, 38.0f);
-            const float intensity = std::clamp(luminance(tri.emission) * 0.10f, 2.0f, 24.0f);
+            const Vec3 areaVector = cross(tri.b - tri.a, tri.c - tri.a);
+            const float area = length(areaVector) * 0.5f;
+            Vec3 normal = dot(areaVector, areaVector) > 0.000001f ? normalize(areaVector) : Vec3{0.0f, 1.0f, 0.0f};
+            if (dot(normal, sceneCenter - center) < 0.0f) {
+                normal = normal * -1.0f;
+            }
+            const float radius = std::sqrt(std::max(area, 0.0001f) / kPi);
+            const float intensity = std::clamp(luminance(tri.emission), 1.0f, 80.0f);
             const Vec3 color = luminance(tri.emission) > 0.0f
                 ? clamp01(tri.emission / std::max(luminance(tri.emission), 0.001f))
                 : Vec3{1.0f, 0.82f, 0.62f};
@@ -2680,6 +2700,10 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
                 color.y,
                 color.z,
                 intensity,
+                normal.x,
+                normal.y,
+                normal.z,
+                area,
             });
         }
     }

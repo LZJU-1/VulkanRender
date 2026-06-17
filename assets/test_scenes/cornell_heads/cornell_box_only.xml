@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<camera type="perspective" width="1024" height="1024" fovy="39.3077" near="0.001" far="100.0">
+    <lookat origin="0, 0, 4" target="0, 0, 0" up="0, 1, 0"/>
+</camera>
+<light mtlname="Light" radiance="18.387, 13.9873, 6.75357"/>

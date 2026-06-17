@@ -1,0 +1,29 @@
+newmtl White
+Kd 0.885809 0.698859 0.666422
+Ks 0.0 0.0 0.0
+Ns 1.0
+
+newmtl Red
+Kd 0.570068 0.0430135 0.0443706
+Ks 0.0 0.0 0.0
+Ns 1.0
+
+newmtl Green
+Kd 0.105421 0.37798 0.076425
+Ks 0.0 0.0 0.0
+Ns 1.0
+
+newmtl Light
+Kd 1.0 0.86 0.62
+Ks 0.0 0.0 0.0
+Ns 1.0
+
+newmtl HeadA
+Kd 0.72 0.72 0.76
+Ks 0.18 0.18 0.18
+Ns 48.0
+
+newmtl HeadB
+Kd 0.82 0.78 0.70
+Ks 0.10 0.10 0.10
+Ns 24.0

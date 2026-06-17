@@ -82,6 +82,10 @@ struct GpuPreviewLight {
     float g = 1.0f;
     float b = 1.0f;
     float intensity = 1.0f;
+    float nx = 0.0f;
+    float ny = 0.0f;
+    float nz = 0.0f;
+    float area = 0.0f;
 };
 
 struct GpuPreviewSphereInstance {
