@@ -13,7 +13,6 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
-#include <deque>
 #include <map>
 #include <sstream>
 #include <stdexcept>
@@ -1253,7 +1252,7 @@ void traverseS72Node(
     }
 }
 
-Camera autoCameraFor(const std::vector<Triangle3>& triangles) {
+Camera autoCameraFor(const std::vector<Triangle3>& triangles, Vec3 upHint = {0.0f, 0.0f, 1.0f}) {
     if (triangles.empty()) {
         return {};
     }
@@ -1267,13 +1266,28 @@ Camera autoCameraFor(const std::vector<Triangle3>& triangles) {
 
     const Vec3 center = (lo + hi) * 0.5f;
     const float radius = std::max(0.5f, length(hi - lo) * 0.5f);
+    Vec3 sceneUp = normalize(upHint);
+    if (length(sceneUp) <= 0.00001f) {
+        sceneUp = {0.0f, 0.0f, 1.0f};
+    }
+    Vec3 front = std::abs(dot(sceneUp, {0.0f, 0.0f, 1.0f})) < 0.85f ? Vec3{0.0f, 0.0f, 1.0f} : Vec3{0.0f, -1.0f, 0.0f};
+    front = front - sceneUp * dot(front, sceneUp);
+    if (length(front) <= 0.00001f) {
+        front = {1.0f, 0.0f, 0.0f};
+    }
+    front = normalize(front);
+    Vec3 right = normalize(cross(front, sceneUp));
+    if (length(right) <= 0.00001f) {
+        right = {1.0f, 0.0f, 0.0f};
+    }
     Camera camera;
-    camera.eye = center + Vec3{radius * 1.2f, -radius * 2.0f, radius * 1.25f};
-    camera.target = center;
-    camera.up = {0.0f, 0.0f, 1.0f};
     camera.fovY = 42.0f * kPi / 180.0f;
-    camera.nearPlane = 0.02f;
-    camera.farPlane = radius * 10.0f;
+    const float fitDistance = std::max(radius * 2.4f, radius / std::max(0.25f, std::sin(camera.fovY * 0.5f)));
+    camera.eye = center + front * fitDistance + sceneUp * (radius * 0.35f) + right * (radius * 0.18f);
+    camera.target = center;
+    camera.up = sceneUp;
+    camera.nearPlane = std::max(0.002f, radius * 0.002f);
+    camera.farPlane = std::max(40.0f, fitDistance + radius * 4.0f);
     return camera;
 }
 
@@ -2002,7 +2016,29 @@ const CachedS72Scene& cachedStaticS72Scene(const std::filesystem::path& path) {
     return cache.emplace(key, std::move(cached)).first->second;
 }
 
-void appendGltfPrimitive(const cgltf_node& node, const cgltf_primitive& primitive, std::vector<Triangle3>& triangles) {
+std::filesystem::path gltfImagePath(
+    const cgltf_image* image,
+    const std::map<const cgltf_image*, std::filesystem::path>& embeddedImagePaths
+) {
+    if (!image) {
+        return {};
+    }
+    const auto embedded = embeddedImagePaths.find(image);
+    if (embedded != embeddedImagePaths.end()) {
+        return embedded->second;
+    }
+    if (!image->uri || image->uri[0] == '\0' || std::strstr(image->uri, "data:")) {
+        return {};
+    }
+    return image->uri;
+}
+
+void appendGltfPrimitive(
+    const cgltf_node& node,
+    const cgltf_primitive& primitive,
+    const std::map<const cgltf_image*, std::filesystem::path>& embeddedImagePaths,
+    std::vector<Triangle3>& triangles
+) {
     if (primitive.type != cgltf_primitive_type_triangles) {
         return;
     }
@@ -2028,17 +2064,14 @@ void appendGltfPrimitive(const cgltf_node& node, const cgltf_primitive& primitiv
             texRoughness = pbr.roughness_factor;
             texMetalness = pbr.metallic_factor;
             if (pbr.base_color_texture.texture && pbr.base_color_texture.texture->image) {
-                const char* uri = pbr.base_color_texture.texture->image->uri;
-                if (uri && !strstr(uri, "data:")) albedoTex = uri;
+                albedoTex = gltfImagePath(pbr.base_color_texture.texture->image, embeddedImagePaths);
             }
             if (pbr.metallic_roughness_texture.texture && pbr.metallic_roughness_texture.texture->image) {
-                const char* uri = pbr.metallic_roughness_texture.texture->image->uri;
-                if (uri && !strstr(uri, "data:")) roughnessTex = uri;
+                roughnessTex = gltfImagePath(pbr.metallic_roughness_texture.texture->image, embeddedImagePaths);
             }
         }
         if (primitive.material->normal_texture.texture && primitive.material->normal_texture.texture->image) {
-            const char* uri = primitive.material->normal_texture.texture->image->uri;
-            if (uri && !strstr(uri, "data:")) normalTex = uri;
+            normalTex = gltfImagePath(primitive.material->normal_texture.texture->image, embeddedImagePaths);
         }
         if (primitive.material->has_emissive_strength || primitive.material->emissive_factor[0] > 0.01f ||
             primitive.material->emissive_factor[1] > 0.01f || primitive.material->emissive_factor[2] > 0.01f) {
@@ -2130,7 +2163,8 @@ GltfScene loadGltfScene(const std::filesystem::path& path) {
         throw std::runtime_error("Could not load glTF buffers: " + path.string());
     }
 
-    // Extract embedded textures to cache dir
+    // Extract embedded textures to cache dir without mutating cgltf-owned image URIs.
+    std::map<const cgltf_image*, std::filesystem::path> embeddedImagePaths;
     const auto cacheDir = path.parent_path() / (path.stem().string() + "_textures");
     for (cgltf_size imgIdx = 0; imgIdx < data->images_count; ++imgIdx) {
         cgltf_image& img = data->images[imgIdx];
@@ -2147,10 +2181,7 @@ GltfScene loadGltfScene(const std::filesystem::path& path) {
             std::ofstream(cacheDir / ("tex_" + std::to_string(imgIdx) + ".png"), std::ios::binary)
                 .write(reinterpret_cast<const char*>(buf + offset), static_cast<std::streamsize>(size));
         }
-        // Allocate persistent URI string that cgltf can reference
-        static std::deque<std::string> uriStorage;
-        uriStorage.push_back(outPath.string());
-        img.uri = const_cast<char*>(uriStorage.back().c_str());
+        embeddedImagePaths.emplace(&img, outPath);
     }
 
     GltfScene scene;
@@ -2160,11 +2191,11 @@ GltfScene loadGltfScene(const std::filesystem::path& path) {
             continue;
         }
         for (cgltf_size primitiveIndex = 0; primitiveIndex < node.mesh->primitives_count; ++primitiveIndex) {
-            appendGltfPrimitive(node, node.mesh->primitives[primitiveIndex], scene.triangles);
+            appendGltfPrimitive(node, node.mesh->primitives[primitiveIndex], embeddedImagePaths, scene.triangles);
         }
     }
 
-    scene.camera = autoCameraFor(scene.triangles);
+    scene.camera = autoCameraFor(scene.triangles, {0.0f, 1.0f, 0.0f});
     return scene;
 }
 

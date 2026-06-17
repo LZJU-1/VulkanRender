@@ -27,6 +27,8 @@ int main() {
     const auto rt = vr::findProfile("rt");
     require(rt.has_value(), "rt alias should resolve");
     require(rt->requiresRayTracing, "rt profile should require ray tracing");
+    require(rt->id == vr::ProfileId::V6HybridRealtimeRayTracing, "rt alias should map to v6 hybrid");
+    require(vr::findProfile("v5-rt")->id == vr::ProfileId::V6HybridRealtimeRayTracing, "v5-rt remains a v6 compatibility alias");
 
     const auto v4 = vr::findProfile("v4-deferred");
     require(v4.has_value(), "v4 alias should resolve");
@@ -35,10 +37,15 @@ int main() {
     require(v4Graph.passes().size() >= 7, "v4 should have deferred pass sequence");
 
     const auto rtGraph = vr::RenderGraph::build(*rt);
-    require(rtGraph.containsRayTracingPass(), "v5 should contain ray tracing passes");
+    require(rtGraph.containsRayTracingPass(), "v6 should contain ray tracing passes");
     require(rtGraph.passes().front().name == "scene.upload", "all graphs start with scene upload");
+    bool hasRaytracedAo = false;
+    for (const auto& pass : rtGraph.passes()) {
+        hasRaytracedAo = hasRaytracedAo || pass.name == "rt.reference-raytraced-ambient-occlusion";
+    }
+    require(hasRaytracedAo, "v6 defaults include raytraced AO");
 
-    require(vr::validationProfiles().size() == 5, "expected validation plans for v1 through v5");
+    require(vr::validationProfiles().size() == 5, "expected validation plans for v1 through v6");
     const auto v2Plan = vr::findValidationProfile(vr::ProfileId::V2PbrIbl);
     require(v2Plan.has_value(), "v2 validation plan should exist");
     require(v2Plan->renderer72Version == "Renderer72 v2.0", "v2 plan should map to Renderer72 v2.0");

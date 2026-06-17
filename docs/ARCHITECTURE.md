@@ -2,7 +2,7 @@
 
 ## Goals
 
-This rewrite keeps the staged learning shape of Renderer72 while splitting the engine into small, testable systems. The first usable target is a reliable capability-aware runtime: it can run without a Vulkan SDK, enumerate GPUs when the SDK is present, and make realtime ray tracing an explicit opt-in profile.
+This rewrite keeps the staged learning shape of Renderer72 while splitting the engine into small, testable systems. The runtime can run without a Vulkan SDK, enumerate GPUs when the SDK is present, and expose the `.reference/VulkanHybridRenderer`-aligned hybrid ray tracing profile as `v6-hybrid`.
 
 ## Layers
 
@@ -36,7 +36,7 @@ flowchart TD
 | `v2` | Environment and PBR surface work | IBL precompute, skybox, material shading, tone mapping |
 | `v3` | Light and shadow families | shadow atlas, spot light, sphere light, cascaded sun |
 | `v4` | Deferred renderer and SSAO | G-buffer, SSAO, deferred light composition |
-| `v5-rt` | Realtime ray tracing | BLAS, TLAS, SBT, raygen, miss, closest hit, accumulation |
+| `v6-hybrid` | Reference hybrid realtime ray tracing | G-buffer, BLAS/TLAS, raytraced shadows/AO/reflections, SVGF-style denoise, TAA/downsample |
 
 ## v2 Validation Path
 
@@ -46,16 +46,16 @@ The realtime preview uses a Vulkan GPU path: geometry is imported on the CPU, up
 
 Current v2 limits are documented in `docs/V2_FEATURES.md`: full glTF PBR texture workflow, glTF animation/skinning, and advanced temporal antialiasing are not part of the v2 alignment target yet.
 
-## Realtime Ray Tracing Plan
+## Realtime Ray Tracing
 
-Realtime ray tracing needs more than a shader toggle. The renderer must select a device with:
+The v6 profile defaults to the reference screenshot configuration: raytraced shadows, raytraced ambient occlusion, raytraced reflections, and denoising enabled. The renderer must select a device with:
 
 - `VK_KHR_acceleration_structure`
-- `VK_KHR_ray_tracing_pipeline`
+- `VK_KHR_ray_query`
 - `VK_KHR_deferred_host_operations`
 - `VK_KHR_buffer_device_address`
 
-The v5 graph is built even on unsupported hardware, but execution reports that RT is unavailable unless `--enable-rt` is used on a capable device. This makes CI, documentation, and non-RT laptops useful while keeping the high-end path visible.
+The v6 graph is built even on unsupported hardware, but execution reports when RT is unavailable unless `--require-rt` is passed. `--enable-rt` and `--require-rt` both select `v6-hybrid` for compatibility with older scripts.
 
 ## Testing Strategy
 

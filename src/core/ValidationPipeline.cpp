@@ -184,36 +184,40 @@ const std::array<ValidationProfile, 5> kValidationProfiles = {{
         },
     },
     {
-        ProfileId::V5RealtimeRayTracing,
-        "Local v5 extension",
-        "v5 realtime ray tracing validation",
-        "Project extension beyond Renderer72 README: hybrid G-buffer plus Vulkan ray-query shadows and temporal accumulation.",
+        ProfileId::V6HybridRealtimeRayTracing,
+        "Reference hybrid renderer",
+        "v6 hybrid realtime ray tracing validation",
+        "Hybrid render path aligned to .reference/VulkanHybridRenderer with raytraced shadows, raytraced ambient occlusion, raytraced reflections, and denoise enabled by default.",
         {
             "assets/third_party/s72_examples/materials.s72",
             "C:\\Users\\lzju\\Desktop\\MonteCarloPathTracer\\scenes\\bathroom2\\bathroom2.xml",
+            ".reference/VulkanHybridRenderer/data/shaders_compiled/hybrid_render_path",
         },
         {
             "BLAS/TLAS build",
-            "Ray-query shadows",
+            "Raytraced shadows",
+            "Raytraced ambient occlusion",
+            "Raytraced reflections",
+            "SVGF-style denoise",
             "Temporal accumulation",
             "Swapchain storage output",
             "OBJ/MTL/XML scene import",
         },
         {
             {
-                "Materials RT smoke preview",
-                "Ray-query shadows",
+                "Materials hybrid RT smoke preview",
+                "Raytraced shadows/AO/reflections + denoise",
                 "realtime preview",
-                "build\\nmake-debug\\src\\vulkan_render.exe --profile v5-rt --preview --scene assets\\third_party\\s72_examples\\materials.s72 --width 1280 --height 720",
-                {"createGBufferRenderPass", "createV5HistoryResources", "createV5AccelerationStructures", "createV5RayTracingDescriptors", "v5RayTracing=on", "draw/present"},
-                {"Soft RT shadow noise settles when the camera is still.", "Camera motion resets accumulation without smearing."},
+                "build\\nmake-debug\\src\\vulkan_render.exe --profile v6-hybrid --preview --scene assets\\third_party\\s72_examples\\materials.s72 --width 1280 --height 720",
+                {"createGBufferRenderPass", "createV6HistoryResources", "createV6AccelerationStructures", "createV6RayTracingDescriptors", "hybridRayTracing=on", "denoise=on", "shadowMode=raytraced", "aoMode=raytraced", "reflectionMode=raytraced", "draw/present"},
+                {"Soft RT shadow noise settles when the camera is still.", "Raytraced reflection highlights are present on low-roughness materials.", "Camera motion resets accumulation without smearing."},
             },
             {
                 "Bathroom OBJ/XML import preview",
                 "OBJ/MTL/XML scene import",
                 "realtime preview",
-                "build\\nmake-debug\\src\\vulkan_render.exe --profile v5-rt --preview --scene C:\\Users\\lzju\\Desktop\\MonteCarloPathTracer\\scenes\\bathroom2\\bathroom2.xml --width 1280 --height 720",
-                {"geometry vertices=", "tlas=ready", "lights=", "v5RayTracing=on", "draw/present"},
+                "build\\nmake-debug\\src\\vulkan_render.exe --profile v6-hybrid --preview --scene C:\\Users\\lzju\\Desktop\\MonteCarloPathTracer\\scenes\\bathroom2\\bathroom2.xml --width 1280 --height 720",
+                {"geometry vertices=", "tlas=ready", "lights=", "hybridRayTracing=on", "draw/present"},
                 {"Bathroom mesh loads with imported camera.", "Emissive surfaces contribute bounded realtime lights."},
             },
         },
@@ -245,7 +249,7 @@ std::optional<ValidationProfile> findValidationProfile(ProfileId id) {
 void printValidationPipelines(std::ostream& out, std::optional<ProfileId> onlyProfile) {
     out << "Renderer72-aligned validation pipeline\n";
     out << "Reference README versions: v1.0 scene/animation/culling, v2.0 material/IBL, v3.0 lights/shadows, v4.0 deferred/SSAO.\n";
-    out << "Use v5 as this repo's realtime ray tracing extension.\n";
+    out << "Use v6-hybrid for the .reference VulkanHybridRenderer-aligned hybrid realtime ray tracing extension.\n";
 
     for (const auto& profile : kValidationProfiles) {
         if (onlyProfile && profile.profileId != *onlyProfile) {

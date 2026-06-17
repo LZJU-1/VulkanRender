@@ -72,7 +72,7 @@ public:
             createSsaoResources();
         }
         if (enableV5RayTracing_) {
-            previewLog("VulkanGpuRenderer: createV5HistoryResources");
+            previewLog("VulkanGpuRenderer: createV6HistoryResources");
             createV5HistoryResources();
         }
         previewLog("VulkanGpuRenderer: createMsaaColorResources");
@@ -82,7 +82,7 @@ public:
         previewLog("VulkanGpuRenderer: createBuffers");
         createBuffers();
         if (enableV5RayTracing_) {
-            previewLog("VulkanGpuRenderer: createV5AccelerationStructures");
+            previewLog("VulkanGpuRenderer: createV6AccelerationStructures");
             createV5AccelerationStructures();
         }
         previewLog("VulkanGpuRenderer: createTextureResources");
@@ -94,7 +94,7 @@ public:
             createV4ComposeDescriptors();
         }
         if (enableV5RayTracing_) {
-            previewLog("VulkanGpuRenderer: createV5RayTracingDescriptors");
+            previewLog("VulkanGpuRenderer: createV6RayTracingDescriptors");
             createV5RayTracingDescriptors();
         }
         previewLog(
@@ -102,7 +102,7 @@ public:
             + " batches=" + std::to_string(geometry_.batches.size())
             + " lights=" + std::to_string(geometry_.lights.size())
             + " sphereInstances=" + std::to_string(geometry_.sphereInstances.size())
-            + " v5RayTracing=" + (enableV5RayTracing_ ? std::string("on") : std::string("off"))
+            + " hybridRayTracing=" + (enableV5RayTracing_ ? std::string("on") : std::string("off"))
         );
         previewLog("VulkanGpuRenderer: createPipelines (factory)");
         auto pipelines = createPipelines(device_, msaaSamples_, renderPasses,
@@ -126,7 +126,8 @@ public:
         createCommands();
         previewLog("VulkanGpuRenderer: createSync");
         createSync();
-        createV5RTPipeline();
+        // V6 uses the reference-style hybrid ray-query pass so the shader path is
+        // reproducible through scripts/compile_v5_shader_dxc.bat.
         previewLog("VulkanGpuRenderer: ready");
     }
 
@@ -548,7 +549,7 @@ private:
         VkSurfaceCapabilitiesKHR caps{};
         vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice_, surface_, &caps);
         if (enableV5RayTracing_ && !(caps.supportedUsageFlags & VK_IMAGE_USAGE_STORAGE_BIT)) {
-            throw std::runtime_error("Selected swapchain surface does not support VK_IMAGE_USAGE_STORAGE_BIT required by v5 realtime ray tracing");
+            throw std::runtime_error("Selected swapchain surface does not support VK_IMAGE_USAGE_STORAGE_BIT required by v6 hybrid realtime ray tracing");
         }
 
         std::uint32_t formatCount = 0;
@@ -864,18 +865,18 @@ private:
 
     void createV5HistoryResources() {
         const VkExtent2D extent = v5RenderExtent();
-        createStorageSampledTexture(v5HistoryTargets_[0], kV5HistoryFormat, "vkCreateImage(v5 history 0)", extent);
-        createStorageSampledTexture(v5HistoryTargets_[1], kV5HistoryFormat, "vkCreateImage(v5 history 1)", extent);
-        createStorageSampledTexture(v5ShadowSignal_, kV5ShadowSignalFormat, "vkCreateImage(v5 shadow signal)", extent);
-        createStorageSampledTexture(v5ReflectionSignal_, kV5ReflectionSignalFormat, "vkCreateImage(v5 reflection signal)", extent);
-        createStorageSampledTexture(v5ShadowHistoryTargets_[0], kV5ShadowSignalFormat, "vkCreateImage(v5 shadow history 0)", extent);
-        createStorageSampledTexture(v5ShadowHistoryTargets_[1], kV5ShadowSignalFormat, "vkCreateImage(v5 shadow history 1)", extent);
-        createStorageSampledTexture(v5ReflectionHistoryTargets_[0], kV5ReflectionSignalFormat, "vkCreateImage(v5 reflection history 0)", extent);
-        createStorageSampledTexture(v5ReflectionHistoryTargets_[1], kV5ReflectionSignalFormat, "vkCreateImage(v5 reflection history 1)", extent);
-        createStorageSampledTexture(v5MotionVector_, kV5MotionVectorFormat, "vkCreateImage(v5 motion vector)", extent);
-        createStorageSampledTexture(v5SurfaceHistoryTargets_[0], kV5SurfaceHistoryFormat, "vkCreateImage(v5 surface history 0)", extent);
-        createStorageSampledTexture(v5SurfaceHistoryTargets_[1], kV5SurfaceHistoryFormat, "vkCreateImage(v5 surface history 1)", extent);
-        createStorageSampledTexture(v5ResolvedColor_, kV5HistoryFormat, "vkCreateImage(v5 resolved color)", extent);
+        createStorageSampledTexture(v5HistoryTargets_[0], kV5HistoryFormat, "vkCreateImage(v6 history 0)", extent);
+        createStorageSampledTexture(v5HistoryTargets_[1], kV5HistoryFormat, "vkCreateImage(v6 history 1)", extent);
+        createStorageSampledTexture(v5ShadowSignal_, kV5ShadowSignalFormat, "vkCreateImage(v6 shadow ao signal)", extent);
+        createStorageSampledTexture(v5ReflectionSignal_, kV5ReflectionSignalFormat, "vkCreateImage(v6 reflection signal)", extent);
+        createStorageSampledTexture(v5ShadowHistoryTargets_[0], kV5ShadowSignalFormat, "vkCreateImage(v6 shadow ao history 0)", extent);
+        createStorageSampledTexture(v5ShadowHistoryTargets_[1], kV5ShadowSignalFormat, "vkCreateImage(v6 shadow ao history 1)", extent);
+        createStorageSampledTexture(v5ReflectionHistoryTargets_[0], kV5ReflectionSignalFormat, "vkCreateImage(v6 reflection history 0)", extent);
+        createStorageSampledTexture(v5ReflectionHistoryTargets_[1], kV5ReflectionSignalFormat, "vkCreateImage(v6 reflection history 1)", extent);
+        createStorageSampledTexture(v5MotionVector_, kV5MotionVectorFormat, "vkCreateImage(v6 motion vector)", extent);
+        createStorageSampledTexture(v5SurfaceHistoryTargets_[0], kV5SurfaceHistoryFormat, "vkCreateImage(v6 surface history 0)", extent);
+        createStorageSampledTexture(v5SurfaceHistoryTargets_[1], kV5SurfaceHistoryFormat, "vkCreateImage(v6 surface history 1)", extent);
+        createStorageSampledTexture(v5ResolvedColor_, kV5HistoryFormat, "vkCreateImage(v6 resolved color)", extent);
         v5HistoryInitialized_ = {false, false};
         v5ShadowHistoryInitialized_ = {false, false};
         v5ReflectionHistoryInitialized_ = {false, false};
@@ -996,7 +997,7 @@ private:
         VkBufferUsageFlags vertexUsage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
         VkMemoryAllocateFlags vertexAllocationFlags = 0;
         if (enableV5RayTracing_) {
-            vertexUsage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+            vertexUsage |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
             vertexAllocationFlags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
         }
         createBuffer(vertexBytes_, vertexUsage, vertexBuffer_, vertexMemory_, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, vertexAllocationFlags);
@@ -1125,7 +1126,7 @@ private:
     void createV5AccelerationStructures() {
         const std::uint32_t primitiveCount = vertexCount_ / 3u;
         if (primitiveCount == 0) {
-            throw std::runtime_error("V5 realtime ray tracing requires triangle geometry for BLAS build");
+            throw std::runtime_error("V6 hybrid realtime ray tracing requires triangle geometry for BLAS build");
         }
 
         VkDeviceOrHostAddressConstKHR vertexAddress{};
@@ -1267,7 +1268,7 @@ private:
         vkDestroyBuffer(device_, instanceBuffer, nullptr);
         vkFreeMemory(device_, instanceMemory, nullptr);
 
-        previewLog("createV5AccelerationStructures: triangles=" + std::to_string(primitiveCount) + " tlas=ready");
+        previewLog("createV6AccelerationStructures: triangles=" + std::to_string(primitiveCount) + " tlas=ready");
     }
 
     void transitionImage(
@@ -1719,9 +1720,10 @@ private:
             + " sampler=linear-mipmap-linear anisotropy="
             + (samplerAnisotropy_ ? std::to_string(maxSamplerAnisotropy_) + "x" : "off")
             + " edgeAA=g-buffer"
+            + (enableV5RayTracing_ ? " shadowMode=raytraced aoMode=raytraced reflectionMode=raytraced" : "")
             + (enableV5RayTracing_ ? " taa=halton16-surface-validated-resolve" : "")
-            + (enableV5RayTracing_ ? " denoise=hybrid-split-signal-temporal-bilateral" : "")
-            + (enableV5RayTracing_ ? " mode=realtime-hybrid-rt" : "")
+            + (enableV5RayTracing_ ? " denoise=on(svgf-temporal-bilateral)" : "")
+            + (enableV5RayTracing_ ? " mode=v6-reference-hybrid-rt" : "")
             + (enableV5RayTracing_ ? (" internalScale=" + std::to_string(kV5InternalScale) + "x") : "")
         );
     }
@@ -2064,8 +2066,10 @@ private:
         lightBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         lightBinding.descriptorCount = 1;
         lightBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        VkDescriptorSetLayoutBinding vertexBinding = lightBinding;
+        vertexBinding.binding = kV5VertexBufferBinding;
 
-        std::array<VkDescriptorSetLayoutBinding, 21> bindings{
+        std::array<VkDescriptorSetLayoutBinding, 22> bindings{
             cameraBinding,
             outputBinding,
             samplerBinding,
@@ -2087,18 +2091,19 @@ private:
             resolvedColorBinding,
             motionVectorBinding,
             motionVectorHistoryBinding,
+            vertexBinding,
         };
         VkDescriptorSetLayoutCreateInfo layout{};
         layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
         layout.bindingCount = static_cast<std::uint32_t>(bindings.size());
         layout.pBindings = bindings.data();
-        require(vkCreateDescriptorSetLayout(device_, &layout, nullptr, &v5DescriptorSetLayout_), "vkCreateDescriptorSetLayout(v5 rt)");
+        require(vkCreateDescriptorSetLayout(device_, &layout, nullptr, &v5DescriptorSetLayout_), "vkCreateDescriptorSetLayout(v6 hybrid rt)");
 
         std::array<VkDescriptorPoolSize, 6> poolSizes{};
         poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         poolSizes[0].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 2u);
         poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        poolSizes[1].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 18u);
+        poolSizes[1].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 20u);
         poolSizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLER;
         poolSizes[2].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 2u);
         poolSizes[3].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
@@ -2106,13 +2111,13 @@ private:
         poolSizes[4].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
         poolSizes[4].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 2u);
         poolSizes[5].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        poolSizes[5].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 2u);
+        poolSizes[5].descriptorCount = static_cast<std::uint32_t>(swapchainImageViews_.size() * 4u);
         VkDescriptorPoolCreateInfo pool{};
         pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         pool.poolSizeCount = static_cast<std::uint32_t>(poolSizes.size());
         pool.pPoolSizes = poolSizes.data();
         pool.maxSets = static_cast<std::uint32_t>(swapchainImageViews_.size() * 2u);
-        require(vkCreateDescriptorPool(device_, &pool, nullptr, &v5DescriptorPool_), "vkCreateDescriptorPool(v5 rt)");
+        require(vkCreateDescriptorPool(device_, &pool, nullptr, &v5DescriptorPool_), "vkCreateDescriptorPool(v6 hybrid rt)");
 
         std::vector<VkDescriptorSetLayout> layouts(swapchainImageViews_.size() * 2u, v5DescriptorSetLayout_);
         v5DescriptorSets_.resize(swapchainImageViews_.size() * 2u);
@@ -2121,7 +2126,7 @@ private:
         allocate.descriptorPool = v5DescriptorPool_;
         allocate.descriptorSetCount = static_cast<std::uint32_t>(v5DescriptorSets_.size());
         allocate.pSetLayouts = layouts.data();
-        require(vkAllocateDescriptorSets(device_, &allocate, v5DescriptorSets_.data()), "vkAllocateDescriptorSets(v5 rt)");
+        require(vkAllocateDescriptorSets(device_, &allocate, v5DescriptorSets_.data()), "vkAllocateDescriptorSets(v6 hybrid rt)");
 
         VkDescriptorBufferInfo bufferInfo{};
         bufferInfo.buffer = uniformBuffer_;
@@ -2144,6 +2149,10 @@ private:
         lightInfo.buffer = lightBuffer_;
         lightInfo.offset = 0;
         lightInfo.range = lightBytes_;
+        VkDescriptorBufferInfo vertexInfo{};
+        vertexInfo.buffer = vertexBuffer_;
+        vertexInfo.offset = 0;
+        vertexInfo.range = vertexBytes_;
 
         std::vector<VkDescriptorImageInfo> outputInfos(v5DescriptorSets_.size());
         std::vector<VkDescriptorImageInfo> historyInputInfos(v5DescriptorSets_.size());
@@ -2160,7 +2169,7 @@ private:
         std::vector<VkDescriptorImageInfo> motionVectorInfos(v5DescriptorSets_.size());
         std::vector<VkDescriptorImageInfo> motionVectorHistoryInfos(v5DescriptorSets_.size());
         std::vector<VkWriteDescriptorSetAccelerationStructureKHR> asInfos(v5DescriptorSets_.size());
-        std::vector<std::array<VkWriteDescriptorSet, 21>> writes(v5DescriptorSets_.size());
+        std::vector<std::array<VkWriteDescriptorSet, 22>> writes(v5DescriptorSets_.size());
         for (std::size_t i = 0; i < v5DescriptorSets_.size(); ++i) {
             const std::size_t swapchainIndex = i / 2u;
             const std::size_t pingPongIndex = i % 2u;
@@ -2342,6 +2351,13 @@ private:
             writes[i][20].descriptorCount = 1;
             writes[i][20].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
             writes[i][20].pImageInfo = &motionVectorHistoryInfos[i];
+
+            writes[i][21].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i][21].dstSet = v5DescriptorSets_[i];
+            writes[i][21].dstBinding = kV5VertexBufferBinding;
+            writes[i][21].descriptorCount = 1;
+            writes[i][21].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[i][21].pBufferInfo = &vertexInfo;
             vkUpdateDescriptorSets(device_, static_cast<std::uint32_t>(writes[i].size()), writes[i].data(), 0, nullptr);
         }
     }
@@ -2696,7 +2712,7 @@ private:
             VkRect2D internalScissor{};
             internalScissor.extent = internalExtent;
 
-            if (frameIndex_ < 4) previewLog("record v5: begin gbuffer pass");
+            if (frameIndex_ < 4) previewLog("record v6: begin gbuffer pass");
             std::array<VkClearValue, 4> gbufferClears{};
             gbufferClears[0].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
             gbufferClears[1].color = {{0.5f, 0.5f, 1.0f, 1.0f}};
@@ -2720,7 +2736,7 @@ private:
                 vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1, &fallbackDescriptorSet, 0, nullptr);
                 vkCmdDraw(commandBuffer, vertexCount_, 1, 0, 0);
             } else {
-                if (frameIndex_ < 4) previewLog("record v5: draw batches");
+                if (frameIndex_ < 4) previewLog("record v6: draw batches");
                 for (const GpuPreviewGeometry::Batch& batch : geometry_.batches) {
                     if (batch.vertexCount == 0) {
                         continue;
@@ -2740,10 +2756,10 @@ private:
                 vkCmdBindVertexBuffers(commandBuffer, 0, static_cast<std::uint32_t>(sphereBuffers.size()), sphereBuffers.data(), sphereOffsets.data());
                 vkCmdDraw(commandBuffer, sphereVertexCount_, sphereInstanceCount_, 0, 0);
             }
-            if (frameIndex_ < 4) previewLog("record v5: end gbuffer pass");
+            if (frameIndex_ < 4) previewLog("record v6: end gbuffer pass");
             vkCmdEndRenderPass(commandBuffer);
 
-            if (frameIndex_ < 4) previewLog("record v5: gbuffer compute barrier");
+            if (frameIndex_ < 4) previewLog("record v6: gbuffer compute barrier");
             std::array<VkImageMemoryBarrier, 3> gbufferReadBarriers{};
             for (std::size_t i = 0; i < gbufferReadBarriers.size(); ++i) {
                 VkImageMemoryBarrier& barrier = gbufferReadBarriers[i];
@@ -2838,7 +2854,7 @@ private:
                 historyBeforeCompute.data()
             );
 
-            if (frameIndex_ < 4) previewLog("record v5: swapchain to general");
+            if (frameIndex_ < 4) previewLog("record v6: swapchain to general");
             VkImageMemoryBarrier toGeneral{};
             toGeneral.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
             const bool firstSwapchainUse = imageIndex >= v5SwapchainImageInitialized_.size() || !v5SwapchainImageInitialized_[imageIndex];
@@ -2864,12 +2880,12 @@ private:
                 &toGeneral
             );
 
-            if (frameIndex_ < 4) previewLog("record v5: dispatch ray signal (RT pipeline)");
-            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, v5RTPipeline_);
+            if (frameIndex_ < 4) previewLog("record v6: dispatch raytrace signal compute");
             const std::size_t descriptorIndex = static_cast<std::size_t>(imageIndex) * 2u + historyWriteIndex;
             const VkDescriptorSet descriptorSet = v5DescriptorSets_[descriptorIndex];
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, v5RayTracingPipelineLayout_, 0, 1, &descriptorSet, 0, nullptr);
-            vkCmdTraceRaysKHR(commandBuffer, &v5RTRaygenSbt_, &v5RTMissSbt_, &v5RTHitSbt_, &v5RTHitSbt_, internalExtent.width, internalExtent.height, 1);
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, v5RayTracingPipeline_);
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, v5RayTracingPipelineLayout_, 0, 1, &descriptorSet, 0, nullptr);
+            vkCmdDispatch(commandBuffer, (internalExtent.width + 7u) / 8u, (internalExtent.height + 7u) / 8u, 1);
 
             std::array<VkImageMemoryBarrier, 2> signalAfterRay{};
             auto setSignalReadBarrier = [](VkImageMemoryBarrier& barrier, VkImage image) {
@@ -2900,7 +2916,7 @@ private:
                 signalAfterRay.data()
             );
 
-            if (frameIndex_ < 4) previewLog("record v5: dispatch denoise compute");
+            if (frameIndex_ < 4) previewLog("record v6: dispatch denoise compute");
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, v5DenoisePipeline_);
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, v5RayTracingPipelineLayout_, 0, 1, &descriptorSet, 0, nullptr);
             vkCmdDispatch(commandBuffer, (internalExtent.width + 7u) / 8u, (internalExtent.height + 7u) / 8u, 1);
@@ -2967,12 +2983,12 @@ private:
                 &resolvedBeforeDownsample
             );
 
-            if (frameIndex_ < 4) previewLog("record v5: dispatch downsample compute");
+            if (frameIndex_ < 4) previewLog("record v6: dispatch downsample compute");
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, v5DownsamplePipeline_);
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, v5RayTracingPipelineLayout_, 0, 1, &descriptorSet, 0, nullptr);
             vkCmdDispatch(commandBuffer, (swapchainExtent_.width + 7u) / 8u, (swapchainExtent_.height + 7u) / 8u, 1);
 
-            if (frameIndex_ < 4) previewLog("record v5: swapchain to present");
+            if (frameIndex_ < 4) previewLog("record v6: swapchain to present");
             VkImageMemoryBarrier toPresent = toGeneral;
             toPresent.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
             toPresent.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
@@ -2991,7 +3007,7 @@ private:
                 &toPresent
             );
 
-            if (frameIndex_ < 4) previewLog("record v5: end command buffer");
+            if (frameIndex_ < 4) previewLog("record v6: end command buffer");
             require(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer");
             if (imageIndex < v5SwapchainImageInitialized_.size()) {
                 v5SwapchainImageInitialized_[imageIndex] = true;
@@ -3577,10 +3593,10 @@ int runVulkanPreviewWindow(V1RenderSettings settings) {
         return 1;
     }
     previewLog("runVulkanPreviewWindow: timer start");
-    SetTimer(hwnd, kWindowTimer, 16, nullptr);
+    SetTimer(hwnd, kWindowTimer, 1, nullptr);
 
     std::cout << "Opened Vulkan GPU preview window. vertices=" << state.geometry.vertices.size()
-              << ". Press R for roaming, hold right mouse to look, Esc to exit.\n";
+              << ". V6 hybrid defaults: raytraced shadows/AO/reflections, denoise on. Press R for roaming, hold right mouse to look, Esc to exit.\n";
 
     MSG message{};
     while (GetMessageW(&message, nullptr, 0, 0) > 0) {

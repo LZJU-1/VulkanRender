@@ -102,14 +102,15 @@ int RendererApp::run() {
     }
 
     const bool rtAvailable = report.hasRayTracingDevice();
+    if (profile->requiresRayTracing) {
+        config_.enableRayTracing = true;
+    }
+
     if (profile->requiresRayTracing && config_.requireRayTracing && !rtAvailable) {
         std::cerr << "Realtime ray tracing was required, but no device exposes the required Vulkan RT extensions.\n";
         return 2;
     }
 
-    if (profile->requiresRayTracing && !config_.enableRayTracing) {
-        std::cout << "Note: v5-rt selected without --enable-rt; graph is shown in planning mode.\n";
-    }
     if (profile->requiresRayTracing && config_.enableRayTracing && !rtAvailable) {
         std::cout << "Note: realtime RT requested but unavailable; running graph in fallback mode.\n";
     }
@@ -165,15 +166,15 @@ int RendererApp::run() {
     }
 
     if (config_.previewWindow) {
-        if (profile->id != ProfileId::V1SceneForward && profile->id != ProfileId::V2PbrIbl && profile->id != ProfileId::V3LightsShadows && profile->id != ProfileId::V4DeferredSsao && profile->id != ProfileId::V5RealtimeRayTracing) {
-            std::cout << "Realtime preview is currently implemented for v1, v2, v3, v4, and v5.\n";
+        if (profile->id != ProfileId::V1SceneForward && profile->id != ProfileId::V2PbrIbl && profile->id != ProfileId::V3LightsShadows && profile->id != ProfileId::V4DeferredSsao && profile->id != ProfileId::V6HybridRealtimeRayTracing) {
+            std::cout << "Realtime preview is currently implemented for v1, v2, v3, v4, and v6.\n";
             return 0;
         }
 
         V1RenderSettings settings;
         settings.width = config_.width;
         settings.height = config_.height;
-        settings.enableV5RayTracing = profile->id == ProfileId::V5RealtimeRayTracing;
+        settings.enableV5RayTracing = profile->id == ProfileId::V6HybridRealtimeRayTracing;
         settings.enableV2Shading = profile->id == ProfileId::V2PbrIbl || profile->id == ProfileId::V3LightsShadows || profile->id == ProfileId::V4DeferredSsao || settings.enableV5RayTracing;
         settings.enableV3Shadows = profile->id == ProfileId::V3LightsShadows || profile->id == ProfileId::V4DeferredSsao;
         settings.enableV4Ssao = profile->id == ProfileId::V4DeferredSsao;

@@ -93,10 +93,10 @@ void recordGBufferFill(const RecordState& state) {
 }
 
 void recordV5RayTracing(const RecordState& state) {
-    if (state.frameIndex < 4) previewLog("record v5: begin gbuffer pass");
+    if (state.frameIndex < 4) previewLog("record v6: begin gbuffer pass");
     recordGBufferFill(state);
 
-    if (state.frameIndex < 4) previewLog("record v5: gbuffer compute barrier");
+    if (state.frameIndex < 4) previewLog("record v6: gbuffer compute barrier");
     std::array<VkImageMemoryBarrier, 3> gbufferReadBarriers{};
     for (std::size_t i = 0; i < gbufferReadBarriers.size(); ++i) {
         VkImageMemoryBarrier& barrier = gbufferReadBarriers[i];
@@ -158,7 +158,7 @@ void recordV5RayTracing(const RecordState& state) {
         historyBeforeCompute.data()
     );
 
-    if (state.frameIndex < 4) previewLog("record v5: swapchain to general");
+    if (state.frameIndex < 4) previewLog("record v6: swapchain to general");
     VkImageMemoryBarrier toGeneral{};
     toGeneral.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     toGeneral.oldLayout = state.swapchainImageInitialized ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_UNDEFINED;
@@ -180,7 +180,7 @@ void recordV5RayTracing(const RecordState& state) {
         1, &toGeneral
     );
 
-    if (state.frameIndex < 4) previewLog("record v5: dispatch compute");
+    if (state.frameIndex < 4) previewLog("record v6: dispatch raytrace signal compute");
     vkCmdBindPipeline(state.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, state.v5ComputePipeline);
     vkCmdBindDescriptorSets(state.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, state.v5Layout, 0, 1, &state.v5DescriptorSet, 0, nullptr);
     vkCmdDispatch(state.cmd, (state.extent.width + 7u) / 8u, (state.extent.height + 7u) / 8u, 1);
@@ -207,7 +207,7 @@ void recordV5RayTracing(const RecordState& state) {
         1, &historyAfterCompute
     );
 
-    if (state.frameIndex < 4) previewLog("record v5: swapchain to present");
+    if (state.frameIndex < 4) previewLog("record v6: swapchain to present");
     VkImageMemoryBarrier toPresent = toGeneral;
     toPresent.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
     toPresent.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
@@ -223,7 +223,7 @@ void recordV5RayTracing(const RecordState& state) {
         1, &toPresent
     );
 
-    if (state.frameIndex < 4) previewLog("record v5: end command buffer");
+    if (state.frameIndex < 4) previewLog("record v6: end command buffer");
 }
 
 void recordV4Deferred(const RecordState& state) {

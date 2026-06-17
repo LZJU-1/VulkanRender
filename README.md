@@ -26,7 +26,7 @@ ctest --preset nmake-debug
 
 ```powershell
 .\build\msvc-debug\src\Debug\vulkan_render.exe --profile v1 --frames 2
-.\build\msvc-debug\src\Debug\vulkan_render.exe --profile v5-rt --enable-rt --list-devices
+.\build\msvc-debug\src\Debug\vulkan_render.exe --profile v6-hybrid --list-devices
 build\nmake-debug\src\vulkan_render.exe --profile v2 --render --scene assets\third_party\s72_examples\materials.s72 --output out\v2-materials.bmp --width 1280 --height 720
 build\nmake-debug\src\vulkan_render.exe --profile v2 --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
 ```
@@ -37,7 +37,7 @@ Profiles:
 - `v2`: skybox, tone mapping, Scene'72 material families, textured lambertian/PBR approximation, and IBL precompute hooks
 - `v3`: spot, sphere, and directional light shadow stages
 - `v4`: deferred shading, G-buffer, SSAO, many-light composition
-- `v5-rt`: realtime ray tracing profile with BLAS/TLAS, ray generation, miss, closest-hit, and accumulation passes
+- `v6-hybrid`: realtime hybrid ray tracing profile aligned to `.reference/VulkanHybridRenderer`, defaulting to raytraced shadows, raytraced AO, raytraced reflections, and denoising. See `docs/V6_FEATURES.md`
 
 Asset formats:
 

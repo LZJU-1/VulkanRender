@@ -104,24 +104,24 @@ Shadow/SSAO regression scene:
 build\nmake-debug\src\vulkan_render.exe --profile v4 --preview --scene assets\third_party\s72_examples\v3_shadow_demo.shadowdemo --width 1280 --height 720
 ```
 
-## v5 Realtime Ray Tracing
+## v6 Hybrid Realtime Ray Tracing
 
-Target behavior: opt into realtime ray tracing effects using a modern hybrid rendering layout.
+Target behavior: match `.reference/VulkanHybridRenderer` with the default UI state from the reference screenshot: raytraced shadows, raytraced ambient occlusion, raytraced reflections, and denoise enabled.
 
-Current implementation: see `docs/V5_FEATURES.md`. The realtime preview rasterizes the selected mesh scene into a G-buffer, builds BLAS/TLAS acceleration structures for the main triangle mesh, then runs a Vulkan compute pass that uses hardware ray-query shadow rays and ping-pong temporal history before writing to the swapchain storage image. Reflections are still screen-space; v5 shadows are not shadow maps.
+Current implementation: see `docs/V6_FEATURES.md`. The realtime preview rasterizes the selected mesh scene into a G-buffer, builds BLAS/TLAS acceleration structures for the main triangle mesh, writes raytraced shadow/AO and reflection signal buffers, runs an SVGF-style denoise pass, then resolves through the swapchain storage image.
 
 Realtime preview:
 
 ```powershell
-build\nmake-debug\src\vulkan_render.exe --profile v5-rt --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
+build\nmake-debug\src\vulkan_render.exe --profile v6-hybrid --preview --scene assets\third_party\s72_examples\materials.s72 --width 1280 --height 720
 ```
 
-Expected log markers: `createGBufferRenderPass`, `createV5HistoryResources`, `createV5AccelerationStructures: triangles=... tlas=ready`, `createV5RayTracingDescriptors`, `v5RayTracing=on`, and repeated `draw/present`.
+Expected log markers: `createGBufferRenderPass`, `createV6HistoryResources`, `createV6AccelerationStructures: triangles=... tlas=ready`, `createV6RayTracingDescriptors`, `hybridRayTracing=on`, `shadowMode=raytraced aoMode=raytraced reflectionMode=raytraced`, `denoise=on(svgf-temporal-bilateral)`, `record v6: dispatch raytrace signal compute`, `record v6: dispatch denoise compute`, `record v6: dispatch downsample compute`, and repeated `draw/present`.
 
 PathTracer bathroom2 scene:
 
 ```powershell
-build\nmake-debug\src\vulkan_render.exe --profile v5-rt --preview --scene C:\Users\lzju\Desktop\MonteCarloPathTracer\scenes\bathroom2\bathroom2.xml --width 1280 --height 720
+build\nmake-debug\src\vulkan_render.exe --profile v6-hybrid --preview --scene C:\Users\lzju\Desktop\MonteCarloPathTracer\scenes\bathroom2\bathroom2.xml --width 1280 --height 720
 ```
 
-This imports the PathTracer OBJ/MTL scene, applies the companion XML camera, builds a TLAS over the bathroom mesh, and runs the same v5 ray-query shadow path. First load is slow because `bathroom2.obj` is a large text mesh.
+This imports the PathTracer OBJ/MTL scene, applies the companion XML camera, builds a TLAS over the bathroom mesh, and runs the same v6 hybrid ray-query path. First load is slow because `bathroom2.obj` is a large text mesh.

@@ -89,11 +89,11 @@ AppConfig CommandLine::parse(int argc, char** argv) {
             config.enableValidation = true;
         } else if (arg == "--enable-rt") {
             config.enableRayTracing = true;
-            config.profile = "v5-rt";
+            config.profile = "v6-hybrid";
         } else if (arg == "--require-rt") {
             config.enableRayTracing = true;
             config.requireRayTracing = true;
-            config.profile = "v5-rt";
+            config.profile = "v6-hybrid";
         } else if (arg == "--headless") {
             config.headless = true;
         } else if (arg == "--camera-eye") {
@@ -157,7 +157,7 @@ void CommandLine::printHelp(std::ostream& out) {
         << "  --frames <n>               Number of graph frames to execute\n"
         << "  --list-devices             Print backend and GPU capability information\n"
         << "  --validate                 Request Vulkan validation when implemented\n"
-        << "  --enable-rt                Select v5-rt and use RT if supported\n"
+        << "  --enable-rt                Select v6-hybrid and use RT if supported\n"
         << "  --require-rt               Fail when RT extensions are unavailable\n"
         << "  --headless                 Avoid window/swapchain work\n"
         << "  --camera-eye <x y z>       Override preview/render camera eye position\n"

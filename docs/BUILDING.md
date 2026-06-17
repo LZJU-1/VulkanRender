@@ -22,13 +22,13 @@ List GPU capability:
 .\build\msvc-debug\src\Debug\vulkan_render.exe --list-devices
 ```
 
-Run the realtime ray tracing profile:
+Run the v6 hybrid realtime ray tracing profile:
 
 ```powershell
-.\build\msvc-debug\src\Debug\vulkan_render.exe --profile v5-rt --enable-rt --frames 1
+.\build\msvc-debug\src\Debug\vulkan_render.exe --profile v6-hybrid --frames 1
 ```
 
-If the GPU or driver does not expose the required extensions, the app reports the missing support and keeps the graph in fallback mode unless `--require-rt` is passed.
+If the GPU or driver does not expose the required extensions, the app reports the missing support and keeps the graph in fallback mode unless `--require-rt` is passed. `--enable-rt` remains supported as a shortcut and selects `v6-hybrid`.
 
 Render the current v1 image:
 

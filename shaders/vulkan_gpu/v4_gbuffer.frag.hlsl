@@ -113,7 +113,7 @@ GBufferOut main(FragmentIn input) {
 
     float3 texel = srgbToLinear(albedoTexture.SampleGrad(materialSampler, uv, duvdx, duvdy).rgb);
     float3 base = lerp(saturate(input.color), texel, hasAlbedoTexture ? 1.0 : 0.0);
-    float roughnessMap = roughnessTexture.SampleGrad(materialSampler, uv, duvdx, duvdy).r;
+    float roughnessMap = roughnessTexture.SampleGrad(materialSampler, uv, duvdx, duvdy).g;
     float roughness = clamp(lerp(input.roughness, roughnessMap, hasDetailTextures ? 1.0 : 0.0), 0.03, 1.0);
 
     GBufferOut output;

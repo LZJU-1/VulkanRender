@@ -13,7 +13,7 @@ enum class ProfileId {
     V2PbrIbl,
     V3LightsShadows,
     V4DeferredSsao,
-    V5RealtimeRayTracing
+    V6HybridRealtimeRayTracing
 };
 
 struct FeatureProfile {
@@ -31,4 +31,3 @@ std::optional<FeatureProfile> findProfile(std::string_view key);
 std::string profileKeys();
 
 } // namespace vr
-

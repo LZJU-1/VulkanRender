@@ -55,6 +55,7 @@ RWTexture2D<float2> motionVectorHistory : register(u34);
 #include "v5_shared.hlsl"
 
 [[vk::binding(20, 0)]] StructuredBuffer<SceneLight> sceneLights;
+[[vk::binding(21, 0)]] RaytracingAccelerationStructure sceneTlas;
 
 float3 skyColorAtUv(float2 uv) {
     float2 ndc = uv * 2.0 - 1.0 - taaJitter.xy;
@@ -347,7 +348,8 @@ float bilateralWeight(Surface center, Surface sampleSurface) {
 float4 temporalShadowAt(uint2 pixel, uint width, uint height, Surface surface) {
     float4 current = shadowSignal[pixel];
     current.r = saturate(current.r);
-    current.gba = max(current.gba, 0.0.xxx);
+    current.g = saturate(current.g);
+    current.ba = 0.0.xx;
     float4 lo = current;
     float4 hi = current;
     [unroll]
@@ -356,7 +358,8 @@ float4 temporalShadowAt(uint2 pixel, uint width, uint height, Surface surface) {
         for (int x = -1; x <= 1; ++x) {
             float4 v = shadowSignal[clampPixel(int2(pixel) + int2(x, y), width, height)];
             v.r = saturate(v.r);
-            v.gba = max(v.gba, 0.0.xxx);
+            v.g = saturate(v.g);
+            v.ba = 0.0.xx;
             lo = min(lo, v);
             hi = max(hi, v);
         }
@@ -373,19 +376,18 @@ float4 temporalShadowAt(uint2 pixel, uint width, uint height, Surface surface) {
     float historyFrames = max(v4Flags.w, 0.0);
     float historyWeight = (historyFrames < 1.0 || !hasPrevious) ? 0.0 : min(0.95, historyFrames / (historyFrames + 0.8));
     historyWeight *= saturate(previousSupport);
-    // Variance-guided refinement: high-variance signals need more temporal blending
+    // Variance-guided refinement: high-variance shadow/AO signals blend more.
     float2 moments = previous.zw;
     float varMax = max(0.0, moments.y - moments.x * moments.x);
     float varAdjust = saturate(varMax * 18.0);
     historyWeight = lerp(historyWeight, min(0.97, historyWeight + 0.12), varAdjust);
-    float localCurrent = dot(current.gba, float3(0.2126, 0.7152, 0.0722));
-    float localPrevious = dot(previous.gba, float3(0.2126, 0.7152, 0.0722));
-    float disagreement = abs(current.r - previous.r) + abs(localCurrent - localPrevious) * 0.25;
+    float disagreement = abs(current.r - previous.r) + abs(current.g - previous.g);
     historyWeight *= 1.0 - saturate(disagreement * 1.8);
-    // Pack moments: luminance + luminance^2 for next frame's variance
+
     float4 result = lerp(current, previous, historyWeight);
-    float lum = dot(result.gba, float3(0.2126, 0.7152, 0.0722));
-    float2 newMoments = lerp(previous.zw, float2(lum, lum * lum), 0.15);
+    result.xy = saturate(result.xy);
+    float shadowAoLuma = dot(result.xy, float2(0.5, 0.5));
+    float2 newMoments = lerp(previous.zw, float2(shadowAoLuma, shadowAoLuma * shadowAoLuma), 0.15);
     result.zw = newMoments;
     return result;
 }
@@ -415,20 +417,12 @@ float4 temporalReflectionAt(uint2 pixel, uint width, uint height, Surface surfac
     float historyFrames = max(v4Flags.w, 0.0);
     float historyWeight = (historyFrames < 1.0 || !hasPrevious) ? 0.0 : min(0.93, historyFrames / (historyFrames + 1.2));
     historyWeight *= saturate(previousSupport);
-    // Variance-guided refinement for reflection
-    float2 moments = previous.zw;
-    float varMax = max(0.0, moments.y - moments.x * moments.x);
-    float varAdjust = saturate(varMax * 22.0);
-    historyWeight = lerp(historyWeight, min(0.96, historyWeight + 0.10), varAdjust);
     float lumaCurrent = dot(current.rgb, float3(0.2126, 0.7152, 0.0722));
     float lumaPrevious = dot(previous.rgb, float3(0.2126, 0.7152, 0.0722));
     historyWeight *= 1.0 - saturate(abs(lumaCurrent - lumaPrevious) * 2.0);
-    // Pack moments for next frame
+
     float4 result = lerp(current, previous, historyWeight);
-    float lum = dot(result.rgb, float3(0.2126, 0.7152, 0.0722));
-    float2 newMoments = lerp(previous.zw, float2(lum, lum * lum), 0.15);
-    result.zw = newMoments;
-    return result;
+    return float4(max(result.rgb, 0.0.xxx), saturate(result.a));
 }
 
 void filterSignals(uint2 pixel, uint width, uint height, Surface center, out float4 shadow, out float4 reflection) {
@@ -456,14 +450,16 @@ void filterSignals(uint2 pixel, uint width, uint height, Surface center, out flo
             weightSum += weight;
 
             float4 sampleReflection = temporalReflectionAt(samplePixel, width, height, sampleSurface);
-            float reflectionGuide = saturate(sampleReflection.a * 4.0 + (1.0 - sampleSurface.roughness) * 0.35);
-            reflectionSum += sampleReflection * weight * reflectionGuide;
-            reflectionWeightSum += weight * reflectionGuide;
+            float reflectionSampleWeight = saturate(sampleReflection.a * 4.0 + (1.0 - sampleSurface.roughness) * 0.35);
+            reflectionSum += sampleReflection * weight * reflectionSampleWeight;
+            reflectionWeightSum += weight * reflectionSampleWeight;
         }
     }
 
     shadow = weightSum > 0.0 ? shadowSum / weightSum : temporalShadowAt(pixel, width, height, center);
-    reflection = reflectionWeightSum > 0.0 ? reflectionSum / reflectionWeightSum : temporalReflectionAt(pixel, width, height, center);
+    bool mirrorMaterial = abs(center.materialKind - 2.0) < 0.25;
+    reflection = mirrorMaterial ? temporalReflectionAt(pixel, width, height, center)
+                                : (reflectionWeightSum > 0.0 ? reflectionSum / reflectionWeightSum : temporalReflectionAt(pixel, width, height, center));
     shadow.r = saturate(shadow.r);
     shadow.gba = max(shadow.gba, 0.0.xxx);
     reflection = max(reflection, 0.0.xxxx);
@@ -503,9 +499,9 @@ void atrousIteration(uint2 pixel, uint width, uint height, Surface center, float
             weightSum += weight;
 
             float4 sampleReflection = temporalReflectionAt(samplePixel, width, height, sampleSurface);
-            float reflectionGuide = saturate(sampleReflection.a * 3.0 + (1.0 - sampleSurface.roughness) * 0.25);
-            reflectionSum += sampleReflection * weight * reflectionGuide;
-            reflectionWeightSum += weight * reflectionGuide;
+            float reflectionSampleWeight = saturate(sampleReflection.a * 3.0 + (1.0 - sampleSurface.roughness) * 0.25);
+            reflectionSum += sampleReflection * weight * reflectionSampleWeight;
+            reflectionWeightSum += weight * reflectionSampleWeight;
         }
     }
 
@@ -519,44 +515,37 @@ void atrousIteration(uint2 pixel, uint width, uint height, Surface center, float
     reflectionOut = lerp(reflectionIn, spatialReflection, reflectionFilterStrength);
 }
 
-float3 importedRasterDirect(Surface surface, float3 view) {
+float traceShadowRay(float3 origin, float3 normal, float3 rayDir, float maxDistance);
+float4 pbrLocalLightSignal(Surface surface, float3 view, SceneLight light, uint2 pixel);
+
+float3 importedRasterDirect(Surface surface, float3 view, uint2 pixel) {
     uint lightCount = min((uint)max(0.0, v4Flags.y), 128u);
     float3 direct = 0.0.xxx;
     [loop]
     for (uint i = 0; i < lightCount; ++i) {
-        SceneLight light = sceneLights[i];
-        float3 lightPosition = light.positionRadius.xyz;
-        float3 toLight = lightPosition - surface.worldPos;
-        float distanceToLight = length(toLight);
-        float3 lightDir = toLight / max(distanceToLight, 0.001);
-        float intensity = light.colorIntensity.w;
-        if (light.normalArea.w > 0.0001) {
-            float3 lightNormal = normalize(light.normalArea.xyz);
-            float emissionCos = saturate(dot(lightNormal, -lightDir));
-            intensity *= emissionCos * light.normalArea.w / max(distanceToLight * distanceToLight, 0.05) * 4.0;
-        } else {
-            float radius = max(0.25, light.positionRadius.w);
-            float falloff = saturate(1.0 - distanceToLight / radius);
-            intensity *= falloff * falloff * (3.0 - 2.0 * falloff);
-        }
-        direct += pbrDirectional(surface, view, lightDir, saturate(light.colorIntensity.rgb), intensity, 1.0);
+        direct += pbrLocalLightSignal(surface, view, sceneLights[i], pixel).rgb;
     }
     return direct;
 }
 
-float3 composeLinear(Surface surface, float4 shadow, float3 reflection) {
+float3 composeLinear(Surface surface, float4 shadow, float3 reflection, uint2 pixel) {
     float3 view = normalize(eyeNear.xyz - surface.worldPos);
     float3 lightDir = normalize(-shadowForwardFar.xyz);
-    float3 direct = shadow.gba;
-    direct += pbrDirectional(surface, view, lightDir, float3(1.10, 1.04, 0.92), 12.0, shadow.r);
+    float raytracedShadow = saturate(shadow.r);
+    float raytracedAo = max(0.32, saturate(shadow.g));
+    float3 direct = importedRasterDirect(surface, view, pixel);
+    direct += pbrDirectional(surface, view, lightDir, float3(1.10, 1.04, 0.92), 12.0, raytracedShadow);
     float ndotv = max(0.04, saturate(dot(surface.normal, view)));
     float3 f0 = lerp(0.04.xxx, surface.base, surface.metalness);
     float3 fresnel = fresnelSchlick(ndotv, f0);
     float smoothness = saturate((0.58 - surface.roughness) / 0.58);
     bool mirrorMaterial = abs(surface.materialKind - 2.0) < 0.25;
-    float reflectionWeight = mirrorMaterial ? 1.0 : smoothness * smoothness * lerp(0.025, 0.86, surface.metalness);
-    float3 ambient = mirrorMaterial ? 0.0.xxx : surface.base * 0.40;
-    return ambient + direct + reflection * fresnel * reflectionWeight;
+    float reflectionWeight = smoothness * smoothness * lerp(0.025, 0.86, surface.metalness);
+    float replacementWeight = mirrorMaterial ? 1.0 : saturate(surface.metalness * smoothness * smoothness);
+    float3 ambient = mirrorMaterial ? 0.0.xxx : surface.base * (raytracedAo / kPi);
+    float3 reflectedSpecular = reflection * (mirrorMaterial ? 1.0 : raytracedShadow);
+    float3 dielectricReflection = reflection * fresnel * reflectionWeight * (1.0 - replacementWeight);
+    return ambient + direct * (1.0 - replacementWeight) + reflectedSpecular * replacementWeight + dielectricReflection;
 }
 
 float3 cheapToneAt(uint2 pixel, uint width, uint height) {
@@ -570,8 +559,8 @@ float3 cheapToneAt(uint2 pixel, uint width, uint height) {
     }
     float4 rawShadow = shadowSignal[pixel];
     rawShadow.r = saturate(rawShadow.r);
-    rawShadow.gba = max(rawShadow.gba, 0.0.xxx);
-    return toneMap(composeLinear(surface, rawShadow, max(reflectionSignal[pixel].rgb, 0.0.xxx)));
+    rawShadow.g = saturate(rawShadow.g);
+    return toneMap(composeLinear(surface, rawShadow, max(reflectionSignal[pixel].rgb, 0.0.xxx), pixel));
 }
 
 float edgeStrength(uint2 pixel, uint width, uint height) {
@@ -651,8 +640,93 @@ float3 applyAdaptiveSharpen(uint2 pixel, uint width, uint height, float3 color, 
         cheapToneAt(clampPixel(centerPixel + int2(0, 1), width, height), width, height) +
         cheapToneAt(clampPixel(centerPixel + int2(0, -1), width, height), width, height);
     neighborAverage *= 0.25;
-    float strength = lerp(0.10, 0.0, edge);
+    float strength = lerp(0.035, 0.0, edge);
     return saturate(color + (color - neighborAverage) * strength);
+}
+
+bool traceSceneRay(float3 origin, float3 rayDir, float minDistance, float maxDistance, out float hitDistance) {
+    RayDesc ray;
+    ray.Origin = origin;
+    ray.Direction = rayDir;
+    ray.TMin = minDistance;
+    ray.TMax = max(maxDistance, minDistance + 0.001);
+
+    RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_FORCE_OPAQUE> query;
+    query.TraceRayInline(
+        sceneTlas,
+        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_FORCE_OPAQUE,
+        0xff,
+        ray
+    );
+    while (query.Proceed()) {
+    }
+
+    bool hit = query.CommittedStatus() != COMMITTED_NOTHING;
+    hitDistance = hit ? query.CommittedRayT() : maxDistance;
+    return hit;
+}
+
+float traceShadowRay(float3 origin, float3 normal, float3 rayDir, float maxDistance) {
+    float hitDistance;
+    float normalSide = dot(normal, rayDir) >= 0.0 ? 1.0 : -1.0;
+    bool hit = traceSceneRay(origin + normal * (0.05 * normalSide) + rayDir * 0.01, rayDir, 0.035, maxDistance, hitDistance);
+    return hit ? 0.0 : 1.0;
+}
+
+float4 pbrLocalLightSignal(Surface surface, float3 view, SceneLight light, uint2 pixel) {
+    float3 lightPosition = light.positionRadius.xyz;
+    if (light.normalArea.w > 0.0001) {
+        float3 lightNormal = normalize(light.normalArea.xyz);
+        float3 helper = abs(lightNormal.z) < 0.95 ? float3(0.0, 0.0, 1.0) : float3(1.0, 0.0, 0.0);
+        float3 tangent = normalize(cross(helper, lightNormal));
+        float3 bitangent = cross(lightNormal, tangent);
+        float diskRadius = max(light.positionRadius.w, sqrt(light.normalArea.w / kPi));
+
+        static const float2 areaTaps[4] = {
+            float2(0.0, 0.0),
+            float2(0.58, 0.0),
+            float2(-0.34, 0.47),
+            float2(0.18, -0.55),
+        };
+
+        float3 radianceSum = 0.0.xxx;
+        float visibilitySum = 0.0;
+        [unroll]
+        for (int tap = 0; tap < 4; ++tap) {
+            float2 disk = areaTaps[tap];
+            float3 samplePosition = lightPosition + (tangent * disk.x + bitangent * disk.y) * diskRadius;
+            float3 toSample = samplePosition - surface.worldPos;
+            float distanceToSample = length(toSample);
+            float3 sampleDir = toSample / max(distanceToSample, 0.001);
+            float emissionCos = saturate(dot(lightNormal, -sampleDir));
+            float ndotl = saturate(dot(surface.normal, sampleDir));
+            if (emissionCos <= 0.0 || ndotl <= 0.0) {
+                continue;
+            }
+
+            float visibility = traceShadowRay(surface.worldPos, surface.normal, sampleDir, max(0.04, distanceToSample - 0.025));
+            float attenuation = emissionCos * light.normalArea.w / max(distanceToSample * distanceToSample, 0.05);
+            radianceSum += pbrDirectional(surface, view, sampleDir, saturate(light.colorIntensity.rgb), light.colorIntensity.w * attenuation / kPi, visibility);
+            visibilitySum += visibility;
+        }
+        return float4(radianceSum * 0.25, visibilitySum * 0.25);
+    }
+
+    float3 toLight = lightPosition - surface.worldPos;
+    float distanceToLight = length(toLight);
+    float radius = max(0.25, light.positionRadius.w);
+    float3 lightDir = toLight / max(distanceToLight, 0.001);
+    float ndotl = saturate(dot(surface.normal, lightDir));
+    if (ndotl <= 0.0 || distanceToLight >= radius) {
+        return float4(0.0.xxxx);
+    }
+
+    float visibility = traceShadowRay(surface.worldPos, surface.normal, lightDir, max(0.04, distanceToLight - 0.35));
+    float falloff = saturate(1.0 - distanceToLight / radius);
+    falloff = falloff * falloff * (3.0 - 2.0 * falloff);
+    float softEdge = lerp(0.35, 1.0, visibility);
+    float3 radiance = pbrDirectional(surface, view, lightDir, saturate(light.colorIntensity.rgb), light.colorIntensity.w * falloff, softEdge);
+    return float4(radiance, visibility);
 }
 
 void writeSurfaceHistory(uint2 pixel, Surface surface, bool hasSurface) {
@@ -747,7 +821,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     Surface surface;
     if (!readSurfacePixel(pixel, surface)) {
         float2 uv = (float2(pixel) + 0.5) / float2(width, height);
-        shadowHistoryOutput[pixel] = float4(1.0, 0.0, 0.0, 0.0);
+        shadowHistoryOutput[pixel] = float4(1.0, 1.0, 0.0, 0.0);
         reflectionHistoryOutput[pixel] = float4(0.0.xxxx);
         writeSurfaceHistory(pixel, surface, false);
         float3 background = skyColorAtUv(uv);
@@ -756,7 +830,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     }
 
     if (abs(surface.materialKind - 5.0) < 0.25) {
-        shadowHistoryOutput[pixel] = float4(1.0, 0.0, 0.0, 0.0);
+        shadowHistoryOutput[pixel] = float4(1.0, 1.0, 0.0, 0.0);
         reflectionHistoryOutput[pixel] = float4(0.0.xxxx);
         writeSurfaceHistory(pixel, surface, true);
         writeAccumulatedColor(pixel, width, height, toneMap(surface.base * 18.0), surface, true);
@@ -789,5 +863,5 @@ void main(uint3 id : SV_DispatchThreadID) {
     shadowHistoryOutput[pixel] = shadowStep4;
     reflectionHistoryOutput[pixel] = float4(reflectionStep4.rgb, saturate(reflectionStep4.a));
     writeSurfaceHistory(pixel, surface, true);
-    writeAccumulatedColor(pixel, width, height, toneMap(composeLinear(surface, shadowStep4, reflectionStep4.rgb)), surface, true);
+    writeAccumulatedColor(pixel, width, height, toneMap(composeLinear(surface, shadowStep4, reflectionStep4.rgb, pixel)), surface, true);
 }

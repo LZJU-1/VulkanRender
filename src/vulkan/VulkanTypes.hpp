@@ -64,9 +64,10 @@ constexpr std::uint32_t kV5SurfaceHistoryOutputBinding = 31;
 constexpr std::uint32_t kV5ResolvedColorBinding = 32;
 constexpr std::uint32_t kV5MotionVectorBinding = 33;
 constexpr std::uint32_t kV5MotionVectorHistoryBinding = 34;
+constexpr std::uint32_t kV5VertexBufferBinding = 35;
 constexpr VkFormat kV5MotionVectorFormat = VK_FORMAT_R16G16_SFLOAT;
-constexpr std::uint32_t kV5InternalScale = 1;
 constexpr std::uint32_t kV5QualityInternalScale = 2;
+constexpr std::uint32_t kV5InternalScale = kV5QualityInternalScale;
 constexpr VkFormat kGBufferAlbedoFormat = VK_FORMAT_R8G8B8A8_UNORM;
 constexpr VkFormat kGBufferNormalFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 constexpr VkFormat kGBufferWorldFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
@@ -154,14 +155,15 @@ inline std::uint32_t mipLevelsFor(std::uint32_t width, std::uint32_t height) {
 }
 
 inline VkSampleCountFlagBits chooseSampleCount(VkSampleCountFlags counts) {
-    if (counts & VK_SAMPLE_COUNT_8_BIT) return VK_SAMPLE_COUNT_8_BIT;
     if (counts & VK_SAMPLE_COUNT_4_BIT) return VK_SAMPLE_COUNT_4_BIT;
     if (counts & VK_SAMPLE_COUNT_2_BIT) return VK_SAMPLE_COUNT_2_BIT;
+    if (counts & VK_SAMPLE_COUNT_8_BIT) return VK_SAMPLE_COUNT_8_BIT;
     return VK_SAMPLE_COUNT_1_BIT;
 }
 
 inline std::uint32_t sampleCountValue(VkSampleCountFlagBits samples) {
     switch (samples) {
+    case VK_SAMPLE_COUNT_8_BIT: return 8;
     case VK_SAMPLE_COUNT_4_BIT: return 4;
     case VK_SAMPLE_COUNT_2_BIT: return 2;
     default: return 1;

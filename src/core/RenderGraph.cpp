@@ -38,15 +38,16 @@ RenderGraph RenderGraph::build(const FeatureProfile& profile) {
         graph.add("deferred.light-compose", PassKind::Raster);
         graph.add("post.tone-map", PassKind::PostProcess);
         break;
-    case ProfileId::V5RealtimeRayTracing:
-        graph.add("gbuffer.fill-jittered", PassKind::Raster);
+    case ProfileId::V6HybridRealtimeRayTracing:
+        graph.add("gbuffer.fill-reference-hybrid", PassKind::Raster);
         graph.add("rt.build-blas", PassKind::RayTracing);
         graph.add("rt.build-tlas", PassKind::RayTracing);
-        graph.add("rt.ray-query-shadow-signal", PassKind::RayTracing);
-        graph.add("rt.ray-query-reflection-signal", PassKind::RayTracing, true);
-        graph.add("denoise.temporal-reprojection", PassKind::Compute);
-        graph.add("denoise.bilateral-signal-filter", PassKind::Compute);
-        graph.add("post.taa-resolve", PassKind::PostProcess);
+        graph.add("rt.reference-raytraced-shadows", PassKind::RayTracing);
+        graph.add("rt.reference-raytraced-ambient-occlusion", PassKind::RayTracing);
+        graph.add("rt.reference-raytraced-reflections", PassKind::RayTracing);
+        graph.add("denoise.svgf-shadow-ao", PassKind::Compute);
+        graph.add("denoise.temporal-reflection", PassKind::Compute);
+        graph.add("post.taa-resolve-and-downsample", PassKind::PostProcess);
         break;
     }
 
