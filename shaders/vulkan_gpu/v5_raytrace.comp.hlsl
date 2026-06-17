@@ -439,7 +439,7 @@ float4 pbrLightSignal(Surface surface, float3 view, SceneLight light, uint2 pixe
 
         float visibility = traceShadowRay(surface.worldPos, surface.normal, sampleDir, max(0.04, distanceToSample - 0.025));
         float attenuation = emissionCos * light.normalArea.w / max(distanceToSample * distanceToSample, 0.05);
-        float3 radiance = pbrDirectional(surface, view, sampleDir, saturate(light.colorIntensity.rgb), light.colorIntensity.w * attenuation * 4.0, visibility);
+        float3 radiance = pbrDirectional(surface, view, sampleDir, saturate(light.colorIntensity.rgb), light.colorIntensity.w * attenuation / kPi, visibility);
         return float4(radiance, visibility);
     }
 
@@ -562,7 +562,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     bool importedLightScene = v4Flags.y > 0.5;
     float4 importedSignal = importedLightScene ? importedLightsSignal(surface, view, id.xy) : 0.0.xxxx;
     float visibility = importedLightScene ? importedSignal.a : rayTracedVisibility(surface.worldPos, surface.normal, lightDir, id.xy);
-    float3 localDirect = importedLightScene ? importedDiffuseBounce(surface, id.xy) : importedLightsRadiance(surface, view, id.xy);
+    float3 localDirect = importedLightScene ? (importedSignal.rgb + importedDiffuseBounce(surface, id.xy)) : importedLightsRadiance(surface, view, id.xy);
     if (importedLightScene) {
         localDirect = max(localDirect, 0.0.xxx);
     }
