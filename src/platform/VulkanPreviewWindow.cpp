@@ -3287,8 +3287,8 @@ void updateCamera(PreviewState& state, float dt) {
     if (keyDown(state, 'A')) movement = movement - right;
     if (keyDown(state, 'E') || keyDown(state, VK_SPACE)) movement = movement + up;
     if (keyDown(state, 'Q') || keyDown(state, VK_CONTROL)) movement = movement - up;
-    const float baseSpeed = std::clamp(state.geometry.camera.farPlane * 0.02f, 4.0f, 60.0f);
-    const float speed = (GetKeyState(VK_SHIFT) & 0x8000) ? baseSpeed * 3.0f : baseSpeed;
+    const float baseSpeed = std::clamp(state.geometry.camera.farPlane * 0.005f, 0.8f, 60.0f);
+    const float speed = (GetKeyState(VK_SHIFT) & 0x8000) ? baseSpeed * 4.0f : baseSpeed;
     if (dot(movement, movement) > 0.00001f) {
         movement = normalize(movement) * (speed * dt);
     }
