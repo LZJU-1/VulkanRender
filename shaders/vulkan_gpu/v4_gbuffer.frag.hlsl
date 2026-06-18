@@ -80,9 +80,6 @@ float3 srgbToLinear(float3 color) {
 GBufferOut main(FragmentIn input) {
     float3 normal = normalize(input.normal);
     float3 view = normalize(eyeNear.xyz - input.worldPos);
-    if (dot(normal, view) < 0.0) {
-        normal = -normal;
-    }
 
     float2 uv = input.uv;
     float2 duvdx = ddx(input.uv);

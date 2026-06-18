@@ -2594,7 +2594,7 @@ private:
                 if (!hasLastV5Camera_) {
                     v5HistoryFrameCount_ = 0;
                 } else if (cameraChanged) {
-                    v5HistoryFrameCount_ = std::min<std::uint32_t>(v5HistoryFrameCount_ + 1u, 8u);
+                    v5HistoryFrameCount_ = 0;
                 } else {
                     v5HistoryFrameCount_ = std::min<std::uint32_t>(v5HistoryFrameCount_ + 1u, 240u);
                 }
@@ -2635,8 +2635,8 @@ private:
             uniform.prevForwardAspect[1] = prevForward.y;
             uniform.prevForwardAspect[2] = prevForward.z;
             uniform.prevForwardAspect[3] = aspect;
-            uniform.prevTaaJitter[0] = (2.0f * previousJitter[0]) / static_cast<float>(std::max<std::uint32_t>(renderExtent.width, 1u));
-            uniform.prevTaaJitter[1] = (2.0f * previousJitter[1]) / static_cast<float>(std::max<std::uint32_t>(renderExtent.height, 1u));
+            uniform.prevTaaJitter[0] = (3.0f * previousJitter[0]) / static_cast<float>(std::max<std::uint32_t>(renderExtent.width, 1u));
+            uniform.prevTaaJitter[1] = (3.0f * previousJitter[1]) / static_cast<float>(std::max<std::uint32_t>(renderExtent.height, 1u));
             uniform.prevTaaJitter[2] = previousJitter[0];
             uniform.prevTaaJitter[3] = previousJitter[1];
             lastV5Jitter_ = {jitterPixelX, jitterPixelY};
