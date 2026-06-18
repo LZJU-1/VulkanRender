@@ -56,7 +56,7 @@ VertexOut main(VertexIn input) {
     float3 offset = worldPos - eyeNear.xyz;
     float cameraX = dot(offset, rightFar.xyz);
     float cameraY = dot(offset, upTanHalf.xyz);
-    float cameraZ = max(dot(offset, forwardAspect.xyz), eyeNear.w);
+    float cameraZ = dot(offset, forwardAspect.xyz);
 
     float invTan = 1.0 / upTanHalf.w;
     float farPlane = rightFar.w;
