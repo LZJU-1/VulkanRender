@@ -363,7 +363,7 @@ float rayTracedVisibilityWithPhase(float3 origin, float3 normal, float3 lightDir
     float3 tangent = normalize(cross(helper, lightDir));
     float3 bitangent = cross(lightDir, tangent);
     float rotation = hash13(origin * (0.173 * originSeedWeight) + normal * 7.13 + lightDir * 3.71) * 2.0 * kPi;
-    const float angularRadius = 0.068;
+    const float angularRadius = 0.045;
 
     static const float2 poisson[8] = {
         float2(0.000, 0.000),
@@ -400,7 +400,7 @@ float rayTracedVisibilityStable(float3 origin, float3 normal, float3 lightDir, u
     float3 helper = abs(lightDir.z) < 0.95 ? float3(0.0, 0.0, 1.0) : float3(0.0, 1.0, 0.0);
     float3 tangent = normalize(cross(helper, lightDir));
     float3 bitangent = cross(lightDir, tangent);
-    const float angularRadius = 0.068;
+    const float angularRadius = 0.045;
 
     static const float2 taps[16] = {
         float2(0.000, 0.000),

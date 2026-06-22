@@ -1,4 +1,0 @@
-# VulkanRender v3 spot-light showcase marker.
-#
-# The renderer recognizes this filename and builds a focused procedural scene
-# for Spot light & Perspective shadow mapping.

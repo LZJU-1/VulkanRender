@@ -52,11 +52,11 @@ void pointFaceBasis(uint face, out float3 forward, out float3 right, out float3 
     } else if (face == 4) {
         forward = float3(0.0, 0.0, 1.0);
         right = float3(1.0, 0.0, 0.0);
-        up = float3(0.0, 1.0, 0.0);
+        up = float3(0.0, -1.0, 0.0);
     } else {
         forward = float3(0.0, 0.0, -1.0);
         right = float3(1.0, 0.0, 0.0);
-        up = float3(0.0, -1.0, 0.0);
+        up = float3(0.0, 1.0, 0.0);
     }
 }
 
@@ -78,12 +78,10 @@ float4 spotShadowPosition(float3 worldPos) {
     float3 up = normalizedOr(cross(forward, right), float3(0.0, 1.0, 0.0));
     float3 toPoint = worldPos - spotPosInner.xyz;
     float forwardDistance = dot(toPoint, forward);
-    float mode = floor(v3Flags.x + 0.5);
-    float coneTan = tan(lerp(34.0, 36.0, 1.0 - saturate(abs(mode - 5.0))) * 3.14159265 / 180.0);
+    float coneTan = tan(34.0 * 3.14159265 / 180.0);
     float x = dot(toPoint, right) / max(0.05, forwardDistance * coneTan);
     float y = -dot(toPoint, up) / max(0.05, forwardDistance * coneTan);
-    float spotFar = lerp(6.5, 7.4, 1.0 - saturate(abs(mode - 5.0)));
-    float z = (forwardDistance - 0.05) / spotFar;
+    float z = (forwardDistance - 0.05) / 6.5;
     return float4(x, y, z, 1.0);
 }
 
@@ -100,13 +98,12 @@ float4 pointShadowPosition(float3 worldPos, uint face) {
     return float4(x, y, z, 1.0);
 }
 
-float4 main(VertexIn input, uint instanceId : SV_InstanceID, uint startInstance : SV_StartInstanceLocation) : SV_Position {
-    const uint shadowIndex = startInstance + instanceId;
-    if (shadowIndex < 3) {
-        return directionalCascadePosition(input.position, shadowIndex);
+float4 main(VertexIn input, uint instanceId : SV_InstanceID) : SV_Position {
+    if (instanceId < 3) {
+        return directionalCascadePosition(input.position, instanceId);
     }
-    if (shadowIndex == 3) {
+    if (instanceId == 3) {
         return spotShadowPosition(input.position);
     }
-    return pointShadowPosition(input.position, shadowIndex - 4);
+    return pointShadowPosition(input.position, instanceId - 4);
 }
