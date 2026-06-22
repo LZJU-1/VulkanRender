@@ -4,7 +4,7 @@ A clean C++20 rewrite scaffold for a staged Vulkan renderer. The project is orga
 
 ## Showcase
 
-### v1.0 Scene Loading, Simple Material, Animation
+## v1.0
 
 **GLB scene loading**
 
@@ -24,7 +24,7 @@ A clean C++20 rewrite scaffold for a staged Vulkan renderer. The project is orga
 
 [Open MP4](docs/showcase/v1-frustum-culling.mp4)
 
-### v2.0 Skybox, Normal/Displacement Mapping, PBR and IBL
+## v2.0
 
 **Skybox and tone mapping**
 
@@ -44,7 +44,7 @@ A clean C++20 rewrite scaffold for a staged Vulkan renderer. The project is orga
 
 [Open MP4](docs/showcase/v2-3.mp4)
 
-### v3.0 Lights and Shadows
+## v3.0
 
 **Shadow mapping — spot, sphere/point omni, and directional cascade shadows**
 
@@ -52,7 +52,7 @@ A clean C++20 rewrite scaffold for a staged Vulkan renderer. The project is orga
 
 [Open MP4](docs/showcase/v3-1.mp4)
 
-### v4.0 Deferred Shading and SSAO
+## v4.0
 
 **Deferred shading with G-buffer debug views — albedo, normal, depth, SSAO raw, SSAO blur, final composite**
 
@@ -66,7 +66,7 @@ A clean C++20 rewrite scaffold for a staged Vulkan renderer. The project is orga
 
 [Open MP4](docs/showcase/v4-2.mp4)
 
-### v6.0 Realtime Hybrid Ray Tracing
+## v6.0
 
 **Bathroom2 — ray-traced shadows, reflections, and SVGF denoising**
 
