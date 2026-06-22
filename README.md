@@ -8,21 +8,21 @@ A clean C++20 rewrite scaffold for a staged Vulkan renderer. The project is orga
 
 **GLB scene loading**
 
-<video src="docs/showcase/v1-glb-loader.mp4" controls muted loop playsinline width="100%"></video>
+![v1 GLB scene loading](docs/showcase/v1-glb-loader.gif)
 
-[Open video](docs/showcase/v1-glb-loader.mp4)
+[Open MP4](docs/showcase/v1-glb-loader.mp4)
 
 **Simple material and animation**
 
-<video src="docs/showcase/v1-simple-material-animation.mp4" controls muted loop playsinline width="100%"></video>
+![v1 simple material and animation](docs/showcase/v1-simple-material-animation.gif)
 
-[Open video](docs/showcase/v1-simple-material-animation.mp4)
+[Open MP4](docs/showcase/v1-simple-material-animation.mp4)
 
 **Frustum culling**
 
-<video src="docs/showcase/v1-frustum-culling.mp4" controls muted loop playsinline width="100%"></video>
+![v1 frustum culling](docs/showcase/v1-frustum-culling.gif)
 
-[Open video](docs/showcase/v1-frustum-culling.mp4)
+[Open MP4](docs/showcase/v1-frustum-culling.mp4)
 
 ## Course And Reference
 
