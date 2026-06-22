@@ -66,6 +66,20 @@ A clean C++20 rewrite scaffold for a staged Vulkan renderer. The project is orga
 
 [Open MP4](docs/showcase/v4-2.mp4)
 
+### v6.0 Realtime Hybrid Ray Tracing
+
+**Bathroom2 — ray-traced shadows, reflections, and SVGF denoising**
+
+![v6 bathroom2](docs/showcase/v6-1.gif)
+
+[Open MP4](docs/showcase/v6-1.mp4)
+
+**Sponza Palace — hybrid raster + RT, glTF PBR materials, SVGF denoising**
+
+![v6 sponza](docs/showcase/v6-2.gif)
+
+[Open MP4](docs/showcase/v6-2.mp4)
+
 ## Course And Reference
 
 The reference project is [YJJfish/Renderer72](https://github.com/YJJfish/Renderer72). Its public README presents four staged versions: scene loading/animation/culling, skybox/PBR/IBL, lights/shadows, and deferred shading/SSAO. The CMU course page you found is [15-472/672/772: Real-Time Computer Graphics, Spring 2024](https://graphics.cs.cmu.edu/courses/15-472-s24/); this repo treats Renderer72 as a functional reference, not as copied source.
