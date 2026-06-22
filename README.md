@@ -2,6 +2,28 @@
 
 A clean C++20 rewrite scaffold for a staged Vulkan renderer. The project is organized around explicit feature profiles so each milestone can be tested independently, including a new realtime ray tracing profile.
 
+## Showcase
+
+### v1.0 Scene Loading, Simple Material, Animation
+
+**GLB scene loading**
+
+<video src="docs/showcase/v1-glb-loader.mp4" controls muted loop playsinline width="100%"></video>
+
+[Open video](docs/showcase/v1-glb-loader.mp4)
+
+**Simple material and animation**
+
+<video src="docs/showcase/v1-simple-material-animation.mp4" controls muted loop playsinline width="100%"></video>
+
+[Open video](docs/showcase/v1-simple-material-animation.mp4)
+
+**Frustum culling**
+
+<video src="docs/showcase/v1-frustum-culling.mp4" controls muted loop playsinline width="100%"></video>
+
+[Open video](docs/showcase/v1-frustum-culling.mp4)
+
 ## Course And Reference
 
 The reference project is [YJJfish/Renderer72](https://github.com/YJJfish/Renderer72). Its public README presents four staged versions: scene loading/animation/culling, skybox/PBR/IBL, lights/shadows, and deferred shading/SSAO. The CMU course page you found is [15-472/672/772: Real-Time Computer Graphics, Spring 2024](https://graphics.cs.cmu.edu/courses/15-472-s24/); this repo treats Renderer72 as a functional reference, not as copied source.
