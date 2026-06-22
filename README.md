@@ -44,6 +44,14 @@ A clean C++20 rewrite scaffold for a staged Vulkan renderer. The project is orga
 
 [Open MP4](docs/showcase/v2-3.mp4)
 
+### v3.0 Lights and Shadows
+
+**Shadow mapping — spot, sphere/point omni, and directional cascade shadows**
+
+![v3 shadow maps](docs/showcase/v3-1.gif)
+
+[Open MP4](docs/showcase/v3-1.mp4)
+
 ## Course And Reference
 
 The reference project is [YJJfish/Renderer72](https://github.com/YJJfish/Renderer72). Its public README presents four staged versions: scene loading/animation/culling, skybox/PBR/IBL, lights/shadows, and deferred shading/SSAO. The CMU course page you found is [15-472/672/772: Real-Time Computer Graphics, Spring 2024](https://graphics.cs.cmu.edu/courses/15-472-s24/); this repo treats Renderer72 as a functional reference, not as copied source.
