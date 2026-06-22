@@ -52,6 +52,20 @@ A clean C++20 rewrite scaffold for a staged Vulkan renderer. The project is orga
 
 [Open MP4](docs/showcase/v3-1.mp4)
 
+### v4.0 Deferred Shading and SSAO
+
+**Deferred shading with G-buffer debug views — albedo, normal, depth, SSAO raw, SSAO blur, final composite**
+
+![v4 deferred SSAO](docs/showcase/v4-1.gif)
+
+[Open MP4](docs/showcase/v4-1.mp4)
+
+**Many-light deferred composition — 1024 lights, 10000 instanced PBR spheres**
+
+![v4 many light deferred](docs/showcase/v4-2.gif)
+
+[Open MP4](docs/showcase/v4-2.mp4)
+
 ## Course And Reference
 
 The reference project is [YJJfish/Renderer72](https://github.com/YJJfish/Renderer72). Its public README presents four staged versions: scene loading/animation/culling, skybox/PBR/IBL, lights/shadows, and deferred shading/SSAO. The CMU course page you found is [15-472/672/772: Real-Time Computer Graphics, Spring 2024](https://graphics.cs.cmu.edu/courses/15-472-s24/); this repo treats Renderer72 as a functional reference, not as copied source.
