@@ -8,19 +8,19 @@ A clean C++20 rewrite scaffold for a staged Vulkan renderer. The project is orga
 
 **GLB scene loading**
 
-![v1 GLB scene loading](docs/showcase/v1-glb-loader.gif)
+<img src="docs/showcase/v1-glb-loader.gif" width="640" alt="v1 GLB scene loading">
 
 [Open MP4](docs/showcase/v1-glb-loader.mp4)
 
 **Simple material and animation**
 
-![v1 simple material and animation](docs/showcase/v1-simple-material-animation.gif)
+<img src="docs/showcase/v1-simple-material-animation.gif" width="640" alt="v1 simple material and animation">
 
 [Open MP4](docs/showcase/v1-simple-material-animation.mp4)
 
 **Frustum culling**
 
-![v1 frustum culling](docs/showcase/v1-frustum-culling.gif)
+<img src="docs/showcase/v1-frustum-culling.gif" width="640" alt="v1 frustum culling">
 
 [Open MP4](docs/showcase/v1-frustum-culling.mp4)
 
@@ -28,19 +28,19 @@ A clean C++20 rewrite scaffold for a staged Vulkan renderer. The project is orga
 
 **Skybox and tone mapping**
 
-![v2 skybox tone mapping](docs/showcase/v2-1.gif)
+<img src="docs/showcase/v2-1.gif" width="640" alt="v2 skybox tone mapping">
 
 [Open MP4](docs/showcase/v2-1.mp4)
 
 **Normal mapping and displacement mapping (parallax occlusion)**
 
-![v2 normal displacement](docs/showcase/v2-2.gif)
+<img src="docs/showcase/v2-2.gif" width="640" alt="v2 normal displacement">
 
 [Open MP4](docs/showcase/v2-2.mp4)
 
 **PBR material and image-based lighting (IBL)**
 
-![v2 pbr ibl](docs/showcase/v2-3.gif)
+<img src="docs/showcase/v2-3.gif" width="640" alt="v2 pbr ibl">
 
 [Open MP4](docs/showcase/v2-3.mp4)
 
@@ -48,7 +48,7 @@ A clean C++20 rewrite scaffold for a staged Vulkan renderer. The project is orga
 
 **Shadow mapping — spot, sphere/point omni, and directional cascade shadows**
 
-![v3 shadow maps](docs/showcase/v3-1.gif)
+<img src="docs/showcase/v3-1.gif" width="640" alt="v3 shadow maps">
 
 [Open MP4](docs/showcase/v3-1.mp4)
 
@@ -56,13 +56,13 @@ A clean C++20 rewrite scaffold for a staged Vulkan renderer. The project is orga
 
 **Deferred shading with G-buffer debug views — albedo, normal, depth, SSAO raw, SSAO blur, final composite**
 
-![v4 deferred SSAO](docs/showcase/v4-1.gif)
+<img src="docs/showcase/v4-1.gif" width="640" alt="v4 deferred SSAO">
 
 [Open MP4](docs/showcase/v4-1.mp4)
 
 **Many-light deferred composition — 1024 lights, 10000 instanced PBR spheres**
 
-![v4 many light deferred](docs/showcase/v4-2.gif)
+<img src="docs/showcase/v4-2.gif" width="640" alt="v4 many light deferred">
 
 [Open MP4](docs/showcase/v4-2.mp4)
 
@@ -70,13 +70,13 @@ A clean C++20 rewrite scaffold for a staged Vulkan renderer. The project is orga
 
 **Bathroom2 — ray-traced shadows, reflections, and SVGF denoising**
 
-![v6 bathroom2](docs/showcase/v6-1.gif)
+<img src="docs/showcase/v6-1.gif" width="640" alt="v6 bathroom2">
 
 [Open MP4](docs/showcase/v6-1.mp4)
 
 **Sponza Palace — hybrid raster + RT, glTF PBR materials, SVGF denoising**
 
-![v6 sponza](docs/showcase/v6-2.gif)
+<img src="docs/showcase/v6-2.gif" width="640" alt="v6 sponza">
 
 [Open MP4](docs/showcase/v6-2.mp4)
 
