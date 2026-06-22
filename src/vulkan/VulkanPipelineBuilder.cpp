@@ -154,7 +154,7 @@ Pipelines createPipelines(
         VkPipelineRasterizationStateCreateInfo shadowRaster{};
         shadowRaster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
         shadowRaster.polygonMode = VK_POLYGON_MODE_FILL;
-        shadowRaster.cullMode = VK_CULL_MODE_BACK_BIT;
+        shadowRaster.cullMode = VK_CULL_MODE_NONE;
         shadowRaster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         shadowRaster.depthBiasEnable = VK_TRUE;
         shadowRaster.depthBiasConstantFactor = 1.4f;

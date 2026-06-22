@@ -98,10 +98,10 @@ GBufferOut main(FragmentIn input) {
         float pomFade = saturate(1.0 - displacementLod * 0.28);
         float3 viewTangent = float3(dot(view, tangent), dot(view, bitangent), max(0.22, dot(view, normal)));
         float2 pomUv = parallaxOcclusionMapping(uv, normalize(viewTangent), displacementLod);
+        float uvEdge = min(min(input.uv.x, 1.0 - input.uv.x), min(input.uv.y, 1.0 - input.uv.y));
+        pomFade *= smoothstep(0.015, 0.08, uvEdge);
         uv = lerp(input.uv, pomUv, pomFade);
-        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
-            discard;
-        }
+        uv = saturate(uv);
 
         float3 tangentNormal = normalTexture.SampleGrad(materialSampler, uv, duvdx, duvdy).xyz * 2.0 - 1.0;
         tangentNormal.y = -tangentNormal.y;

@@ -86,6 +86,25 @@ float2 environmentBrdf(float ndotv, float roughness) {
     return environmentBrdfTexture.SampleLevel(materialSampler, float2(saturate(ndotv), saturate(roughness)), 0.0);
 }
 
+float v3Mode() {
+    return floor(v3Flags.x + 0.5);
+}
+
+bool v3DirectionalEnabled() {
+    float mode = v3Mode();
+    return mode > 0.5 && (mode < 3.0 || abs(mode - 3.0) < 0.5);
+}
+
+bool v3SphereEnabled() {
+    float mode = v3Mode();
+    return mode > 0.5 && (mode < 3.0 || abs(mode - 4.0) < 0.5);
+}
+
+bool v3SpotEnabled() {
+    float mode = v3Mode();
+    return mode > 0.5 && (mode < 3.0 || abs(mode - 5.0) < 0.5);
+}
+
 float sampleShadowTile(uint tileIndex, float2 uv, float depth, float bias, float minVisibility) {
     if (v3Flags.x < 0.5) {
         return 1.0;
@@ -114,6 +133,9 @@ float sampleShadowTile(uint tileIndex, float2 uv, float depth, float bias, float
 }
 
 float directionalShadow(float3 worldPos, float3 normal) {
+    if (!v3DirectionalEnabled()) {
+        return 1.0;
+    }
     float3 offset = worldPos - shadowCenterBias.xyz;
     float xLight = dot(offset, shadowRightExtent.xyz);
     float yLight = dot(offset, shadowUpNear.xyz);
@@ -152,11 +174,11 @@ void pointFaceBasis(uint face, out float3 forward, out float3 right, out float3 
     } else if (face == 4) {
         forward = float3(0.0, 0.0, 1.0);
         right = float3(1.0, 0.0, 0.0);
-        up = float3(0.0, -1.0, 0.0);
+        up = float3(0.0, 1.0, 0.0);
     } else {
         forward = float3(0.0, 0.0, -1.0);
         right = float3(1.0, 0.0, 0.0);
-        up = float3(0.0, 1.0, 0.0);
+        up = float3(0.0, -1.0, 0.0);
     }
 }
 
@@ -172,7 +194,7 @@ uint pointFaceFor(float3 direction) {
 }
 
 float pointShadow(float3 worldPos, float3 normal, float3 lightDir) {
-    if (v3Flags.x < 0.5) {
+    if (!v3SphereEnabled()) {
         return 1.0;
     }
     float3 toPoint = worldPos - pointPosRadius.xyz;
@@ -190,12 +212,13 @@ float pointShadow(float3 worldPos, float3 normal, float3 lightDir) {
     uv.x = dot(toPoint, right) / max(0.05, forwardDistance) * 0.5 + 0.5;
     uv.y = -dot(toPoint, up) / max(0.05, forwardDistance) * 0.5 + 0.5;
     float depth = distanceToPoint / max(0.05, pointPosRadius.w);
-    float bias = 0.012 + max(0.002, (1.0 - saturate(dot(normal, lightDir))) * 0.012);
-    return sampleShadowTile(4 + face, uv, depth, bias, 0.28);
+    float bias = 0.004 + max(0.001, (1.0 - saturate(dot(normal, lightDir))) * 0.005);
+    float pointShowcase = 1.0 - saturate(abs(v3Mode() - 4.0));
+    return sampleShadowTile(4 + face, uv, depth, bias, lerp(0.28, 0.06, pointShowcase));
 }
 
 float spotShadow(float3 worldPos, float3 normal, float3 lightDir) {
-    if (v3Flags.x < 0.5) {
+    if (!v3SpotEnabled()) {
         return 1.0;
     }
     float3 forward = normalize(spotDirOuter.xyz);
@@ -203,17 +226,19 @@ float spotShadow(float3 worldPos, float3 normal, float3 lightDir) {
     float3 up = normalize(cross(forward, right));
     float3 toPoint = worldPos - spotPosInner.xyz;
     float forwardDistance = dot(toPoint, forward);
-    float coneTan = tan(34.0 * PI / 180.0);
+    float coneTan = tan(lerp(34.0, 36.0, 1.0 - saturate(abs(v3Mode() - 5.0))) * PI / 180.0);
     float2 uv;
     uv.x = dot(toPoint, right) / max(0.05, forwardDistance * coneTan) * 0.5 + 0.5;
     uv.y = -dot(toPoint, up) / max(0.05, forwardDistance * coneTan) * 0.5 + 0.5;
-    float depth = (forwardDistance - 0.05) / 6.5;
+    float spotFar = lerp(6.5, 7.4, 1.0 - saturate(abs(v3Mode() - 5.0)));
+    float depth = (forwardDistance - 0.05) / spotFar;
     float bias = 0.004 + max(0.001, (1.0 - saturate(dot(normal, lightDir))) * 0.006);
-    return sampleShadowTile(3, uv, depth, bias, 0.30);
+    float spotShowcase = 1.0 - saturate(abs(v3Mode() - 5.0));
+    return sampleShadowTile(3, uv, depth, bias, lerp(0.30, 0.04, spotShowcase));
 }
 
 float3 pointLightRadiance(float3 worldPos, float3 normal, float3 view, float roughness, float3 f0) {
-    if (v3Flags.x < 0.5) {
+    if (!v3SphereEnabled()) {
         return 0.0.xxx;
     }
     float3 toLight = pointPosRadius.xyz - worldPos;
@@ -231,7 +256,7 @@ float3 pointLightRadiance(float3 worldPos, float3 normal, float3 view, float rou
 }
 
 float3 spotLightRadiance(float3 worldPos, float3 normal, float3 view, float roughness, float3 f0) {
-    if (v3Flags.x < 0.5) {
+    if (!v3SpotEnabled()) {
         return 0.0.xxx;
     }
     float3 toLight = spotPosInner.xyz - worldPos;
@@ -312,10 +337,10 @@ float4 main(FragmentIn input) : SV_Target0 {
         float pomFade = saturate(1.0 - displacementLod * 0.28);
         float3 viewTangent = float3(dot(view, tangent), dot(view, bitangent), max(0.22, dot(view, normal)));
         float2 pomUv = parallaxOcclusionMapping(uv, normalize(viewTangent), displacementLod);
+        float uvEdge = min(min(input.uv.x, 1.0 - input.uv.x), min(input.uv.y, 1.0 - input.uv.y));
+        pomFade *= smoothstep(0.015, 0.08, uvEdge);
         uv = lerp(input.uv, pomUv, pomFade);
-        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
-            discard;
-        }
+        uv = saturate(uv);
 
         uint texWidth = 1;
         uint texHeight = 1;
@@ -350,7 +375,9 @@ float4 main(FragmentIn input) : SV_Target0 {
     float3 reflected = reflect(-view, normal);
     float3 env = samplePrefilteredSpecular(reflected, roughness);
     float3 mirrorEnv = samplePrefilteredSpecular(reflected, 0.0);
-    float3 diffuseIbl = sampleDiffuseIrradiance(normal) * 0.55;
+    float showcase = v3Mode() >= 3.0 ? 1.0 : 0.0;
+    float localLightShowcase = max(1.0 - saturate(abs(v3Mode() - 4.0)), 1.0 - saturate(abs(v3Mode() - 5.0)));
+    float3 diffuseIbl = sampleDiffuseIrradiance(normal) * lerp(lerp(0.55, 0.42, showcase), 0.08, localLightShowcase);
 
     float specPower = max(2.0, (1.0 - roughness) * 112.0 + 4.0);
     float specTerm = pow(saturate(dot(normal, halfVector)), specPower) * (1.0 - roughness * 0.72);
@@ -358,8 +385,9 @@ float4 main(FragmentIn input) : SV_Target0 {
     float3 fresnel = fresnelSchlick(ndotv, f0);
     float2 brdf = environmentBrdf(ndotv, roughness);
     float rim = pow(1.0 - ndotv, 3.0) * 0.15;
-    float shadow = directionalShadow(input.worldPos, normal);
-    float3 direct = float3(1.15, 1.05, 0.92) * ndotl * shadow;
+    const bool useDirectional = v3DirectionalEnabled();
+    float shadow = useDirectional ? directionalShadow(input.worldPos, normal) : 1.0;
+    float3 direct = useDirectional ? float3(1.15, 1.05, 0.92) * ndotl * shadow : 0.0.xxx;
     float3 diffuse = base * (1.0 - metalness) * (diffuseIbl + direct);
     float3 specularIbl = env * (fresnel * brdf.x + brdf.y);
     float3 directSpecular = fresnel * specTerm * 0.65 * shadow;
@@ -368,14 +396,16 @@ float4 main(FragmentIn input) : SV_Target0 {
     float3 hdr;
     if (materialKind > 1.5 && materialKind < 2.5) {
         hdr = mirrorEnv * 1.20;
+    } else if (materialKind > 4.5) {
+        hdr = base * 5.0;
     } else if (materialKind > 3.5) {
-        hdr = diffuse + specularIbl + directSpecular + localLights + rim.xxx * float3(0.35, 0.45, 0.70);
+        hdr = diffuse + specularIbl * lerp(lerp(1.0, 1.35, showcase), 0.55, localLightShowcase) + directSpecular + localLights + rim.xxx * float3(0.35, 0.45, 0.70);
     } else if (materialKind > 2.5) {
         hdr = base * (diffuseIbl + direct) + localLights;
     } else if (materialKind > 0.5) {
         hdr = mirrorEnv;
     } else {
-        hdr = base * (0.24 + 0.80 * ndotl * shadow) + specTerm.xxx * 0.18 * shadow + localLights;
+        hdr = base * (lerp(0.24, 0.18, showcase) + (useDirectional ? 0.80 * ndotl * shadow : 0.0)) + specTerm.xxx * 0.18 * shadow + localLights;
     }
 
     return float4(toneMap(hdr), 1.0);

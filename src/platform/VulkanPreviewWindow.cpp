@@ -2560,28 +2560,31 @@ private:
         uniform.shadowCenterBias[1] = shadowCenter.y;
         uniform.shadowCenterBias[2] = shadowCenter.z;
         uniform.shadowCenterBias[3] = 0.0025f;
-        uniform.pointPosRadius[0] = 2.8f;
-        uniform.pointPosRadius[1] = -1.8f;
-        uniform.pointPosRadius[2] = 2.6f;
-        uniform.pointPosRadius[3] = 4.8f;
-        uniform.pointColorIntensity[0] = 1.0f;
-        uniform.pointColorIntensity[1] = 0.62f;
-        uniform.pointColorIntensity[2] = 0.30f;
-        uniform.pointColorIntensity[3] = 1.25f;
-        const Vec3 spotDir = normalize({0.18f, 0.72f, -0.67f});
-        uniform.spotPosInner[0] = -0.6f;
-        uniform.spotPosInner[1] = -4.4f;
-        uniform.spotPosInner[2] = 4.8f;
-        uniform.spotPosInner[3] = std::cos(20.0f * kPi / 180.0f);
+        const bool pointShowcase = geometry_.v3LightShowcaseMode == 4.0f;
+        uniform.pointPosRadius[0] = pointShowcase ? -2.0f : 2.8f;
+        uniform.pointPosRadius[1] = pointShowcase ? 2.0f : -1.8f;
+        uniform.pointPosRadius[2] = pointShowcase ? 4.80f : 2.6f;
+        uniform.pointPosRadius[3] = pointShowcase ? 8.0f : 4.8f;
+        uniform.pointColorIntensity[0] = pointShowcase ? 1.0f : 1.0f;
+        uniform.pointColorIntensity[1] = pointShowcase ? 0.96f : 0.62f;
+        uniform.pointColorIntensity[2] = pointShowcase ? 0.72f : 0.30f;
+        uniform.pointColorIntensity[3] = pointShowcase ? 70.0f : 1.25f;
+        const bool spotShowcase = geometry_.v3LightShowcaseMode == 5.0f;
+        const Vec3 spotPos = spotShowcase ? Vec3{-2.0f, 2.0f, 4.80f} : Vec3{-0.6f, -4.4f, 4.8f};
+        const Vec3 spotDir = spotShowcase ? normalize(Vec3{0.65f, -0.70f, 0.18f} - spotPos) : normalize({0.18f, 0.72f, -0.67f});
+        uniform.spotPosInner[0] = spotPos.x;
+        uniform.spotPosInner[1] = spotPos.y;
+        uniform.spotPosInner[2] = spotPos.z;
+        uniform.spotPosInner[3] = std::cos((spotShowcase ? 18.0f : 20.0f) * kPi / 180.0f);
         uniform.spotDirOuter[0] = spotDir.x;
         uniform.spotDirOuter[1] = spotDir.y;
         uniform.spotDirOuter[2] = spotDir.z;
-        uniform.spotDirOuter[3] = std::cos(42.0f * kPi / 180.0f);
-        uniform.spotColorIntensity[0] = 0.45f;
-        uniform.spotColorIntensity[1] = 0.68f;
-        uniform.spotColorIntensity[2] = 1.0f;
-        uniform.spotColorIntensity[3] = 0.85f;
-        uniform.v3Flags[0] = enableV4Ssao_ ? 2.0f : (enableV3Shadows_ ? 1.0f : 0.0f);
+        uniform.spotDirOuter[3] = std::cos((spotShowcase ? 36.0f : 42.0f) * kPi / 180.0f);
+        uniform.spotColorIntensity[0] = spotShowcase ? 1.0f : 0.45f;
+        uniform.spotColorIntensity[1] = spotShowcase ? 0.78f : 0.68f;
+        uniform.spotColorIntensity[2] = spotShowcase ? 0.42f : 1.0f;
+        uniform.v3Flags[0] = enableV4Ssao_ ? 2.0f : (enableV3Shadows_ ? geometry_.v3LightShowcaseMode : 0.0f);
+        uniform.spotColorIntensity[3] = spotShowcase ? 58.0f : 0.85f;
         uniform.v3Flags[1] = 2.4f;
         uniform.v3Flags[2] = 4.5f;
         uniform.v3Flags[3] = 7.2f;
@@ -3415,7 +3418,10 @@ void updateCamera(PreviewState& state, float dt) {
 }
 
 bool shouldAnimateGeometry(const PreviewState& state) {
-    return !state.settings.enableV2Shading && state.settings.scenePath.extension() == ".s72";
+    const std::string extension = state.settings.scenePath.extension().string();
+    const std::string filename = state.settings.scenePath.filename().string();
+    return (!state.settings.enableV2Shading && extension == ".s72")
+        || (extension == ".shadowdemo" && (filename.find("spot") != std::string::npos || filename.find("sphere") != std::string::npos));
 }
 
 void advanceAnimatedGeometry(PreviewState& state) {

@@ -102,6 +102,8 @@ struct Triangle3 {
     bool hasAlbedoTexture = false;
     std::filesystem::path albedoTexturePath;
     std::filesystem::path roughnessTexturePath;
+    std::filesystem::path normalTexturePath;
+    std::filesystem::path displacementTexturePath;
 };
 
 struct Mat4 {
@@ -1815,7 +1817,16 @@ struct ProceduralScene {
     Camera camera;
 };
 
-Triangle3 makeProceduralTriangle(Vec3 a, Vec3 b, Vec3 c, Vec3 baseColor, MaterialKind kind = MaterialKind::Lambertian) {
+Triangle3 makeProceduralTriangle(
+    Vec3 a,
+    Vec3 b,
+    Vec3 c,
+    Vec3 baseColor,
+    MaterialKind kind = MaterialKind::Lambertian,
+    Vec2 uvA = {0.0f, 0.0f},
+    Vec2 uvB = {1.0f, 0.0f},
+    Vec2 uvC = {1.0f, 1.0f}
+) {
     Triangle3 tri;
     tri.a = a;
     tri.b = b;
@@ -1828,9 +1839,9 @@ Triangle3 makeProceduralTriangle(Vec3 a, Vec3 b, Vec3 c, Vec3 baseColor, Materia
     tri.normalA = tri.normal;
     tri.normalB = tri.normal;
     tri.normalC = tri.normal;
-    tri.uvA = {0.0f, 0.0f};
-    tri.uvB = {1.0f, 0.0f};
-    tri.uvC = {1.0f, 1.0f};
+    tri.uvA = uvA;
+    tri.uvB = uvB;
+    tri.uvC = uvC;
     tri.uv = {(tri.uvA.x + tri.uvB.x + tri.uvC.x) / 3.0f, (tri.uvA.y + tri.uvB.y + tri.uvC.y) / 3.0f};
     const Vec4 tangent = triangleTangent(a, b, c, tri.uvA, tri.uvB, tri.uvC, tri.normal);
     tri.tangentA = tangent;
@@ -1844,8 +1855,8 @@ Triangle3 makeProceduralTriangle(Vec3 a, Vec3 b, Vec3 c, Vec3 baseColor, Materia
 }
 
 void appendQuad(std::vector<Triangle3>& triangles, Vec3 a, Vec3 b, Vec3 c, Vec3 d, Vec3 color, MaterialKind kind = MaterialKind::Lambertian) {
-    triangles.push_back(makeProceduralTriangle(a, b, c, color, kind));
-    triangles.push_back(makeProceduralTriangle(a, c, d, color, kind));
+    triangles.push_back(makeProceduralTriangle(a, b, c, color, kind, {0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}));
+    triangles.push_back(makeProceduralTriangle(a, c, d, color, kind, {0.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}));
 }
 
 void appendBox(std::vector<Triangle3>& triangles, Vec3 center, Vec3 half, Vec3 color, MaterialKind kind = MaterialKind::Lambertian, bool includeBottom = true) {
@@ -1865,6 +1876,61 @@ void appendBox(std::vector<Triangle3>& triangles, Vec3 center, Vec3 half, Vec3 c
     appendQuad(triangles, p100, p101, p111, p110, color, kind);
     appendQuad(triangles, p110, p111, p011, p010, color, kind);
     appendQuad(triangles, p010, p011, p001, p000, color, kind);
+}
+
+void appendRotatedBox(
+    std::vector<Triangle3>& triangles,
+    Vec3 center,
+    Vec3 half,
+    float yaw,
+    float pitch,
+    Vec3 color,
+    MaterialKind kind = MaterialKind::Lambertian,
+    float roughness = 0.55f,
+    float metalness = 0.0f
+) {
+    const std::size_t first = triangles.size();
+    const float cy = std::cos(yaw);
+    const float sy = std::sin(yaw);
+    const float cp = std::cos(pitch);
+    const float sp = std::sin(pitch);
+    const auto rotate = [&](Vec3 p) {
+        const Vec3 yRot{p.x * cy + p.z * sy, p.y, -p.x * sy + p.z * cy};
+        return Vec3{yRot.x, yRot.y * cp - yRot.z * sp, yRot.y * sp + yRot.z * cp} + center;
+    };
+    const Vec3 p000 = rotate({-half.x, -half.y, -half.z});
+    const Vec3 p100 = rotate({ half.x, -half.y, -half.z});
+    const Vec3 p110 = rotate({ half.x,  half.y, -half.z});
+    const Vec3 p010 = rotate({-half.x,  half.y, -half.z});
+    const Vec3 p001 = rotate({-half.x, -half.y,  half.z});
+    const Vec3 p101 = rotate({ half.x, -half.y,  half.z});
+    const Vec3 p111 = rotate({ half.x,  half.y,  half.z});
+    const Vec3 p011 = rotate({-half.x,  half.y,  half.z});
+    appendQuad(triangles, p000, p100, p110, p010, color, kind);
+    appendQuad(triangles, p001, p011, p111, p101, color, kind);
+    appendQuad(triangles, p000, p001, p101, p100, color, kind);
+    appendQuad(triangles, p100, p101, p111, p110, color, kind);
+    appendQuad(triangles, p110, p111, p011, p010, color, kind);
+    appendQuad(triangles, p010, p011, p001, p000, color, kind);
+    for (std::size_t i = first; i < triangles.size(); ++i) {
+        triangles[i].roughness = roughness;
+        triangles[i].metalness = metalness;
+    }
+}
+
+void applyRockShowcaseMaterial(std::vector<Triangle3>& triangles, std::size_t first, float roughness, float metalness) {
+    const std::filesystem::path root = "../ambientcg/Rock064_1K-JPG";
+    for (std::size_t i = first; i < triangles.size(); ++i) {
+        Triangle3& tri = triangles[i];
+        tri.materialKind = MaterialKind::Pbr;
+        tri.hasAlbedoTexture = true;
+        tri.albedoTexturePath = root / "Rock064_1K-JPG_Color.jpg";
+        tri.normalTexturePath = root / "Rock064_1K-JPG_NormalGL.jpg";
+        tri.roughnessTexturePath = root / "Rock064_1K-JPG_Roughness.jpg";
+        tri.displacementTexturePath = root / "Rock064_1K-JPG_Displacement.jpg";
+        tri.roughness = roughness;
+        tri.metalness = metalness;
+    }
 }
 
 Vec3 proceduralManyLightColor(std::uint32_t index) {
@@ -1960,6 +2026,62 @@ ProceduralScene makeV3ShadowDemoScene() {
     scene.camera.target = {0.0f, 0.0f, 1.15f};
     scene.camera.up = {0.0f, 0.0f, 1.0f};
     scene.camera.fovY = 48.0f * kPi / 180.0f;
+    scene.camera.nearPlane = 0.05f;
+    scene.camera.farPlane = 60.0f;
+    return scene;
+}
+
+ProceduralScene makeV3SpotShadowShowcaseScene(std::uint32_t frameIndex) {
+    ProceduralScene scene;
+    std::vector<Triangle3>& tris = scene.triangles;
+    appendQuad(tris, {-3.8f, -3.8f, 0.0f}, {4.0f, -3.8f, 0.0f}, {4.0f, 3.6f, 0.0f}, {-3.8f, 3.6f, 0.0f}, {0.50f, 0.52f, 0.50f}, MaterialKind::Lambertian);
+    tris.back().roughness = 0.88f;
+    tris[tris.size() - 2].roughness = 0.88f;
+    const std::size_t sphereFirst = tris.size();
+    appendSphere(tris, {0.0f, 0.0f, 1.02f}, 1.02f, {0.82f, 0.84f, 0.80f}, MaterialKind::Pbr, 32, 48, 0.26f, 0.0f);
+    applyRockShowcaseMaterial(tris, sphereFirst, 0.34f, 0.0f);
+    const float t = static_cast<float>(frameIndex) / 60.0f;
+    const Vec3 cubeCenter{
+        -0.42f + 0.30f * std::sin(t * 0.90f),
+        0.62f + 0.18f * std::cos(t * 0.90f),
+        2.70f,
+    };
+    const std::size_t cubeFirst = tris.size();
+    appendRotatedBox(tris, cubeCenter, {0.42f, 0.42f, 0.42f}, t * 1.85f + 0.40f, 0.42f, {0.42f, 0.48f, 0.56f}, MaterialKind::Pbr, 0.28f, 0.0f);
+    applyRockShowcaseMaterial(tris, cubeFirst, 0.42f, 0.0f);
+    appendSphere(tris, {-2.0f, 2.0f, 4.80f}, 0.16f, {1.0f, 0.78f, 0.30f}, MaterialKind::Emissive, 12, 18, 0.12f, 0.0f);
+
+    scene.camera.eye = {4.20f, -6.70f, 4.05f};
+    scene.camera.target = {0.25f, -0.35f, 1.05f};
+    scene.camera.up = {0.0f, 0.0f, 1.0f};
+    scene.camera.fovY = 43.0f * kPi / 180.0f;
+    scene.camera.nearPlane = 0.05f;
+    scene.camera.farPlane = 60.0f;
+    return scene;
+}
+
+ProceduralScene makeV3SphereShadowShowcaseScene(std::uint32_t frameIndex) {
+    ProceduralScene scene;
+    std::vector<Triangle3>& tris = scene.triangles;
+    appendQuad(tris, {-4.2f, -4.8f, 0.0f}, {4.4f, -4.8f, 0.0f}, {4.4f, 4.2f, 0.0f}, {-4.2f, 4.2f, 0.0f}, {0.50f, 0.52f, 0.50f}, MaterialKind::Lambertian);
+    const std::size_t sphereFirst = tris.size();
+    appendSphere(tris, {0.0f, 0.0f, 1.08f}, 1.08f, {0.84f, 0.86f, 0.82f}, MaterialKind::Pbr, 32, 48, 0.32f, 0.0f);
+    applyRockShowcaseMaterial(tris, sphereFirst, 0.40f, 0.0f);
+    const float t = static_cast<float>(frameIndex) / 60.0f;
+    const Vec3 cubeCenter{
+        -0.42f + 0.28f * std::sin(t * 0.9f),
+        0.68f + 0.18f * std::cos(t * 0.9f),
+        2.76f,
+    };
+    const std::size_t cubeFirst = tris.size();
+    appendRotatedBox(tris, cubeCenter, {0.44f, 0.44f, 0.44f}, t * 1.45f + 0.60f, 0.22f + 0.10f * std::sin(t * 0.7f), {0.52f, 0.44f, 0.36f}, MaterialKind::Pbr, 0.44f, 0.0f);
+    applyRockShowcaseMaterial(tris, cubeFirst, 0.48f, 0.0f);
+    appendSphere(tris, {-2.0f, 2.0f, 4.80f}, 0.18f, {1.0f, 0.93f, 0.65f}, MaterialKind::Emissive, 12, 18, 0.12f, 0.0f);
+
+    scene.camera.eye = {4.15f, -6.60f, 4.05f};
+    scene.camera.target = {0.25f, -0.45f, 1.00f};
+    scene.camera.up = {0.0f, 0.0f, 1.0f};
+    scene.camera.fovY = 43.0f * kPi / 180.0f;
     scene.camera.nearPlane = 0.05f;
     scene.camera.farPlane = 60.0f;
     return scene;
@@ -2704,7 +2826,10 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
     Camera camera;
 
     if (extension == ".shadowdemo") {
-        ProceduralScene scene = makeV3ShadowDemoScene();
+        const std::string filename = settings.scenePath.filename().string();
+        ProceduralScene scene = filename.find("spot") != std::string::npos
+            ? makeV3SpotShadowShowcaseScene(settings.frameIndex)
+            : (filename.find("sphere") != std::string::npos ? makeV3SphereShadowShowcaseScene(settings.frameIndex) : makeV3ShadowDemoScene());
         ownedTriangles = std::move(scene.triangles);
         camera = scene.camera;
     } else if (extension == ".manylights") {
@@ -2737,6 +2862,14 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
 
     GpuPreviewGeometry geometry;
     geometry.manyLightDemo = extension == ".manylights";
+    if (extension == ".shadowdemo") {
+        const std::string filename = settings.scenePath.filename().string();
+        if (filename.find("spot") != std::string::npos) {
+            geometry.v3LightShowcaseMode = 5.0f;
+        } else if (filename.find("sphere") != std::string::npos) {
+            geometry.v3LightShowcaseMode = 4.0f;
+        }
+    }
     if (geometry.manyLightDemo) {
         geometry.sphereInstances.reserve(10000);
         for (std::uint32_t row = 0; row < 100; ++row) {
@@ -2824,6 +2957,10 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
     GpuPreviewGeometry::MaterialTextures fallbackMaterial;
     if (settings.enableV2Shading) {
         const std::filesystem::path sceneAssetRoot = settings.scenePath.parent_path();
+        const bool useFallbackDetailTextures =
+            settings.scenePath.filename() == "v2_normal_displacement_showcase.s72";
+        const bool useLegacyWoodFallback =
+            settings.scenePath.filename() == "materials.s72";
         const std::filesystem::path envBackground = sceneAssetRoot / "ox_bridge_morning.png";
         if (std::filesystem::exists(envBackground)) {
             geometry.environmentBackgroundTexturePath = envBackground;
@@ -2839,15 +2976,17 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
             }
         }
 
-        const std::filesystem::path thirdPartyRoot = settings.scenePath.parent_path().parent_path();
-        const std::filesystem::path pbrDemo = thirdPartyRoot / "ambientcg/Rock064_1K-JPG";
-        const std::filesystem::path rockAlbedo = pbrDemo / "Rock064_1K-JPG_Color.jpg";
-        if (std::filesystem::exists(rockAlbedo)) {
-            fallbackMaterial.albedoTexturePath = rockAlbedo;
-            fallbackMaterial.normalTexturePath = pbrDemo / "Rock064_1K-JPG_NormalGL.jpg";
-            fallbackMaterial.roughnessTexturePath = pbrDemo / "Rock064_1K-JPG_Roughness.jpg";
-            fallbackMaterial.displacementTexturePath = pbrDemo / "Rock064_1K-JPG_Displacement.jpg";
-        } else {
+        if (useFallbackDetailTextures) {
+            const std::filesystem::path thirdPartyRoot = settings.scenePath.parent_path().parent_path();
+            const std::filesystem::path pbrDemo = thirdPartyRoot / "ambientcg/Rock064_1K-JPG";
+            const std::filesystem::path rockAlbedo = pbrDemo / "Rock064_1K-JPG_Color.jpg";
+            if (std::filesystem::exists(rockAlbedo)) {
+                fallbackMaterial.albedoTexturePath = rockAlbedo;
+                fallbackMaterial.normalTexturePath = pbrDemo / "Rock064_1K-JPG_NormalGL.jpg";
+                fallbackMaterial.roughnessTexturePath = pbrDemo / "Rock064_1K-JPG_Roughness.jpg";
+                fallbackMaterial.displacementTexturePath = pbrDemo / "Rock064_1K-JPG_Displacement.jpg";
+            }
+        } else if (useLegacyWoodFallback) {
             const std::filesystem::path woodAlbedo = settings.scenePath.parent_path() / "wood_floor_deck_diff_1k.png";
             const std::filesystem::path woodRoughness = settings.scenePath.parent_path() / "wood_floor_deck_rough_1k.png";
             if (std::filesystem::exists(woodAlbedo)) {
@@ -2863,7 +3002,12 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
     }
 
     auto materialIndexFor = [&](const Triangle3& tri) -> std::uint32_t {
-        GpuPreviewGeometry::MaterialTextures material = fallbackMaterial;
+        const bool allowFallbackDetailTextures =
+            tri.materialKind != MaterialKind::Mirror &&
+            tri.materialKind != MaterialKind::Environment;
+        GpuPreviewGeometry::MaterialTextures material = allowFallbackDetailTextures
+            ? fallbackMaterial
+            : GpuPreviewGeometry::MaterialTextures{};
         if (!tri.albedoTexturePath.empty()) {
             material.albedoTexturePath = tri.albedoTexturePath.is_absolute()
                 ? tri.albedoTexturePath
@@ -2873,6 +3017,16 @@ GpuPreviewGeometry buildGpuPreviewGeometry(const V1RenderSettings& settings) {
             material.roughnessTexturePath = tri.roughnessTexturePath.is_absolute()
                 ? tri.roughnessTexturePath
                 : settings.scenePath.parent_path() / tri.roughnessTexturePath;
+        }
+        if (!tri.normalTexturePath.empty()) {
+            material.normalTexturePath = tri.normalTexturePath.is_absolute()
+                ? tri.normalTexturePath
+                : settings.scenePath.parent_path() / tri.normalTexturePath;
+        }
+        if (!tri.displacementTexturePath.empty()) {
+            material.displacementTexturePath = tri.displacementTexturePath.is_absolute()
+                ? tri.displacementTexturePath
+                : settings.scenePath.parent_path() / tri.displacementTexturePath;
         }
         for (std::uint32_t i = 0; i < geometry.materials.size(); ++i) {
             const GpuPreviewGeometry::MaterialTextures& existing = geometry.materials[i];

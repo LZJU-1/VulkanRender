@@ -105,6 +105,7 @@ struct GpuPreviewGeometry {
     std::vector<GpuPreviewVertex> vertices;
     V1CameraSettings camera;
     bool manyLightDemo = false;
+    float v3LightShowcaseMode = 1.0f;
     std::vector<GpuPreviewLight> lights;
     std::vector<GpuPreviewSphereInstance> sphereInstances;
     struct MaterialTextures {
