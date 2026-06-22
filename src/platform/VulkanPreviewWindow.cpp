@@ -2567,7 +2567,7 @@ private:
         uniform.pointColorIntensity[0] = 1.0f;
         uniform.pointColorIntensity[1] = 0.62f;
         uniform.pointColorIntensity[2] = 0.30f;
-        uniform.pointColorIntensity[3] = 1.25f;
+        uniform.pointColorIntensity[3] = enableV5RayTracing_ ? 0.0f : 1.25f;
         const Vec3 spotDir = normalize({0.18f, 0.72f, -0.67f});
         uniform.spotPosInner[0] = -0.6f;
         uniform.spotPosInner[1] = -4.4f;
@@ -2580,7 +2580,7 @@ private:
         uniform.spotColorIntensity[0] = 0.45f;
         uniform.spotColorIntensity[1] = 0.68f;
         uniform.spotColorIntensity[2] = 1.0f;
-        uniform.spotColorIntensity[3] = 0.85f;
+        uniform.spotColorIntensity[3] = enableV5RayTracing_ ? 0.0f : 0.85f;
         uniform.v3Flags[0] = enableV4Ssao_ ? 2.0f : (enableV3Shadows_ ? 1.0f : 0.0f);
         uniform.v3Flags[1] = 2.4f;
         uniform.v3Flags[2] = 4.5f;
