@@ -1,0 +1,4 @@
+# VulkanRender v3 sphere-light showcase marker.
+#
+# The renderer recognizes this filename and builds a focused procedural scene
+# for Sphere light & Omnidirectional shadow mapping.
