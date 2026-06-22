@@ -24,6 +24,26 @@ A clean C++20 rewrite scaffold for a staged Vulkan renderer. The project is orga
 
 [Open MP4](docs/showcase/v1-frustum-culling.mp4)
 
+### v2.0 Skybox, Normal/Displacement Mapping, PBR and IBL
+
+**Skybox and tone mapping**
+
+![v2 skybox tone mapping](docs/showcase/v2-1.gif)
+
+[Open MP4](docs/showcase/v2-1.mp4)
+
+**Normal mapping and displacement mapping (parallax occlusion)**
+
+![v2 normal displacement](docs/showcase/v2-2.gif)
+
+[Open MP4](docs/showcase/v2-2.mp4)
+
+**PBR material and image-based lighting (IBL)**
+
+![v2 pbr ibl](docs/showcase/v2-3.gif)
+
+[Open MP4](docs/showcase/v2-3.mp4)
+
 ## Course And Reference
 
 The reference project is [YJJfish/Renderer72](https://github.com/YJJfish/Renderer72). Its public README presents four staged versions: scene loading/animation/culling, skybox/PBR/IBL, lights/shadows, and deferred shading/SSAO. The CMU course page you found is [15-472/672/772: Real-Time Computer Graphics, Spring 2024](https://graphics.cs.cmu.edu/courses/15-472-s24/); this repo treats Renderer72 as a functional reference, not as copied source.
