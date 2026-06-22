@@ -532,7 +532,7 @@ float3 composeLinear(Surface surface, float4 shadow, float3 reflection, uint2 pi
     float3 view = normalize(eyeNear.xyz - surface.worldPos);
     float3 lightDir = normalize(-shadowForwardFar.xyz);
     float raytracedShadow = saturate(shadow.r);
-    float raytracedAo = max(0.32, saturate(shadow.g));
+    float raytracedAo = 1.0;  // AO disabled — RT pipeline no longer traces AO rays
     float3 direct = importedRasterDirect(surface, view, pixel);
     direct += pbrDirectional(surface, view, lightDir, float3(1.10, 1.04, 0.92), 12.0, raytracedShadow);
     float ndotv = max(0.04, saturate(dot(surface.normal, view)));
